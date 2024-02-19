@@ -19,7 +19,7 @@ Searching is done recursively, and with a depth specified on a per-path basis.
 With Go:
 
 ```sh
-go installl github.com/joakimen/scriv
+go install github.com/joakimen/scriv
 ```
 
 ## Usage
