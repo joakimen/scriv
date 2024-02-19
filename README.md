@@ -16,7 +16,11 @@ Searching is done recursively, and with a depth specified on a per-path basis.
 
 ## Install
 
-TODO
+With Go:
+
+```sh
+go installl github.com/joakimen/scriv
+```
 
 ## Usage
 
