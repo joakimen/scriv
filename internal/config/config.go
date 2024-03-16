@@ -64,8 +64,10 @@ func initViper() Config {
 	configFile := ConfigFilePath()
 	viper.SetConfigFile(configFile)
 	err := viper.ReadInConfig()
+
 	if err != nil {
-		panic(fmt.Errorf("error reading config file '%s': %w", configFile, err))
+		_, _ = fmt.Fprintf(os.Stderr, "couldn't read configuration file: %v\n", err)
+		os.Exit(1)
 	}
 
 	defaultIgnoredDirs := []string{"node_modules", "vendor", "dist", "build", "target"}
@@ -73,9 +75,9 @@ func initViper() Config {
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
-		panic(fmt.Errorf("an error occurred while unmarshaling configuration file '%s': %w", configFile, err))
+		_, _ = fmt.Fprintf(os.Stderr, "couldn't parse configuration file: %v\n", err)
+		os.Exit(1)
 	}
-
 	return cfg
 }
 
