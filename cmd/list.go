@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/joakimen/scriv/internal/config"
@@ -13,29 +15,50 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all repositories discovered using the paths in the user configuration",
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.GetConfig(cmd.Context())
-		log := cfg.Logger
+func newListCmd() *cobra.Command {
+	var printAbsolutePaths bool
 
-		allRepos := findAllRepos(cfg)
-		slices.Sort(allRepos)
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List all repositories discovered using the paths in the user configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := config.GetConfig(cmd.Context())
+			log := cfg.Logger
 
-		if len(allRepos) > 0 {
+			allRepos := findAllRepos(cfg)
+			slices.Sort(allRepos)
+
+			if len(allRepos) == 0 {
+				return errors.New("no repositories found")
+			}
+
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+
+			fmtFunc := func(repo string) string {
+				if printAbsolutePaths {
+					return repo
+				} else {
+					return strings.Replace(repo, homeDir, "~", 1)
+				}
+			}
+
 			log.Info(fmt.Sprintf("Returning %d repositories", len(allRepos)))
 			for _, repo := range allRepos {
-				fmt.Println(repo)
+				fmt.Println(fmtFunc(repo))
 			}
-		} else {
-			fmt.Println("no repositories found")
-		}
-	},
+			return nil
+		},
+	}
+	listCmd.Flags().BoolVarP(&printAbsolutePaths, "absolute-paths", "A", false, "Return absolute file paths")
+
+	return listCmd
 }
 
 func init() {
-	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(newListCmd())
 }
 
 // Find all Git repos for each path in the user config
@@ -101,11 +124,9 @@ func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.L
 			return filepath.SkipDir
 		}
 
-		for _, excludeDir := range ignoredPaths {
-			if filepath.Base(path) == excludeDir {
-				log.Debug("Skipping excluded dir: " + path)
-				return filepath.SkipDir
-			}
+		if slices.Contains(ignoredPaths, filepath.Base(path)) {
+			log.Debug("Skipping excluded dir: " + path)
+			return filepath.SkipDir
 		}
 
 		if !d.IsDir() {
