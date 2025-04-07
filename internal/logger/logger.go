@@ -7,12 +7,13 @@ import (
 	"github.com/spf13/viper"
 )
 
-const LOG_LEVEL_DEFAULT = slog.LevelWarn
-const LOG_LEVEL_VERBOSE = slog.LevelDebug
+const (
+	LOG_LEVEL_DEFAULT = slog.LevelWarn
+	LOG_LEVEL_VERBOSE = slog.LevelDebug
+)
 
 // Create a structured logger. Only show warn and worse unless verbose is set
 func ConfigureStructuredLogger() *slog.Logger {
-
 	verbose := viper.GetBool("verbose")
 
 	var logLevel slog.Level

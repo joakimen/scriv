@@ -40,7 +40,6 @@ func init() {
 
 // Find all Git repos for each path in the user config
 func findAllRepos(cfg config.Config) []string {
-
 	paths := cfg.Paths
 	settings := cfg.Settings
 	log := cfg.Logger
@@ -82,7 +81,6 @@ func findAllRepos(cfg config.Config) []string {
 // - they are in the list of ignored paths
 // - they are not a directory
 func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.Logger) []string {
-
 	rootPath := fs.ExpandHomeDir(pathEntry.Path)
 	rootDepth := fs.PathDepth(rootPath)
 	maxDepth := pathEntry.Depth
@@ -92,7 +90,6 @@ func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.L
 
 	var repos []string
 	filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
-
 		if err != nil {
 			return err
 		}

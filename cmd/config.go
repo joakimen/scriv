@@ -18,7 +18,6 @@ var configCmd = &cobra.Command{
 		log.Info("printing current configuration", "configFile", config.ConfigFilePath(), "verbose", viper.GetBool("verbose"))
 
 		allSettingsJson, err := json.MarshalIndent(cfg, "", "  ")
-
 		if err != nil {
 			panic(fmt.Errorf("an error occurred while marshalling configuration data to json: %w", err))
 		}

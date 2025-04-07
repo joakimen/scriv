@@ -11,8 +11,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-const CONFIG_FILE_DEFAULT = "~/.config/scriv/config.json"
-const CONFIG_FILE_ENV_OVERRIDE = "SCRIV_CONFIG"
+const (
+	CONFIG_FILE_DEFAULT      = "~/.config/scriv/config.json"
+	CONFIG_FILE_ENV_OVERRIDE = "SCRIV_CONFIG"
+)
 
 // The key struct for accesing the config object in the context
 type ConfigKey struct{}
@@ -47,7 +49,6 @@ func GetConfig(ctx context.Context) Config {
 
 // Determine the path to the configuration file, as it may be overridden by an environment variable
 func ConfigFilePath() string {
-
 	configFileEnvOverride := os.Getenv(CONFIG_FILE_ENV_OVERRIDE)
 
 	var configFile string
@@ -64,7 +65,6 @@ func initViper() Config {
 	configFile := ConfigFilePath()
 	viper.SetConfigFile(configFile)
 	err := viper.ReadInConfig()
-
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "couldn't read configuration file: %v\n", err)
 		os.Exit(1)
