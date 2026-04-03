@@ -5,15 +5,15 @@ import (
 
 	"github.com/joakimen/scriv/internal/config"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
-// rootCmd represents the base command when called without any subcommands
+var verbose bool
+
 var rootCmd = &cobra.Command{
 	Use:   "scriv",
 	Short: "scriv is a tool for discovering Git repositories.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.InitConfig()
+		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
@@ -31,7 +31,5 @@ func Execute() {
 }
 
 func init() {
-	// This is read into the Config struct via Viper
-	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
-	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }

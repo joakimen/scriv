@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/joakimen/scriv/internal/config"
+	"github.com/joakimen/scriv/internal/logger"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var configCmd = &cobra.Command{
@@ -17,20 +17,20 @@ var configCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		log := cfg.Logger
+		log := logger.New(verbose)
 
-		cfgPath, err := config.ConfigFilePath()
+		cfgPath, err := config.FilePath()
 		if err != nil {
 			return err
 		}
-		log.Info("printing current configuration", "configFile", cfgPath, "verbose", viper.GetBool("verbose"))
+		log.Info("printing current configuration", "configFile", cfgPath, "verbose", verbose)
 
-		allSettingsJson, err := json.MarshalIndent(cfg, "", "  ")
+		out, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshalling configuration to json: %w", err)
 		}
 
-		fmt.Println(string(allSettingsJson))
+		fmt.Println(string(out))
 		return nil
 	},
 }
