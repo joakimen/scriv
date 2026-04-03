@@ -12,6 +12,10 @@ fmt:
 	go tool gofumpt -l -w .
 	go tool goimports -w .
 
+.PHONY: install
+install: build
+	install $(BIN) ~/bin/
+
 .PHONY: lint
 lint:
 	go vet ./...

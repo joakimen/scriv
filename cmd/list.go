@@ -22,10 +22,16 @@ func newListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all repositories discovered using the paths in the user configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := config.GetConfig(cmd.Context())
+			cfg, err := config.GetConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
 			log := cfg.Logger
 
-			allRepos := findAllRepos(cfg)
+			allRepos, err := findAllRepos(cfg)
+			if err != nil {
+				return err
+			}
 			slices.Sort(allRepos)
 
 			if len(allRepos) == 0 {
@@ -40,9 +46,8 @@ func newListCmd() *cobra.Command {
 			fmtFunc := func(repo string) string {
 				if printAbsolutePaths {
 					return repo
-				} else {
-					return strings.Replace(repo, homeDir, "~", 1)
 				}
+				return strings.Replace(repo, homeDir, "~", 1)
 			}
 
 			log.Info(fmt.Sprintf("Returning %d repositories", len(allRepos)))
@@ -62,28 +67,28 @@ func init() {
 }
 
 // Find all Git repos for each path in the user config
-func findAllRepos(cfg config.Config) []string {
+func findAllRepos(cfg config.Config) ([]string, error) {
 	paths := cfg.Paths
 	settings := cfg.Settings
 	log := cfg.Logger
 
-	pathCount := len(paths)
 	log.Info("Settings", "settings", fmt.Sprintf("%+v", settings))
 
-	if pathCount == 0 {
-		panic(fmt.Errorf("no paths found in config file: %s", config.ConfigFilePath()))
+	if len(paths) == 0 {
+		cfgPath, _ := config.ConfigFilePath()
+		return nil, fmt.Errorf("no paths found in config file: %s", cfgPath)
 	}
 
-	repoChan := make(chan []string, pathCount)
+	repoChan := make(chan []string, len(paths))
 	var wg sync.WaitGroup
 
 	for _, path := range paths {
 		wg.Add(1)
-		go func(c chan []string, wg *sync.WaitGroup, path config.PathEntry) {
+		go func() {
 			defer wg.Done()
 			repos := findRepos(path, settings, log)
 			repoChan <- repos
-		}(repoChan, &wg, path)
+		}()
 	}
 
 	wg.Wait()
@@ -94,7 +99,7 @@ func findAllRepos(cfg config.Config) []string {
 		totalRepos = append(totalRepos, repos...)
 	}
 
-	return totalRepos
+	return totalRepos, nil
 }
 
 // Find all Git repos for a single path entry.
@@ -104,7 +109,11 @@ func findAllRepos(cfg config.Config) []string {
 // - they are in the list of ignored paths
 // - they are not a directory
 func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.Logger) []string {
-	rootPath := fs.ExpandHomeDir(pathEntry.Path)
+	rootPath, err := fs.ExpandHomeDir(pathEntry.Path)
+	if err != nil {
+		log.Warn("Skipping path entry", "path", pathEntry.Path, "error", err)
+		return nil
+	}
 	rootDepth := fs.PathDepth(rootPath)
 	maxDepth := pathEntry.Depth
 	ignoredPaths := settings.Ignore
@@ -138,6 +147,7 @@ func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.L
 		_, err = os.Stat(filepath.Join(path, ".git"))
 		if err == nil {
 			repos = append(repos, path)
+			return filepath.SkipDir
 		}
 		return nil
 	})

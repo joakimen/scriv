@@ -12,17 +12,26 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Print current configuration",
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := config.GetConfig(cmd.Context())
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.GetConfig(cmd.Context())
+		if err != nil {
+			return err
+		}
 		log := cfg.Logger
-		log.Info("printing current configuration", "configFile", config.ConfigFilePath(), "verbose", viper.GetBool("verbose"))
+
+		cfgPath, err := config.ConfigFilePath()
+		if err != nil {
+			return err
+		}
+		log.Info("printing current configuration", "configFile", cfgPath, "verbose", viper.GetBool("verbose"))
 
 		allSettingsJson, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
-			panic(fmt.Errorf("an error occurred while marshalling configuration data to json: %w", err))
+			return fmt.Errorf("marshalling configuration to json: %w", err)
 		}
 
 		fmt.Println(string(allSettingsJson))
+		return nil
 	},
 }
 

@@ -12,11 +12,14 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "scriv",
 	Short: "scriv is a tool for discovering Git repositories.",
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Initialize configuration and logging
-		cfg := config.InitConfig()
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.InitConfig()
+		if err != nil {
+			return err
+		}
 		ctx := config.WithConfig(cmd.Context(), cfg)
 		cmd.SetContext(ctx)
+		return nil
 	},
 }
 

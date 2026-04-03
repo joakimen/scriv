@@ -43,31 +43,32 @@ func WithConfig(ctx context.Context, config Config) context.Context {
 }
 
 // Get the configuration from the context
-func GetConfig(ctx context.Context) Config {
-	return ctx.Value(ConfigKey{}).(Config)
+func GetConfig(ctx context.Context) (Config, error) {
+	cfg, ok := ctx.Value(ConfigKey{}).(Config)
+	if !ok {
+		return Config{}, fmt.Errorf("configuration not found in context")
+	}
+	return cfg, nil
 }
 
 // Determine the path to the configuration file, as it may be overridden by an environment variable
-func ConfigFilePath() string {
-	configFileEnvOverride := os.Getenv(CONFIG_FILE_ENV_OVERRIDE)
-
-	var configFile string
-	if configFileEnvOverride != "" {
-		configFile = configFileEnvOverride
-	} else {
-		configFile = fs.ExpandHomeDir(CONFIG_FILE_DEFAULT)
+func ConfigFilePath() (string, error) {
+	if override := os.Getenv(CONFIG_FILE_ENV_OVERRIDE); override != "" {
+		return override, nil
 	}
-	return configFile
+	return fs.ExpandHomeDir(CONFIG_FILE_DEFAULT)
 }
 
 // Load the Viper-centric part of the configuration into a Config object
-func initViper() Config {
-	configFile := ConfigFilePath()
-	viper.SetConfigFile(configFile)
-	err := viper.ReadInConfig()
+func initViper() (Config, error) {
+	configFile, err := ConfigFilePath()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "couldn't read configuration file: %v\n", err)
-		os.Exit(1)
+		return Config{}, fmt.Errorf("resolving config file path: %w", err)
+	}
+
+	viper.SetConfigFile(configFile)
+	if err := viper.ReadInConfig(); err != nil {
+		return Config{}, fmt.Errorf("reading configuration file: %w", err)
 	}
 
 	defaultIgnoredDirs := []string{"node_modules", "vendor", "dist", "build", "target"}
@@ -75,20 +76,17 @@ func initViper() Config {
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "couldn't parse configuration file: %v\n", err)
-		os.Exit(1)
+		return Config{}, fmt.Errorf("parsing configuration file: %w", err)
 	}
-	return cfg
-}
-
-// Add logging to the configuration
-func addLogging(cfg Config) Config {
-	log := logger.ConfigureStructuredLogger()
-	cfg.Logger = log
-	return cfg
+	return cfg, nil
 }
 
 // Initialize the entire configuration
-func InitConfig() Config {
-	return addLogging(initViper())
+func InitConfig() (Config, error) {
+	cfg, err := initViper()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Logger = logger.ConfigureStructuredLogger()
+	return cfg, nil
 }
