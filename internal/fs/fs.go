@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,10 +13,13 @@ func PathDepth(path string) int {
 }
 
 // Why isn't this in the stdlib?
-func ExpandHomeDir(dir string) string {
+func ExpandHomeDir(dir string) (string, error) {
 	if strings.HasPrefix(dir, "~/") {
-		homeDir, _ := os.UserHomeDir()
-		return filepath.Join(homeDir, dir[2:])
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("expanding home directory: %w", err)
+		}
+		return filepath.Join(homeDir, dir[2:]), nil
 	}
-	return dir
+	return dir, nil
 }
