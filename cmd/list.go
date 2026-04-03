@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	fuzzyfinder "github.com/ktr0731/go-fuzzyfinder"
+
 	"github.com/joakimen/scriv/internal/config"
 	"github.com/joakimen/scriv/internal/fs"
 	"github.com/joakimen/scriv/internal/logger"
@@ -18,6 +20,7 @@ import (
 
 func newListCmd() *cobra.Command {
 	var printAbsolutePaths bool
+	var fuzzy bool
 
 	listCmd := &cobra.Command{
 		Use:   "list",
@@ -44,21 +47,36 @@ func newListCmd() *cobra.Command {
 				return err
 			}
 
-			fmtFunc := func(repo string) string {
+			formatPath := func(repo string) string {
 				if printAbsolutePaths {
 					return repo
 				}
 				return strings.Replace(repo, homeDir, "~", 1)
 			}
 
+			if fuzzy {
+				idx, err := fuzzyfinder.Find(allRepos, func(i int) string {
+					return formatPath(allRepos[i])
+				})
+				if err != nil {
+					if errors.Is(err, fuzzyfinder.ErrAbort) {
+						return nil
+					}
+					return err
+				}
+				fmt.Println(formatPath(allRepos[idx]))
+				return nil
+			}
+
 			log.Info(fmt.Sprintf("Returning %d repositories", len(allRepos)))
 			for _, repo := range allRepos {
-				fmt.Println(fmtFunc(repo))
+				fmt.Println(formatPath(repo))
 			}
 			return nil
 		},
 	}
 	listCmd.Flags().BoolVarP(&printAbsolutePaths, "absolute-paths", "A", false, "Return absolute file paths")
+	listCmd.Flags().BoolVarP(&fuzzy, "fuzzy", "f", false, "Interactively filter repositories with fuzzy matching")
 
 	return listCmd
 }
