@@ -2,91 +2,74 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/joakimen/scriv/internal/fs"
-	"github.com/joakimen/scriv/internal/logger"
-	"github.com/spf13/viper"
 )
 
 const (
-	CONFIG_FILE_DEFAULT      = "~/.config/scriv/config.json"
-	CONFIG_FILE_ENV_OVERRIDE = "SCRIV_CONFIG"
+	defaultConfigFile = "~/.config/scriv/config.json"
+	configFileEnvVar  = "SCRIV_CONFIG"
 )
 
-// The key struct for accesing the config object in the context
-type ConfigKey struct{}
+var defaultIgnoredDirs = []string{"node_modules", "vendor", "dist", "build", "target"}
 
-// The main configuration object
+type configKey struct{}
+
 type Config struct {
-	Paths    []PathEntry
-	Settings Settings
-	Logger   *slog.Logger
+	Paths    []PathEntry `json:"paths"`
+	Settings Settings    `json:"settings"`
 }
 
-// Defines a single Path under which to search for repositories
 type PathEntry struct {
-	Path  string
-	Depth int
+	Path  string `json:"path"`
+	Depth int    `json:"depth"`
 }
 
-// General configuration settings
 type Settings struct {
-	Ignore []string
+	Ignore []string `json:"ignore"`
 }
 
-// Add the configuration to the context
-func WithConfig(ctx context.Context, config Config) context.Context {
-	return context.WithValue(ctx, ConfigKey{}, config)
+func WithConfig(ctx context.Context, cfg Config) context.Context {
+	return context.WithValue(ctx, configKey{}, cfg)
 }
 
-// Get the configuration from the context
 func GetConfig(ctx context.Context) (Config, error) {
-	cfg, ok := ctx.Value(ConfigKey{}).(Config)
+	cfg, ok := ctx.Value(configKey{}).(Config)
 	if !ok {
 		return Config{}, fmt.Errorf("configuration not found in context")
 	}
 	return cfg, nil
 }
 
-// Determine the path to the configuration file, as it may be overridden by an environment variable
-func ConfigFilePath() (string, error) {
-	if override := os.Getenv(CONFIG_FILE_ENV_OVERRIDE); override != "" {
+func FilePath() (string, error) {
+	if override := os.Getenv(configFileEnvVar); override != "" {
 		return override, nil
 	}
-	return fs.ExpandHomeDir(CONFIG_FILE_DEFAULT)
+	return fs.ExpandHomeDir(defaultConfigFile)
 }
 
-// Load the Viper-centric part of the configuration into a Config object
-func initViper() (Config, error) {
-	configFile, err := ConfigFilePath()
+func Load() (Config, error) {
+	path, err := FilePath()
 	if err != nil {
 		return Config{}, fmt.Errorf("resolving config file path: %w", err)
 	}
 
-	viper.SetConfigFile(configFile)
-	if err := viper.ReadInConfig(); err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Config{}, fmt.Errorf("reading configuration file: %w", err)
 	}
 
-	defaultIgnoredDirs := []string{"node_modules", "vendor", "dist", "build", "target"}
-	viper.SetDefault("Settings.Ignore", defaultIgnoredDirs)
-
 	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
+	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parsing configuration file: %w", err)
 	}
-	return cfg, nil
-}
 
-// Initialize the entire configuration
-func InitConfig() (Config, error) {
-	cfg, err := initViper()
-	if err != nil {
-		return Config{}, err
+	if cfg.Settings.Ignore == nil {
+		cfg.Settings.Ignore = defaultIgnoredDirs
 	}
-	cfg.Logger = logger.ConfigureStructuredLogger()
+
 	return cfg, nil
 }

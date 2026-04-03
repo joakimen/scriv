@@ -12,6 +12,7 @@ import (
 
 	"github.com/joakimen/scriv/internal/config"
 	"github.com/joakimen/scriv/internal/fs"
+	"github.com/joakimen/scriv/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -26,9 +27,9 @@ func newListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			log := cfg.Logger
+			log := logger.New(verbose)
 
-			allRepos, err := findAllRepos(cfg)
+			allRepos, err := findAllRepos(cfg, log)
 			if err != nil {
 				return err
 			}
@@ -66,16 +67,14 @@ func init() {
 	rootCmd.AddCommand(newListCmd())
 }
 
-// Find all Git repos for each path in the user config
-func findAllRepos(cfg config.Config) ([]string, error) {
+func findAllRepos(cfg config.Config, log *slog.Logger) ([]string, error) {
 	paths := cfg.Paths
 	settings := cfg.Settings
-	log := cfg.Logger
 
 	log.Info("Settings", "settings", fmt.Sprintf("%+v", settings))
 
 	if len(paths) == 0 {
-		cfgPath, _ := config.ConfigFilePath()
+		cfgPath, _ := config.FilePath()
 		return nil, fmt.Errorf("no paths found in config file: %s", cfgPath)
 	}
 
@@ -102,12 +101,6 @@ func findAllRepos(cfg config.Config) ([]string, error) {
 	return totalRepos, nil
 }
 
-// Find all Git repos for a single path entry.
-// We walk the directory tree, look for .git directories and return their parents.
-// Directories are ignored if:
-// - they are at a depth greater than the configured max depth
-// - they are in the list of ignored paths
-// - they are not a directory
 func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.Logger) []string {
 	rootPath, err := fs.ExpandHomeDir(pathEntry.Path)
 	if err != nil {
@@ -143,7 +136,6 @@ func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.L
 			return nil
 		}
 
-		// Check if the current path is a Git repository
 		_, err = os.Stat(filepath.Join(path, ".git"))
 		if err == nil {
 			repos = append(repos, path)
