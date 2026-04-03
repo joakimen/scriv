@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/joakimen/scriv/internal/config"
 	"github.com/joakimen/scriv/internal/logger"
@@ -25,12 +25,12 @@ var configCmd = &cobra.Command{
 		}
 		log.Info("printing current configuration", "configFile", cfgPath, "verbose", verbose)
 
-		out, err := json.MarshalIndent(cfg, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshalling configuration to json: %w", err)
+		fmt.Println("paths:")
+		for _, p := range cfg.Paths {
+			fmt.Printf("  - %s (depth: %d)\n", p.Path, p.Depth)
 		}
-
-		fmt.Println(string(out))
+		fmt.Println()
+		fmt.Printf("ignore: %s\n", strings.Join(cfg.Settings.Ignore, ", "))
 		return nil
 	},
 }
