@@ -28,9 +28,24 @@ List repositories
 
 ```sh
 $ scriv list
+~/dev/github.com/joakimen/scriv
+~/dev/github.com/joakimen/fzf.clj
+...
+```
+
+List repositories with absolute paths
+
+```sh
+$ scriv list --absolute-paths
 /Users/joakim/dev/github.com/joakimen/scriv
 /Users/joakim/dev/github.com/joakimen/fzf.clj
 ...
+```
+
+Interactively select a repository with fuzzy filtering
+
+```sh
+$ scriv list --fuzzy
 ```
 
 Print resolved configuration
@@ -38,26 +53,25 @@ Print resolved configuration
 ```sh
 $ scriv config
 {
-  "Paths": [
+  "paths": [
     {
-      "Path": "~/dev/github.com",
-      "Depth": 2
+      "path": "~/dev/github.com",
+      "depth": 2
     },
     {
-      "Path": "~/bin",
-      "Depth": 0
+      "path": "~/bin",
+      "depth": 0
     }
   ],
-  "Settings": {
-    "Ignore": [
+  "settings": {
+    "ignore": [
       "node_modules",
       "vendor",
       "dist",
       "build",
       "target"
     ]
-  },
-  "Logger": {}
+  }
 }
 ```
 
