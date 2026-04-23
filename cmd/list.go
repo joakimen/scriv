@@ -23,8 +23,9 @@ func newListCmd() *cobra.Command {
 	var fuzzy bool
 
 	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all repositories discovered using the paths in the user configuration",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List all repositories discovered using the paths in the user configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.GetConfig(cmd.Context())
 			if err != nil {
