@@ -1,18 +1,24 @@
 # scriv
 
+[![ci](https://github.com/joakimen/scriv/actions/workflows/ci.yml/badge.svg)](https://github.com/joakimen/scriv/actions/workflows/ci.yml)
+
 > "We found him wandering around, with a candle."
 
 ## Summary
 
-[Scriv](https://kingkiller.fandom.com/wiki/Scriv) is a CLI tool that detects Git repositories.
+[Scriv](https://kingkiller.fandom.com/wiki/Scriv) is a CLI tool that
+discovers Git repositories.
 
 ## Description
 
-Scriv detects Git repositories by searching recursively in one or more directories configured by the user, and returns a list of absolute paths to the discovered repositories.
+Scriv discovers Git repositories by searching recursively in one or more
+user-configured directories, and returns the paths to the discovered
+repositories.
 
-A repository is defined here as a directory that contains a .git subdirectory.
+A repository is defined here as a directory that contains a `.git`
+subdirectory.
 
-Searching is done recursively, and with a depth specified on a per-path basis.
+Searching is done recursively, with a depth specified on a per-path basis.
 
 ## Install
 
@@ -45,39 +51,24 @@ $ scriv list --absolute-paths
 Interactively select a repository with fuzzy filtering
 
 ```sh
-$ scriv list --fuzzy
+scriv list --fuzzy
 ```
 
 Print resolved configuration
 
 ```sh
 $ scriv config
-{
-  "paths": [
-    {
-      "path": "~/dev/github.com",
-      "depth": 2
-    },
-    {
-      "path": "~/bin",
-      "depth": 0
-    }
-  ],
-  "settings": {
-    "ignore": [
-      "node_modules",
-      "vendor",
-      "dist",
-      "build",
-      "target"
-    ]
-  }
-}
+paths:
+  - ~/dev/github.com (depth: 2)
+  - ~/bin (depth: 0)
+
+ignore: node_modules, vendor, dist, build, target
 ```
 
 ## Configuration
 
-Configuration is done by specifying one or more paths, along with their desired search depth.
+Configuration is done by specifying one or more paths, along with their
+desired search depth.
 
 ### Example
 
@@ -109,7 +100,8 @@ The search depth for the associated path.
 
 Default: 0
 
-Tune this according to your project layout, as this is the primary determining factor for the discovery performance.
+Tune this according to your project layout, as this is the primary
+determining factor for the discovery performance.
 
 ##### Examples
 
