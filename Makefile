@@ -38,9 +38,9 @@ check: fmt-check lint test
 
 .PHONY: install
 install: build
-	cp $(BIN) ~/bin/$(BINARY)
+	cp $(BIN) ~/.local/bin/$(BINARY)
 ifeq ($(shell uname),Darwin)
-	@codesign -s - -f ~/bin/$(BINARY) 2>/dev/null || true
+	@codesign -s - -f ~/.local/bin/$(BINARY) 2>/dev/null || true
 endif
 
 .PHONY: clean
