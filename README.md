@@ -48,10 +48,10 @@ $ scriv list --absolute-paths
 ...
 ```
 
-Interactively select a repository with fuzzy filtering
+Pipe to `fzf` for interactive selection:
 
 ```sh
-scriv list --fuzzy
+scriv list | fzf
 ```
 
 Print resolved configuration
@@ -78,9 +78,7 @@ desired search depth.
     { "path": "~/dev/github.com", "depth": 2 },
     { "path": "~/bin", "depth": 0 }
   ],
-  "settings": {
-    "ignore": ["node_modules", "target"]
-  }
+  "ignore": ["node_modules", "target"]
 }
 ```
 
@@ -116,9 +114,9 @@ determining factor for the discovery performance.
 - `~/bin` will be returned
 - `~/bin/repo1` will **not** be returned
 
-#### `.settings.ignore`
+#### `.ignore`
 
 Optional.
 
-Paths to ignore during search.
+Directory names to skip during search.
 Default: `"node_modules", "vendor", "dist", "build", "target"`

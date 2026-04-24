@@ -9,7 +9,7 @@ import (
 
 // Helper function to determine the depth of a fs path so we know when to short circuit a search
 func PathDepth(path string) int {
-	return len(strings.Split(path, string(os.PathSeparator))) - 1
+	return strings.Count(path, string(os.PathSeparator))
 }
 
 // Why isn't this in the stdlib?

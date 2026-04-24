@@ -9,9 +9,11 @@ builds:
     goos:
       - linux
       - darwin
+    ldflags:
+      - -s -w -X github.com/joakimen/scriv/cmd.version={{.Version}}
 
 archives:
-  - format: binary
+  - formats: [binary]
 
 changelog:
   sort: asc
