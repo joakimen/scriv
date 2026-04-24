@@ -4,32 +4,40 @@ import (
 	"os"
 
 	"github.com/joakimen/scriv/internal/config"
+	"github.com/joakimen/scriv/internal/logger"
 	"github.com/spf13/cobra"
 )
 
-var verbose bool
+var version = "dev"
 
-var rootCmd = &cobra.Command{
-	Use:   "scriv",
-	Short: "scriv is a tool for discovering Git repositories.",
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		ctx := config.WithConfig(cmd.Context(), cfg)
-		cmd.SetContext(ctx)
-		return nil
-	},
+func NewRootCmd() *cobra.Command {
+	var verbose bool
+
+	root := &cobra.Command{
+		Use:     "scriv",
+		Short:   "scriv is a tool for discovering Git repositories.",
+		Version: version,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			log := logger.New(verbose)
+			ctx := config.WithConfig(cmd.Context(), cfg)
+			ctx = logger.WithLogger(ctx, log)
+			cmd.SetContext(ctx)
+			return nil
+		},
+	}
+	root.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+
+	root.AddCommand(newListCmd())
+	root.AddCommand(newConfigCmd())
+	return root
 }
 
 func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := NewRootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
-}
-
-func init() {
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }

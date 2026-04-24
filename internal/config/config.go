@@ -19,17 +19,13 @@ var defaultIgnoredDirs = []string{"node_modules", "vendor", "dist", "build", "ta
 type configKey struct{}
 
 type Config struct {
-	Paths    []PathEntry `json:"paths"`
-	Settings Settings    `json:"settings"`
+	Paths  []PathEntry `json:"paths"`
+	Ignore []string    `json:"ignore"`
 }
 
 type PathEntry struct {
 	Path  string `json:"path"`
 	Depth int    `json:"depth"`
-}
-
-type Settings struct {
-	Ignore []string `json:"ignore"`
 }
 
 func WithConfig(ctx context.Context, cfg Config) context.Context {
@@ -67,8 +63,8 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parsing configuration file: %w", err)
 	}
 
-	if cfg.Settings.Ignore == nil {
-		cfg.Settings.Ignore = defaultIgnoredDirs
+	if cfg.Ignore == nil {
+		cfg.Ignore = defaultIgnoredDirs
 	}
 
 	return cfg, nil

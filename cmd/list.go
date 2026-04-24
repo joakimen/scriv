@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	fuzzyfinder "github.com/ktr0731/go-fuzzyfinder"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/joakimen/scriv/internal/config"
 	"github.com/joakimen/scriv/internal/fs"
@@ -20,20 +21,20 @@ import (
 
 func newListCmd() *cobra.Command {
 	var printAbsolutePaths bool
-	var fuzzy bool
 
 	listCmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List all repositories discovered using the paths in the user configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.GetConfig(cmd.Context())
+			ctx := cmd.Context()
+			cfg, err := config.GetConfig(ctx)
 			if err != nil {
 				return err
 			}
-			log := logger.New(verbose)
+			log := logger.FromContext(ctx)
 
-			allRepos, err := findAllRepos(cfg, log)
+			allRepos, err := findAllRepos(ctx, cfg, log)
 			if err != nil {
 				return err
 			}
@@ -52,24 +53,13 @@ func newListCmd() *cobra.Command {
 				if printAbsolutePaths {
 					return repo
 				}
-				return strings.Replace(repo, homeDir, "~", 1)
-			}
-
-			if fuzzy {
-				idx, err := fuzzyfinder.Find(allRepos, func(i int) string {
-					return formatPath(allRepos[i])
-				})
-				if err != nil {
-					if errors.Is(err, fuzzyfinder.ErrAbort) {
-						return nil
-					}
-					return err
+				if strings.HasPrefix(repo, homeDir) {
+					return "~" + repo[len(homeDir):]
 				}
-				fmt.Println(formatPath(allRepos[idx]))
-				return nil
+				return repo
 			}
 
-			log.Info(fmt.Sprintf("Returning %d repositories", len(allRepos)))
+			log.Info("returning repositories", "count", len(allRepos))
 			for _, repo := range allRepos {
 				fmt.Println(formatPath(repo))
 			}
@@ -77,90 +67,91 @@ func newListCmd() *cobra.Command {
 		},
 	}
 	listCmd.Flags().BoolVarP(&printAbsolutePaths, "absolute-paths", "A", false, "Return absolute file paths")
-	listCmd.Flags().BoolVarP(&fuzzy, "fuzzy", "f", false, "Interactively filter repositories with fuzzy matching")
 
 	return listCmd
 }
 
-func init() {
-	rootCmd.AddCommand(newListCmd())
-}
+func findAllRepos(ctx context.Context, cfg config.Config, log *slog.Logger) ([]string, error) {
+	log.Info("settings", "ignore", cfg.Ignore)
 
-func findAllRepos(cfg config.Config, log *slog.Logger) ([]string, error) {
-	paths := cfg.Paths
-	settings := cfg.Settings
-
-	log.Info("Settings", "settings", fmt.Sprintf("%+v", settings))
-
-	if len(paths) == 0 {
+	if len(cfg.Paths) == 0 {
 		cfgPath, _ := config.FilePath()
 		return nil, fmt.Errorf("no paths found in config file: %s", cfgPath)
 	}
 
-	repoChan := make(chan []string, len(paths))
-	var wg sync.WaitGroup
-
-	for _, path := range paths {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			repos := findRepos(path, settings, log)
-			repoChan <- repos
-		}()
+	var (
+		mu    sync.Mutex
+		repos []string
+	)
+	g, ctx := errgroup.WithContext(ctx)
+	for _, path := range cfg.Paths {
+		g.Go(func() error {
+			found, err := findRepos(ctx, path, cfg.Ignore, log)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			repos = append(repos, found...)
+			mu.Unlock()
+			return nil
+		})
 	}
-
-	wg.Wait()
-	close(repoChan)
-
-	var totalRepos []string
-	for repos := range repoChan {
-		totalRepos = append(totalRepos, repos...)
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
-
-	return totalRepos, nil
+	return repos, nil
 }
 
-func findRepos(pathEntry config.PathEntry, settings config.Settings, log *slog.Logger) []string {
+func findRepos(ctx context.Context, pathEntry config.PathEntry, ignore []string, log *slog.Logger) ([]string, error) {
 	rootPath, err := fs.ExpandHomeDir(pathEntry.Path)
 	if err != nil {
-		log.Warn("Skipping path entry", "path", pathEntry.Path, "error", err)
-		return nil
+		log.Warn("skipping path entry", "path", pathEntry.Path, "error", err)
+		return nil, nil
+	}
+	if _, err := os.Stat(rootPath); err != nil {
+		return nil, fmt.Errorf("root path %s: %w", rootPath, err)
 	}
 	rootDepth := fs.PathDepth(rootPath)
 	maxDepth := pathEntry.Depth
-	ignoredPaths := settings.Ignore
 
-	log.Info("PathEntry", "path", pathEntry.Path, "depth", pathEntry.Depth)
+	log.Info("path entry", "path", pathEntry.Path, "depth", pathEntry.Depth)
 
 	var repos []string
-	filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
-			return err
+			log.Warn("skipping unreadable path", "path", path, "error", err)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
-		pathDepth := fs.PathDepth(path)
-		curDepth := pathDepth - rootDepth
+		curDepth := fs.PathDepth(path) - rootDepth
 		if curDepth > maxDepth {
-			log.Debug("Skipping file: path depth exceeds configured max depth", "rootPath", rootPath, "curDepth", curDepth, "maxDepth", maxDepth, "path", path)
+			log.Debug("skipping: depth exceeded", "rootPath", rootPath, "curDepth", curDepth, "maxDepth", maxDepth, "path", path)
 			return filepath.SkipDir
 		}
 
-		if slices.Contains(ignoredPaths, filepath.Base(path)) {
-			log.Debug("Skipping excluded dir: " + path)
+		if slices.Contains(ignore, filepath.Base(path)) {
+			log.Debug("skipping excluded dir", "path", path)
 			return filepath.SkipDir
 		}
 
 		if !d.IsDir() {
-			log.Debug("Skipping non-directory path: " + path)
 			return nil
 		}
 
-		_, err = os.Stat(filepath.Join(path, ".git"))
-		if err == nil {
+		if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
 			repos = append(repos, path)
 			return filepath.SkipDir
 		}
 		return nil
 	})
-	return repos
+	if walkErr != nil && !errors.Is(walkErr, context.Canceled) {
+		return repos, fmt.Errorf("walking %s: %w", rootPath, walkErr)
+	}
+	return repos, nil
 }
