@@ -22,10 +22,16 @@ Searching is done recursively, with a depth specified on a per-path basis.
 
 ## Install
 
-With Go:
+With [mise](https://mise.jdx.dev):
 
 ```sh
-go install github.com/joakimen/scriv@latest
+mise use -g github:joakimen/scriv
+```
+
+From source:
+
+```sh
+cargo install --path .
 ```
 
 ## Usage
@@ -33,7 +39,7 @@ go install github.com/joakimen/scriv@latest
 List repositories
 
 ```sh
-$ scriv list
+$ scriv ls
 ~/dev/github.com/joakimen/scriv
 ~/dev/github.com/joakimen/fzf.clj
 ...
@@ -42,7 +48,7 @@ $ scriv list
 List repositories with absolute paths
 
 ```sh
-$ scriv list --absolute-paths
+$ scriv ls --absolute-paths
 /Users/joakim/dev/github.com/joakimen/scriv
 /Users/joakim/dev/github.com/joakimen/fzf.clj
 ...
@@ -51,7 +57,7 @@ $ scriv list --absolute-paths
 Pipe to `fzf` for interactive selection:
 
 ```sh
-scriv list | fzf
+scriv ls | fzf
 ```
 
 Print resolved configuration
