@@ -7,21 +7,26 @@ use anyhow::{Context, Result, bail};
 
 use crate::Ctx;
 
-/// A commented starter config covering the common layout: a couple of search
-/// roots and the default picker. Users edit it to taste.
+/// A commented starter config covering the common layout: search roots grouped
+/// by label and the default picker. Users edit it to taste.
 const TEMPLATE: &str = r#"# scriv configuration.
 # Repositories are discovered by searching each path below, up to its depth.
-
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
-[[paths]]
+# Search paths are grouped by a label; `repo pick` shows which group a repo
+# belongs to. Add more groups (e.g. per client) as needed.
+[[paths.personal]]
 path = "~/dev/github.com"
 depth = 2
 
-[[paths]]
+[[paths.personal]]
 path = "~/bin"
 depth = 0
+
+# [[paths.work]]
+# path = "~/work/acme"
+# depth = 2
 
 # Built-in fuzzy picker. height is the finder height (e.g. "50%" or "20").
 [picker]
@@ -75,8 +80,11 @@ pub fn print(ctx: &Ctx) -> Result<()> {
     ));
 
     println!("paths:");
-    for entry in &ctx.config.paths {
-        println!("  - {} (depth: {})", entry.path, entry.depth);
+    for (group, entries) in &ctx.config.paths {
+        println!("  {group}:");
+        for entry in entries {
+            println!("    - {} (depth: {})", entry.path, entry.depth);
+        }
     }
     println!();
     println!("ignore: {}", ctx.config.ignore.join(", "));
