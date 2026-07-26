@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 
-use crate::path::display_path;
+use crate::config::RepoDisplay;
+use crate::path::{display_path, relative_label};
 use crate::pick::PickItem;
 use crate::repo::FoundRepo;
 use crate::{Ctx, pick, repo};
@@ -58,11 +59,16 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
         0
     };
 
+    let mode = ctx.config.picker.display;
     let items: Vec<PickItem> = repos
         .iter()
         .map(|repo| {
             let abs = repo.path.to_string_lossy().into_owned();
-            let shown = display_path(&abs, ctx.home_str(), false);
+            let shown = match mode {
+                RepoDisplay::Relative => relative_label(&repo.path, &repo.root),
+                RepoDisplay::Tilde => display_path(&abs, ctx.home_str(), false),
+                RepoDisplay::Full => abs.clone(),
+            };
             let label = if show_groups {
                 format!("{group:<width$}  {shown}", group = repo.group)
             } else {

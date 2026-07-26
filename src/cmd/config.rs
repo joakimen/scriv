@@ -28,9 +28,10 @@ depth = 0
 # path = "~/work/acme"
 # depth = 2
 
-# Built-in fuzzy picker. height is the finder height (e.g. "50%" or "20").
+# Built-in fuzzy picker.
 [picker]
-height = "50%"
+height = "50%"        # finder height, e.g. "50%" or "20"
+# display = "relative" # repo path rendering: relative | tilde | full
 "#;
 
 /// `scriv config init` — write `config.toml` into the config directory,

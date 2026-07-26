@@ -111,6 +111,7 @@ depth = 2
 
 [picker]
 height = "50%"                           # built-in finder height
+display = "relative"                      # repo path rendering: relative | tilde | full
 ```
 
 ### Configuration keys
@@ -149,3 +150,17 @@ Default: `node_modules`, `vendor`, `dist`, `build`, `target`.
 
 Optional (default `"50%"`). Height of the built-in fuzzy finder, e.g. `"50%"`
 or `"20"`. The finder is compiled in (skim); there is no `fzf` dependency.
+
+#### `picker.display`
+
+Optional (default `"relative"`). How `repo pick` renders each repository:
+
+- `relative` — path relative to the search root it was found under, so the
+  shared base (named by the group) is not repeated on every row:
+  `personal  joakimen/scriv`.
+- `tilde` — absolute path with the home directory collapsed to `~`:
+  `personal  ~/dev/github.com/joakimen/scriv`.
+- `full` — the full absolute path.
+
+The selected path is always absolute regardless of this setting; only the
+display changes. `repo ls` is unaffected.

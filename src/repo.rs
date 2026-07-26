@@ -10,9 +10,11 @@ use crate::config::{Config, PathEntry};
 use crate::logger::Logger;
 use crate::path::expand_home_dir;
 
-/// A discovered repository together with the configuration group it belongs to.
+/// A discovered repository together with its group and the search root it was
+/// found under (used to render the path relative to that root).
 pub struct FoundRepo {
     pub group: String,
+    pub root: PathBuf,
     pub path: PathBuf,
 }
 
@@ -47,6 +49,7 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
                         .into_iter()
                         .map(|path| FoundRepo {
                             group: group.to_string(),
+                            root: root.clone(),
                             path,
                         })
                         .collect())
