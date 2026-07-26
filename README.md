@@ -20,8 +20,8 @@ external tools are required.
 ## Commands
 
 - `scriv repo ls [-A]` — list discovered repositories (`-A` for absolute paths)
-- `scriv repo pick` — fuzzy-select a repository (tagged by group), print its
-  absolute path
+- `scriv repo pick` — fuzzy-select a repository (colour-tagged by group), print
+  its absolute path
 - `scriv file ls [--status] [--missing|--exists]` — list known files
 - `scriv file pick` — fuzzy-select a known file, print its absolute path
 - `scriv file add [path]` — add a file; omit the path to pick one from the
@@ -30,7 +30,9 @@ external tools are required.
 - `scriv config init` — write a starter configuration file
 - `scriv config print` — print the resolved configuration
 - `scriv config path` — print the configuration file path
-- `scriv init fish` — print shell integration to `source`
+- `scriv init <shell>` — print shell integration to `source` (`fish` adds
+  pick-and-`cd`/edit helpers and key bindings; `bash`/`zsh`/`powershell`/`elvish`
+  emit completions)
 
 `pick` always prints a single absolute path, so it composes cleanly with shell
 functions:
@@ -77,6 +79,9 @@ end
 This defines `scriv-repo-cd` (pick a repo and `cd` into it) and
 `scriv-file-edit` (pick a known file and open it in `$EDITOR`).
 
+For other shells, `scriv init bash` / `zsh` / `powershell` / `elvish` emit
+completions you can source or install.
+
 ## Configuration
 
 Configuration lives under `$XDG_CONFIG_HOME/scriv` (default
@@ -118,9 +123,10 @@ display = "relative"                      # repo path rendering: relative | tild
 
 #### `paths.<group>`
 
-A named group of search paths. The group label is shown alongside each repo in
-`repo pick`, so you can tell at a glance which context a repo belongs to (e.g.
-`personal` vs a client name). Groups appear in the order written.
+A named group of search paths. The group label is shown — in a colour assigned
+per group — alongside each repo in `repo pick`, so you can tell at a glance
+which context a repo belongs to (e.g. `personal` vs a client name). Groups
+appear in the order written.
 
 A flat `[[paths]]` list (no group) is also accepted and lands in a `default`
 group.

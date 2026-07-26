@@ -8,20 +8,21 @@
 use clap::Command;
 use clap_complete::Shell;
 
-/// Render the fish integration: helper functions, a bindings function, and
-/// completions, as one block meant to be `source`d.
-pub fn fish(cmd: &mut Command) -> String {
+/// Render shell integration for `shell`, meant to be `source`d.
+///
+/// For fish this is the helper functions, a key-binding function, and
+/// completions; for every other shell it is completions only (the pick-and-`cd`
+/// helpers are fish-specific).
+pub fn integration(shell: Shell, cmd: &mut Command) -> String {
     let mut out = String::new();
-    out.push_str(FISH_FUNCTIONS);
+
+    if shell == Shell::Fish {
+        out.push_str(FISH_FUNCTIONS);
+        out.push_str("\n# --- completions ---\n");
+    }
 
     let mut completions = Vec::new();
-    clap_complete::generate(
-        Shell::Fish,
-        cmd,
-        cmd.get_name().to_string(),
-        &mut completions,
-    );
-    out.push_str("\n# --- completions ---\n");
+    clap_complete::generate(shell, cmd, cmd.get_name().to_string(), &mut completions);
     out.push_str(&String::from_utf8_lossy(&completions));
 
     out
@@ -74,24 +75,26 @@ mod tests {
     }
 
     #[test]
-    fn emits_helper_functions() {
-        let out = fish(&mut dummy());
+    fn fish_emits_helper_functions() {
+        let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("function scriv-repo-cd"));
         assert!(out.contains("function scriv-file-edit"));
         assert!(out.contains("function scriv_key_bindings"));
     }
 
     #[test]
-    fn emits_completions() {
-        let out = fish(&mut dummy());
+    fn fish_emits_completions_and_keys() {
+        let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("complete -c scriv"));
-    }
-
-    #[test]
-    fn binds_expected_keys() {
-        let out = fish(&mut dummy());
         assert!(out.contains("bind ctrl-o"));
         assert!(out.contains("bind alt-o"));
         assert!(out.contains("bind f3"));
+    }
+
+    #[test]
+    fn non_fish_emits_completions_only() {
+        let out = integration(Shell::Bash, &mut dummy());
+        assert!(out.contains("scriv")); // bash completion script mentions the command
+        assert!(!out.contains("function scriv-repo-cd"));
     }
 }
