@@ -22,7 +22,7 @@ fmt-check:
 
 .PHONY: install
 install:
-	cargo install --path .
+	cargo install --path . --force
 
 .PHONY: run
 run:
