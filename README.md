@@ -6,19 +6,37 @@
 
 ## Summary
 
-[Scriv](https://kingkiller.fandom.com/wiki/Scriv) is a CLI tool that
-discovers Git repositories.
+[Scriv](https://kingkiller.fandom.com/wiki/Scriv) is a CLI for finding your way
+around a machine. It does two things, each with a built-in fuzzy picker:
 
-## Description
+- **repos** — discover your Git repositories and jump into one
+- **files** — track the config and notes files you return to, and open one
 
-Scriv discovers Git repositories by searching recursively in one or more
-user-configured directories, and returns the paths to the discovered
-repositories.
+It is self-contained: the fuzzy finder ([skim](https://github.com/skim-rs/skim))
+and the file walker (the [`ignore`](https://docs.rs/ignore) crate that powers
+[fd](https://github.com/sharkdp/fd)) are compiled in. No `fzf`, `fd`, or other
+external tools are required.
 
-A repository is defined here as a directory that contains a `.git`
-subdirectory.
+## Commands
 
-Searching is done recursively, with a depth specified on a per-path basis.
+- `scriv repo ls [-A]` — list discovered repositories (`-A` for absolute paths)
+- `scriv repo pick` — fuzzy-select a repository, print its absolute path
+- `scriv file ls [--status] [--missing|--exists]` — list known files
+- `scriv file pick` — fuzzy-select a known file, print its absolute path
+- `scriv file add [path]` — add a file; omit the path to pick one from the
+  current directory
+- `scriv file remove [path]` — remove a file; omit the path to pick interactively
+- `scriv config init` — write a starter configuration file
+- `scriv config print` — print the resolved configuration
+- `scriv config path` — print the configuration file path
+- `scriv init fish` — print shell integration to `source`
+
+`pick` always prints a single absolute path, so it composes cleanly with shell
+functions:
+
+```fish
+cd (scriv repo pick)
+```
 
 ## Install
 
@@ -34,95 +52,82 @@ From source:
 cargo install --path .
 ```
 
-## Usage
-
-List repositories
+## Getting started
 
 ```sh
-$ scriv ls
-~/dev/github.com/joakimen/scriv
-~/dev/github.com/joakimen/fzf.clj
-...
+scriv config init          # write ~/.config/scriv/config.toml
+scriv config print         # tune the search paths, then verify
+scriv repo ls              # verify discovery
 ```
 
-List repositories with absolute paths
+## Shell integration (fish)
 
-```sh
-$ scriv ls --absolute-paths
-/Users/joakim/dev/github.com/joakimen/scriv
-/Users/joakim/dev/github.com/joakimen/fzf.clj
-...
+`scriv init fish` emits helper functions, a key-binding function, and
+completions. Source it from `config.fish`:
+
+```fish
+scriv init fish | source
+
+function fish_user_key_bindings
+    scriv_key_bindings     # ctrl-o / alt-o -> repo cd, f3 -> file edit
+end
 ```
 
-Pipe to `fzf` for interactive selection:
-
-```sh
-scriv ls | fzf
-```
-
-Print resolved configuration
-
-```sh
-$ scriv config
-paths:
-  - ~/dev/github.com (depth: 2)
-  - ~/bin (depth: 0)
-
-ignore: node_modules, vendor, dist, build, target
-```
+This defines `scriv-repo-cd` (pick a repo and `cd` into it) and
+`scriv-file-edit` (pick a known file and open it in `$EDITOR`).
 
 ## Configuration
 
-Configuration is done by specifying one or more paths, along with their
-desired search depth.
+Configuration lives under `$XDG_CONFIG_HOME/scriv` (default
+`~/.config/scriv`):
 
-### Example
+- `config.toml` — hand-edited settings (a legacy `config.json` is still read
+  when no TOML file is present)
+- `files` — the known-files list, one path per line, managed by
+  `scriv file add`/`remove`
 
-```json
-{
-  "paths": [
-    { "path": "~/dev/github.com", "depth": 2 },
-    { "path": "~/bin", "depth": 0 }
-  ],
-  "ignore": ["node_modules", "target"]
-}
+### `config.toml`
+
+```toml
+# Directory names to skip while searching.
+ignore = ["node_modules", "target"]
+
+[[paths]]
+path = "~/dev/github.com"
+depth = 2
+
+[[paths]]
+path = "~/bin"
+depth = 0
+
+[picker]
+height = "50%"                           # built-in finder height
 ```
 
 ### Configuration keys
 
-#### `.paths[].path`
+#### `paths[].path`
 
-Required.
+Required. The root path under which to search for repos. The root path may
+itself be a repo.
 
-The root path under which to search for repos. The root path may itself be a repo.
+#### `paths[].depth`
 
-#### `.paths[].depth`
+Optional (default `0`). The search depth for the associated path. Tune this to
+your project layout — it is the primary factor in discovery performance.
 
-Optional.
+- `~/dev/github.com` at depth `2`: `~/dev/github.com/repo1` and
+  `~/dev/github.com/dir1/repo1` are returned; `~/dev/github.com/a/b/repo1` is
+  not.
+- `~/bin` at depth `0`: `~/bin` is returned if it is a repo; `~/bin/repo1` is
+  not.
 
-The search depth for the associated path.
+#### `ignore`
 
-Default: 0
+Optional. Directory names to skip during search.
+Default: `node_modules`, `vendor`, `dist`, `build`, `target`.
 
-Tune this according to your project layout, as this is the primary
-determining factor for the discovery performance.
+#### `picker.height`
 
-##### Examples
-
-###### Example 1: `~/dev/github.com + depth: 2`
-
-- `~/dev/github.com/repo1` will be returned
-- `~/dev/github.com/dir1/repo1` will be returned
-- `~/dev/github.com/dir1/dir2/repo1` will **not** be returned
-
-###### Example 2: `~/bin + depth: 0`
-
-- `~/bin` will be returned
-- `~/bin/repo1` will **not** be returned
-
-#### `.ignore`
-
-Optional.
-
-Directory names to skip during search.
-Default: `"node_modules", "vendor", "dist", "build", "target"`
+Optional (default `"50%"`). Height of the built-in fuzzy finder, e.g. `"50%"`
+or `"20"`. The finder is compiled in (skim); there is no `fzf` dependency.

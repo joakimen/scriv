@@ -53,7 +53,7 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Pat
 /// Find directories containing a `.git` entry under `root`, descending at most
 /// `max_depth` levels. Directories whose basename is in `ignore` are skipped,
 /// and a discovered repository is not descended into.
-pub fn find_repos(
+fn find_repos(
     root: &Path,
     max_depth: usize,
     ignore: &[String],
