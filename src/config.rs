@@ -12,6 +12,7 @@
 //!   clobber hand-written settings or comments.
 
 use anyhow::{Context, Result};
+use indexmap::IndexMap;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -23,10 +24,17 @@ pub const CONFIG_ENV_VAR: &str = "SCRIV_CONFIG";
 pub const XDG_ENV_VAR: &str = "XDG_CONFIG_HOME";
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &["node_modules", "vendor", "dist", "build", "target"];
+/// Group name assigned to paths from an ungrouped (flat or legacy) config.
+pub const DEFAULT_GROUP: &str = "default";
+
+/// Search paths keyed by group name. Insertion order is preserved so groups
+/// display in the order the user wrote them.
+pub type Groups = IndexMap<String, Vec<PathEntry>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
-    pub paths: Vec<PathEntry>,
+    /// Search paths, keyed by the group label repos under them belong to.
+    pub paths: Groups,
     pub ignore: Vec<String>,
     pub picker: PickerConfig,
 }
@@ -36,7 +44,7 @@ impl Config {
     /// nothing to search, but the known-files commands remain fully usable.
     pub fn empty() -> Self {
         Self {
-            paths: Vec::new(),
+            paths: Groups::new(),
             ignore: default_ignored_dirs(),
             picker: PickerConfig::default(),
         }
@@ -73,13 +81,38 @@ impl Default for PickerConfig {
 #[derive(Deserialize)]
 struct RawToml {
     #[serde(default)]
-    paths: Vec<PathEntry>,
+    paths: RawPaths,
     ignore: Option<Vec<String>>,
     #[serde(default)]
     picker: PickerConfig,
 }
 
-/// The serialized shape of the legacy `config.json`.
+/// `paths` accepts two shapes. The grouped form keys entries by a group label
+/// (`[[paths.work]]`); the flat form is a bare list (`[[paths]]`) whose entries
+/// land in the [`DEFAULT_GROUP`]. Untagged, so serde picks by structure.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawPaths {
+    Grouped(Groups),
+    Flat(Vec<PathEntry>),
+}
+
+impl Default for RawPaths {
+    fn default() -> Self {
+        RawPaths::Grouped(Groups::new())
+    }
+}
+
+impl RawPaths {
+    fn into_groups(self) -> Groups {
+        match self {
+            RawPaths::Grouped(groups) => groups,
+            RawPaths::Flat(entries) => flat_to_groups(entries),
+        }
+    }
+}
+
+/// The serialized shape of the legacy `config.json` (always a flat list).
 ///
 /// `ignore` has been written both at the top level and nested under `settings`;
 /// both are accepted, with the top-level key winning when both are present.
@@ -97,11 +130,20 @@ struct JsonSettings {
     ignore: Option<Vec<String>>,
 }
 
+/// Wrap a flat entry list in the default group, or nothing when empty.
+fn flat_to_groups(entries: Vec<PathEntry>) -> Groups {
+    let mut groups = Groups::new();
+    if !entries.is_empty() {
+        groups.insert(DEFAULT_GROUP.to_string(), entries);
+    }
+    groups
+}
+
 /// Parse `config.toml` contents.
 fn parse_toml(data: &str) -> Result<Config> {
     let raw: RawToml = toml::from_str(data).context("parsing configuration file")?;
     Ok(Config {
-        paths: raw.paths,
+        paths: raw.paths.into_groups(),
         ignore: raw.ignore.unwrap_or_else(default_ignored_dirs),
         picker: raw.picker,
     })
@@ -117,7 +159,7 @@ fn parse_json(data: &str) -> Result<Config> {
         .or_else(|| raw.settings.and_then(|s| s.ignore))
         .unwrap_or_else(default_ignored_dirs);
     Ok(Config {
-        paths: raw.paths,
+        paths: flat_to_groups(raw.paths),
         ignore,
         picker: PickerConfig::default(),
     })
@@ -216,8 +258,15 @@ mod tests {
         false
     }
 
+    fn entry(path: &str, depth: usize) -> PathEntry {
+        PathEntry {
+            path: path.into(),
+            depth,
+        }
+    }
+
     #[test]
-    fn parses_valid_toml() {
+    fn parses_flat_toml_into_default_group() {
         let cfg = parse_toml(
             r#"
 ignore = ["foo", "bar"]
@@ -228,14 +277,42 @@ depth = 2
 "#,
         )
         .unwrap();
-        assert_eq!(
-            cfg.paths,
-            vec![PathEntry {
-                path: "~/dev".into(),
-                depth: 2
-            }]
-        );
+        assert_eq!(cfg.paths[DEFAULT_GROUP], vec![entry("~/dev", 2)]);
         assert_eq!(cfg.ignore, vec!["foo".to_string(), "bar".to_string()]);
+    }
+
+    #[test]
+    fn parses_grouped_toml_preserving_order() {
+        let cfg = parse_toml(
+            r#"
+[[paths.work]]
+path = "~/work"
+depth = 2
+
+[[paths.personal]]
+path = "~/dev"
+depth = 1
+
+[[paths.personal]]
+path = "~/bin"
+depth = 0
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.paths.keys().collect::<Vec<_>>(),
+            vec!["work", "personal"] // config order, not alphabetical
+        );
+        assert_eq!(cfg.paths["work"], vec![entry("~/work", 2)]);
+        assert_eq!(
+            cfg.paths["personal"],
+            vec![entry("~/dev", 1), entry("~/bin", 0)]
+        );
+    }
+
+    #[test]
+    fn empty_toml_has_no_groups() {
+        assert!(parse_toml("").unwrap().paths.is_empty());
     }
 
     #[test]
@@ -263,7 +340,7 @@ depth = 2
     fn toml_applies_default_ignore_when_absent() {
         let cfg = parse_toml("[[paths]]\npath = \"~/dev\"\n").unwrap();
         assert_eq!(cfg.ignore, default_ignored_dirs());
-        assert_eq!(cfg.paths[0].depth, 0);
+        assert_eq!(cfg.paths[DEFAULT_GROUP][0].depth, 0);
     }
 
     #[test]
@@ -277,10 +354,10 @@ depth = 2
     }
 
     #[test]
-    fn parses_valid_json() {
+    fn parses_legacy_json_into_default_group() {
         let cfg = parse_json(r#"{ "paths": [{"path": "~/dev", "depth": 2}], "ignore": ["foo"] }"#)
             .unwrap();
-        assert_eq!(cfg.paths[0].depth, 2);
+        assert_eq!(cfg.paths[DEFAULT_GROUP], vec![entry("~/dev", 2)]);
         assert_eq!(cfg.ignore, vec!["foo".to_string()]);
     }
 

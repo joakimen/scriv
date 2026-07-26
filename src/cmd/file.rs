@@ -5,7 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use ignore::WalkBuilder;
 
-use crate::path::{expand_tilde, sanitize_file_path};
+use crate::path::{display_path, expand_tilde, sanitize_file_path};
+use crate::pick::PickItem;
 use crate::{Ctx, files, pick};
 
 /// `scriv file ls` — print known files, optionally with existence status.
@@ -112,7 +113,17 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
         return Ok(());
     }
 
-    let selected = match pick::pick_many(&lines, "Select files to remove", &ctx.config.picker) {
+    // Show a `~`-collapsed label; the returned value is the stored line so it
+    // matches the list for removal.
+    let items: Vec<PickItem> = lines
+        .iter()
+        .map(|line| {
+            let shown = display_path(&expand_tilde(line, ctx.home_str()), ctx.home_str(), false);
+            PickItem::new(shown, line.clone())
+        })
+        .collect();
+
+    let selected = match pick::pick_many(items, "Select files to remove", &ctx.config.picker) {
         Ok(selected) => selected,
         Err(e) if e.is::<pick::Cancelled>() => return Ok(()),
         Err(e) => return Err(e),
@@ -131,17 +142,25 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
 }
 
 /// `scriv file pick` — fuzzy-select a known file and print its absolute path.
+///
+/// The picker shows `~`-collapsed paths; the printed path is absolute.
 pub fn pick(ctx: &Ctx) -> Result<()> {
     ctx.ensure_files_migrated()?;
-    let files: Vec<String> = files::read_lines(&ctx.files_path)?
-        .iter()
-        .map(|line| expand_tilde(line, ctx.home_str()))
-        .collect();
-    if files.is_empty() {
+    let lines = files::read_lines(&ctx.files_path)?;
+    if lines.is_empty() {
         bail!("no known files");
     }
 
-    let choice = pick::pick_one(&files, "Pick a file", &ctx.config.picker)?;
+    let items: Vec<PickItem> = lines
+        .iter()
+        .map(|line| {
+            let abs = expand_tilde(line, ctx.home_str());
+            let shown = display_path(&abs, ctx.home_str(), false);
+            PickItem::new(shown, abs)
+        })
+        .collect();
+
+    let choice = pick::pick_one(items, "Pick a file", &ctx.config.picker)?;
     println!("{choice}");
     Ok(())
 }
@@ -154,7 +173,8 @@ fn pick_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
     if candidates.is_empty() {
         bail!("no files found in the current directory");
     }
-    match pick::pick_one(&candidates, "Add a file", &ctx.config.picker) {
+    let items = candidates.into_iter().map(PickItem::plain).collect();
+    match pick::pick_one(items, "Add a file", &ctx.config.picker) {
         Ok(choice) => Ok(Some(choice)),
         Err(e) if e.is::<pick::Cancelled>() => Ok(None),
         Err(e) => Err(e),

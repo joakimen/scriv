@@ -6,30 +6,50 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use crate::config::Config;
+use crate::config::{Config, PathEntry};
 use crate::logger::Logger;
 use crate::path::expand_home_dir;
 
+/// A discovered repository together with the configuration group it belongs to.
+pub struct FoundRepo {
+    pub group: String,
+    pub path: PathBuf,
+}
+
 /// Discover repositories across every configured path, expanding `~` against
-/// `home`. Each path is searched on its own thread. A missing root path is a
-/// hard error; unreadable subdirectories are logged and skipped.
-pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<PathBuf>> {
+/// `home` and tagging each result with its group. Each (group, path) pair is
+/// searched on its own thread. A missing root path is a hard error; unreadable
+/// subdirectories are logged and skipped.
+pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<FoundRepo>> {
     if cfg.paths.is_empty() {
         anyhow::bail!("no paths found in config file");
     }
 
-    let results: Vec<Result<Vec<PathBuf>>> = thread::scope(|scope| {
-        let handles: Vec<_> = cfg
-            .paths
+    // One search job per (group, path entry).
+    let jobs: Vec<(&str, &PathEntry)> = cfg
+        .paths
+        .iter()
+        .flat_map(|(group, entries)| entries.iter().map(move |entry| (group.as_str(), entry)))
+        .collect();
+
+    let results: Vec<Result<Vec<FoundRepo>>> = thread::scope(|scope| {
+        let handles: Vec<_> = jobs
             .iter()
-            .map(|entry| {
-                scope.spawn(|| {
+            .map(|&(group, entry)| {
+                scope.spawn(move || {
                     let root = expand_home_dir(&entry.path, home);
                     log.info(&format!(
-                        "path entry {} (depth {})",
+                        "group {group}: path {} (depth {})",
                         entry.path, entry.depth
                     ));
-                    find_repos(&root, entry.depth, &cfg.ignore, log)
+                    let repos = find_repos(&root, entry.depth, &cfg.ignore, log)?;
+                    Ok(repos
+                        .into_iter()
+                        .map(|path| FoundRepo {
+                            group: group.to_string(),
+                            path,
+                        })
+                        .collect())
                 })
             })
             .collect();

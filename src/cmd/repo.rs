@@ -3,10 +3,12 @@
 use anyhow::{Context, Result};
 
 use crate::path::display_path;
+use crate::pick::PickItem;
+use crate::repo::FoundRepo;
 use crate::{Ctx, pick, repo};
 
-/// Discover repositories, sorted, home-collapsed unless `absolute`.
-fn discover(ctx: &Ctx) -> Result<Vec<String>> {
+/// Discover repositories, group-tagged and sorted by path.
+fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
     if ctx.config.paths.is_empty() {
         anyhow::bail!(
             "no repository paths configured in {}",
@@ -20,35 +22,57 @@ fn discover(ctx: &Ctx) -> Result<Vec<String>> {
 
     let mut repos = repo::find_all_repos(&ctx.config, ctx.home(), &ctx.log)
         .with_context(|| format!("using configuration {}", ctx.config_path.display()))?;
-    repos.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
+    repos.sort_by(|a, b| a.path.as_os_str().cmp(b.path.as_os_str()));
 
     if repos.is_empty() {
         anyhow::bail!("no repositories found");
     }
-    Ok(repos
-        .iter()
-        .map(|r| r.to_string_lossy().into_owned())
-        .collect())
+    Ok(repos)
 }
 
-/// `scriv repo ls` — print every discovered repository, one per line.
+/// `scriv repo ls` — print every discovered repository, one per line,
+/// home-collapsed unless `absolute`.
 pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
     let repos = discover(ctx)?;
     ctx.log
         .info(&format!("returning {} repositories", repos.len()));
     for repo in &repos {
-        println!("{}", display_path(repo, ctx.home_str(), absolute));
+        let path = repo.path.to_string_lossy();
+        println!("{}", display_path(&path, ctx.home_str(), absolute));
     }
     Ok(())
 }
 
 /// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
 ///
-/// The printed path is always absolute so a shell shim can `cd` to it without
-/// re-expanding `~`.
+/// The picker shows `~`-collapsed paths, and — when more than one group is
+/// configured — an aligned group tag so the repo's group is clear. The printed
+/// path is always absolute so a shell shim can `cd` to it directly.
 pub fn pick(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
-    let choice = pick::pick_one(&repos, "Pick a repository", &ctx.config.picker)?;
+
+    let show_groups = ctx.config.paths.len() > 1;
+    let width = if show_groups {
+        repos.iter().map(|r| r.group.len()).max().unwrap_or(0)
+    } else {
+        0
+    };
+
+    let items: Vec<PickItem> = repos
+        .iter()
+        .map(|repo| {
+            let abs = repo.path.to_string_lossy().into_owned();
+            let shown = display_path(&abs, ctx.home_str(), false);
+            let label = if show_groups {
+                format!("{group:<width$}  {shown}", group = repo.group)
+            } else {
+                shown
+            };
+            PickItem::new(label, abs)
+        })
+        .collect();
+
+    let choice = pick::pick_one(items, "Pick a repository", &ctx.config.picker)?;
     println!("{choice}");
     Ok(())
 }

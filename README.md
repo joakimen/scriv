@@ -20,7 +20,8 @@ external tools are required.
 ## Commands
 
 - `scriv repo ls [-A]` — list discovered repositories (`-A` for absolute paths)
-- `scriv repo pick` — fuzzy-select a repository, print its absolute path
+- `scriv repo pick` — fuzzy-select a repository (tagged by group), print its
+  absolute path
 - `scriv file ls [--status] [--missing|--exists]` — list known files
 - `scriv file pick` — fuzzy-select a known file, print its absolute path
 - `scriv file add [path]` — add a file; omit the path to pick one from the
@@ -86,19 +87,27 @@ Configuration lives under `$XDG_CONFIG_HOME/scriv` (default
 - `files` — the known-files list, one path per line, managed by
   `scriv file add`/`remove`
 
+Run `scriv config init` to write a starter `config.toml`.
+
 ### `config.toml`
 
 ```toml
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
-[[paths]]
+# Search paths are grouped by a label. repo pick shows which group a repo
+# belongs to (once more than one group is configured).
+[[paths.personal]]
 path = "~/dev/github.com"
 depth = 2
 
-[[paths]]
+[[paths.personal]]
 path = "~/bin"
 depth = 0
+
+[[paths.work]]
+path = "~/work/acme"
+depth = 2
 
 [picker]
 height = "50%"                           # built-in finder height
@@ -106,12 +115,21 @@ height = "50%"                           # built-in finder height
 
 ### Configuration keys
 
-#### `paths[].path`
+#### `paths.<group>`
+
+A named group of search paths. The group label is shown alongside each repo in
+`repo pick`, so you can tell at a glance which context a repo belongs to (e.g.
+`personal` vs a client name). Groups appear in the order written.
+
+A flat `[[paths]]` list (no group) is also accepted and lands in a `default`
+group.
+
+#### `paths.<group>[].path`
 
 Required. The root path under which to search for repos. The root path may
 itself be a repo.
 
-#### `paths[].depth`
+#### `paths.<group>[].depth`
 
 Optional (default `0`). The search depth for the associated path. Tune this to
 your project layout — it is the primary factor in discovery performance.
