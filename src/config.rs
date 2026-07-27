@@ -60,19 +60,35 @@ pub struct PathEntry {
 
 /// Settings for the built-in fuzzy picker (skim).
 ///
-/// The picker is compiled in — there is no external `fzf` dependency — so the
-/// only knob is the finder height, mirroring the user's `--height` fzf option.
+/// The picker is compiled in — there is no external `fzf` dependency.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct PickerConfig {
     /// Finder height, e.g. `"50%"` or `"20"`. Passed through to skim.
     pub height: String,
+    /// How repository paths are rendered in `repo pick`. See [`RepoDisplay`].
+    pub display: RepoDisplay,
+}
+
+/// How `repo pick` renders each repository's path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoDisplay {
+    /// Path relative to the search root it was found under, so the shared base
+    /// (named by the group) is not repeated on every row. The default.
+    #[default]
+    Relative,
+    /// Absolute path with the home directory collapsed to `~`.
+    Tilde,
+    /// The full absolute path.
+    Full,
 }
 
 impl Default for PickerConfig {
     fn default() -> Self {
         Self {
             height: "50%".to_string(),
+            display: RepoDisplay::default(),
         }
     }
 }
@@ -319,6 +335,20 @@ depth = 0
     fn parses_picker_height() {
         let cfg = parse_toml("[picker]\nheight = \"30%\"\n").unwrap();
         assert_eq!(cfg.picker.height, "30%");
+    }
+
+    #[test]
+    fn parses_picker_display_mode() {
+        let cfg = parse_toml("[picker]\ndisplay = \"tilde\"\n").unwrap();
+        assert_eq!(cfg.picker.display, RepoDisplay::Tilde);
+    }
+
+    #[test]
+    fn picker_display_defaults_to_relative() {
+        assert_eq!(
+            parse_toml("").unwrap().picker.display,
+            RepoDisplay::Relative
+        );
     }
 
     #[test]

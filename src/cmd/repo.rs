@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 
-use crate::path::display_path;
+use crate::config::RepoDisplay;
+use crate::path::{display_path, relative_label};
 use crate::pick::PickItem;
 use crate::repo::FoundRepo;
 use crate::{Ctx, pick, repo};
@@ -11,7 +12,7 @@ use crate::{Ctx, pick, repo};
 fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
     if ctx.config.paths.is_empty() {
         anyhow::bail!(
-            "no repository paths configured in {}",
+            "no repository paths configured in {}; run `scriv config init` to create a starter config",
             ctx.config_path.display()
         );
     }
@@ -25,7 +26,10 @@ fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
     repos.sort_by(|a, b| a.path.as_os_str().cmp(b.path.as_os_str()));
 
     if repos.is_empty() {
-        anyhow::bail!("no repositories found");
+        anyhow::bail!(
+            "no repositories found under the configured paths (check depths in {})",
+            ctx.config_path.display()
+        );
     }
     Ok(repos)
 }
@@ -43,32 +47,45 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
     Ok(())
 }
 
+/// ANSI 256-colour indices used to tint groups, in assignment order. Standard
+/// hues (cyan, green, yellow, magenta, blue, red) so they read well and follow
+/// the terminal theme; cycles if there are more groups than colours.
+const GROUP_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
+
 /// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
 ///
-/// The picker shows `~`-collapsed paths, and — when more than one group is
-/// configured — an aligned group tag so the repo's group is clear. The printed
-/// path is always absolute so a shell shim can `cd` to it directly.
+/// Each row is prefixed with its group name, coloured per group so groups are
+/// easy to tell apart. Paths render per `picker.display`. The printed path is
+/// always absolute so a shell shim can `cd` to it directly.
 pub fn pick(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
 
-    let show_groups = ctx.config.paths.len() > 1;
-    let width = if show_groups {
-        repos.iter().map(|r| r.group.len()).max().unwrap_or(0)
-    } else {
-        0
-    };
+    // Assign each configured group a colour, in config order.
+    let colors: std::collections::HashMap<&str, u8> = ctx
+        .config
+        .paths
+        .keys()
+        .enumerate()
+        .map(|(i, group)| (group.as_str(), GROUP_COLORS[i % GROUP_COLORS.len()]))
+        .collect();
+    let width = repos.iter().map(|r| r.group.len()).max().unwrap_or(0);
 
+    let mode = ctx.config.picker.display;
     let items: Vec<PickItem> = repos
         .iter()
         .map(|repo| {
             let abs = repo.path.to_string_lossy().into_owned();
-            let shown = display_path(&abs, ctx.home_str(), false);
-            let label = if show_groups {
-                format!("{group:<width$}  {shown}", group = repo.group)
-            } else {
-                shown
+            let shown = match mode {
+                RepoDisplay::Relative => relative_label(&repo.path, &repo.root),
+                RepoDisplay::Tilde => display_path(&abs, ctx.home_str(), false),
+                RepoDisplay::Full => abs.clone(),
             };
-            PickItem::new(label, abs)
+            let label = format!("{group:<width$}  {shown}", group = repo.group);
+            let mut item = PickItem::new(label, abs);
+            if let Some(&color) = colors.get(repo.group.as_str()) {
+                item = item.color(color);
+            }
+            item
         })
         .collect();
 

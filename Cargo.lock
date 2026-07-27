@@ -1687,6 +1687,7 @@ dependencies = [
  "dirs",
  "ignore",
  "indexmap",
+ "ratatui",
  "serde",
  "serde_json",
  "skim",
