@@ -9,6 +9,8 @@
 //! `~`-collapsed path or a group tag while still returning an absolute path.
 
 use anyhow::{Result, anyhow};
+use ratatui::style::Color;
+use ratatui::text::Line;
 use skim::prelude::*;
 
 use crate::config::PickerConfig;
@@ -27,10 +29,12 @@ impl std::fmt::Display for Cancelled {
 impl std::error::Error for Cancelled {}
 
 /// One choice in the picker: `label` is displayed and matched against, `value`
-/// is returned when it is selected.
+/// is returned when it is selected, and `color` optionally tints the row (an
+/// ANSI 256-colour index, so it respects the terminal theme).
 pub struct PickItem {
     pub label: String,
     pub value: String,
+    pub color: Option<u8>,
 }
 
 impl PickItem {
@@ -40,6 +44,7 @@ impl PickItem {
         Self {
             label: text.clone(),
             value: text,
+            color: None,
         }
     }
 
@@ -48,15 +53,23 @@ impl PickItem {
         Self {
             label: label.into(),
             value: value.into(),
+            color: None,
         }
+    }
+
+    /// Tint the row with an ANSI 256-colour index.
+    pub fn color(mut self, color: u8) -> Self {
+        self.color = Some(color);
+        self
     }
 }
 
 /// Bridges a [`PickItem`] to skim: `text()` drives display and matching,
-/// `output()` is what a selection yields.
+/// `output()` is what a selection yields, and `display()` tints the row.
 struct SkItem {
     label: String,
     value: String,
+    color: Option<u8>,
 }
 
 impl SkimItem for SkItem {
@@ -66,6 +79,15 @@ impl SkimItem for SkItem {
 
     fn output(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.value)
+    }
+
+    fn display(&self, mut context: DisplayContext) -> Line<'_> {
+        // Tint the whole row in the group's colour; skim still overlays its
+        // match highlighting on top via `to_line`.
+        if let Some(idx) = self.color {
+            context.base_style = context.base_style.fg(Color::Indexed(idx));
+        }
+        context.to_line(self.text())
     }
 }
 
@@ -87,6 +109,15 @@ pub fn pick_many(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Resu
 
 /// Drive skim over `items` and return the selected values.
 fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<String>> {
+    // skim needs a terminal for its UI. Fail with a clear message rather than
+    // skim's raw "Device not configured" when there is none (e.g. in a pipe
+    // with no controlling tty). Command substitution — `cd (scriv repo pick)` —
+    // still has a tty on stdin/stderr, so it is allowed.
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() && !std::io::stderr().is_terminal() {
+        anyhow::bail!("interactive selection needs a terminal");
+    }
+
     let options = SkimOptionsBuilder::default()
         .height(cfg.height.clone())
         .prompt(format!("{prompt}> "))
@@ -103,6 +134,7 @@ fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> R
             Arc::new(SkItem {
                 label: it.label,
                 value: it.value,
+                color: it.color,
             }) as Arc<dyn SkimItem>
         })
         .collect();

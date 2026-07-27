@@ -3,16 +3,25 @@
 //! library crate.
 //!
 //! Top-level commands: `repo` and `file` work with the things scriv tracks;
-//! `config` manages its configuration; `shell` prints shell integration. The
+//! `config` manages its configuration; `init` prints shell integration. The
 //! help layout follows clap's default (description, usage, commands, options).
 
 use std::process::ExitCode;
 
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 use scriv::pick::Cancelled;
 use scriv::{Ctx, cmd, shell};
+
+/// Usage examples appended to the top-level help.
+const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
+  scriv config init            Write a starter configuration
+  scriv repo pick              Fuzzy-pick a repository, print its path
+  cd (scriv repo pick)         Jump to a repository (fish)
+  scriv file add <path>        Track a file you visit often
+  scriv init fish | source     Load shell integration + completions";
 
 /// Help styling matching cargo: bright-green bold headers and usage,
 /// bright-cyan bold literals (command and flag names), cyan placeholders.
@@ -30,6 +39,7 @@ const STYLES: Styles = Styles::styled()
     name = "scriv",
     version,
     about = "Discover Git repositories and track the files you visit often.",
+    after_help = EXAMPLES,
     styles = STYLES,
     disable_help_subcommand = true
 )]
@@ -65,9 +75,12 @@ enum Command {
         command: ConfigCmd,
     },
     /// Print shell integration for `source`-ing
+    ///
+    /// `fish` emits helper functions, key bindings, and completions; other
+    /// shells emit completions only.
     Init {
-        #[command(subcommand)]
-        command: InitCmd,
+        /// Shell to emit integration for
+        shell: Shell,
     },
 }
 
@@ -128,20 +141,12 @@ enum ConfigCmd {
     Path,
 }
 
-#[derive(Subcommand)]
-enum InitCmd {
-    /// Emit fish shell integration
-    Fish,
-}
-
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     // `init` needs the clap command, not the environment; handle it before Ctx.
-    if let Command::Init { command } = &cli.command {
-        match command {
-            InitCmd::Fish => print!("{}", shell::fish(&mut Cli::command())),
-        }
+    if let Command::Init { shell } = &cli.command {
+        print!("{}", shell::integration(*shell, &mut Cli::command()));
         return ExitCode::SUCCESS;
     }
 

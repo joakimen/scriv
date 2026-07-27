@@ -32,6 +32,22 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
     format!("{}{}", home, &path[1..])
 }
 
+/// Render a repository path relative to the search `root` it was found under,
+/// so a shared base is not repeated on every row.
+///
+/// When the repository *is* the root (a root that is itself a repo, at depth 0),
+/// the relative part is empty; the basename is used instead so the row is not
+/// blank.
+pub fn relative_label(path: &Path, root: &Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(rest) if !rest.as_os_str().is_empty() => rest.to_string_lossy().into_owned(),
+        _ => path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+    }
+}
+
 /// Render `path` for display. Paths are returned verbatim when `absolute` is
 /// set; otherwise a `home` prefix is collapsed to `~`.
 ///
@@ -217,6 +233,25 @@ mod tests {
         assert_eq!(
             display_path("/opt/tools/repo", "/home/user", false),
             "/opt/tools/repo"
+        );
+    }
+
+    #[test]
+    fn relative_label_strips_the_root() {
+        assert_eq!(
+            relative_label(
+                Path::new("/Users/kevin/dev/github.com/kkc/scriv"),
+                Path::new("/Users/kevin/dev/github.com")
+            ),
+            "kkc/scriv"
+        );
+    }
+
+    #[test]
+    fn relative_label_falls_back_to_basename_when_repo_is_the_root() {
+        assert_eq!(
+            relative_label(Path::new("/Users/kevin/bin"), Path::new("/Users/kevin/bin")),
+            "bin"
         );
     }
 

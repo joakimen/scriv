@@ -148,7 +148,7 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
     if lines.is_empty() {
-        bail!("no known files");
+        bail!("no known files yet — add one with `scriv file add <path>`");
     }
 
     let items: Vec<PickItem> = lines
