@@ -7,6 +7,7 @@ use ignore::WalkBuilder;
 
 use crate::path::{display_path, expand_tilde, sanitize_file_path};
 use crate::pick::PickItem;
+use crate::term;
 use crate::{Ctx, files, pick};
 
 /// `scriv file ls` — print known files, optionally with existence status.
@@ -22,7 +23,7 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
         return Ok(());
     }
 
-    let use_color = status && stdout_is_tty() && !no_color();
+    let use_color = status && term::stdout_color();
 
     for line in &lines {
         let expanded = expand_tilde(line, ctx.home_str());
@@ -220,17 +221,6 @@ fn list_files(root: &Path) -> Result<Vec<String>> {
     }
     files.sort();
     Ok(files)
-}
-
-fn stdout_is_tty() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdout().is_terminal()
-}
-
-/// Honour the `NO_COLOR` convention: colour is disabled when the variable is
-/// present and non-empty.
-fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
 }
 
 #[cfg(test)]
