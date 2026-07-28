@@ -4,6 +4,8 @@
 //! [`crate::Ctx`] and perform the filesystem and interactive I/O; all decision
 //! logic they rely on lives in the pure core modules.
 
+pub mod branch;
 pub mod config;
 pub mod file;
+pub mod pr;
 pub mod repo;

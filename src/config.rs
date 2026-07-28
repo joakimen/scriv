@@ -68,6 +68,11 @@ pub struct PickerConfig {
     pub height: String,
     /// How repository paths are rendered in `repo pick`. See [`RepoDisplay`].
     pub display: RepoDisplay,
+    /// Whether the picker shows a preview pane for the highlighted row.
+    pub preview: bool,
+    /// Preview pane layout in skim's syntax, e.g. `"right:50%"`, `"down:40%"`,
+    /// or `"right:50%:hidden"` to start collapsed.
+    pub preview_window: String,
 }
 
 /// How `repo pick` renders each repository's path.
@@ -89,6 +94,8 @@ impl Default for PickerConfig {
         Self {
             height: "50%".to_string(),
             display: RepoDisplay::default(),
+            preview: true,
+            preview_window: "right:50%".to_string(),
         }
     }
 }
@@ -349,6 +356,20 @@ depth = 0
             parse_toml("").unwrap().picker.display,
             RepoDisplay::Relative
         );
+    }
+
+    #[test]
+    fn parses_preview_settings() {
+        let cfg = parse_toml("[picker]\npreview = false\npreview_window = \"down:40%\"\n").unwrap();
+        assert!(!cfg.picker.preview);
+        assert_eq!(cfg.picker.preview_window, "down:40%");
+    }
+
+    #[test]
+    fn preview_defaults_to_on_at_the_right() {
+        let cfg = parse_toml("").unwrap();
+        assert!(cfg.picker.preview);
+        assert_eq!(cfg.picker.preview_window, "right:50%");
     }
 
     #[test]

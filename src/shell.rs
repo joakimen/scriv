@@ -58,10 +58,25 @@ function scriv-file-edit --description "Pick a known file and open it in \$EDITO
     end
 end
 
+function scriv-branch-checkout --description "Pick a git branch and check it out"
+    command scriv branch checkout
+end
+
+function scriv-pr-checkout --description "Pick a GitHub pull request and check it out"
+    command scriv pr checkout
+end
+
+# Bindings use alt-<letter>, which fish leaves entirely unbound by default, and
+# are chosen so the chord falls under one hand: alt-b (branch) and alt-g (git)
+# are both left-hand, alt-o and alt-p right-hand. Rebind any of them by calling
+# `bind` yourself after `scriv_key_bindings`.
 function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind ctrl-o "scriv-repo-cd; commandline -f execute"
     bind alt-o  "scriv-repo-cd; commandline -f execute"
     bind f3     "scriv-file-edit; commandline -f execute"
+    bind alt-b  "scriv-branch-checkout; commandline -f execute"
+    bind alt-g  "scriv-branch-checkout; commandline -f execute"
+    bind alt-p  "scriv-pr-checkout; commandline -f execute"
 end
 "#;
 
@@ -79,6 +94,8 @@ mod tests {
         let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("function scriv-repo-cd"));
         assert!(out.contains("function scriv-file-edit"));
+        assert!(out.contains("function scriv-branch-checkout"));
+        assert!(out.contains("function scriv-pr-checkout"));
         assert!(out.contains("function scriv_key_bindings"));
     }
 
@@ -89,6 +106,18 @@ mod tests {
         assert!(out.contains("bind ctrl-o"));
         assert!(out.contains("bind alt-o"));
         assert!(out.contains("bind f3"));
+        assert!(out.contains("bind alt-b"));
+        assert!(out.contains("bind alt-g"));
+        assert!(out.contains("bind alt-p"));
+    }
+
+    /// f4 and f5 are common in user configs (awsvault, editors); fish leaves
+    /// the whole alt-<letter> space free, so scriv stays out of the way.
+    #[test]
+    fn fish_avoids_function_keys_beyond_f3() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(!out.contains("bind f4"));
+        assert!(!out.contains("bind f5"));
     }
 
     #[test]
