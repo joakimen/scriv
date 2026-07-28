@@ -6,10 +6,10 @@
 
 use anyhow::{Result, bail};
 
+use crate::Ctx;
 use crate::gh::{self, PullRequest};
-use crate::pick::PickItem;
+use crate::pick::{self, PickItem, Preview};
 use crate::term;
-use crate::{Ctx, pick};
 
 /// Fetch pull requests, failing with a useful message when there are none.
 fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
@@ -63,6 +63,40 @@ pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
     Ok(())
 }
 
+/// The preview for a pull request: its heading and description, rendered from
+/// data already in memory.
+///
+/// Deliberately *not* `gh pr view`. That would be prettier — it renders
+/// markdown and shows check results — but it is a network round trip (~2s here)
+/// per highlighted row, spawned again on every move through the list. skim runs
+/// preview commands on a background thread and does not kill non-PTY children,
+/// so scrolling would leave a queue of `gh` processes racing to finish. The
+/// description is worth showing; it is not worth making the list feel slow.
+fn preview(pr: &PullRequest) -> Preview {
+    let mut out = term::paint(
+        &format!("#{number}  {title}", number = pr.number, title = pr.title),
+        pr.color(),
+        true,
+    );
+    out.push('\n');
+    out.push_str(&format!(
+        "{tag}  @{author}  [{head}]  updated {updated}\n\n",
+        tag = pr.tag(),
+        author = pr.author_login(),
+        head = pr.head_ref_name,
+        updated = pr.updated_date(),
+    ));
+
+    let body = pr.body.trim();
+    if body.is_empty() {
+        out.push_str("(no description)");
+    } else {
+        // GitHub stores CRLF; the pane renders the stray CRs as artefacts.
+        out.push_str(&body.replace("\r\n", "\n"));
+    }
+    Preview::Text(out)
+}
+
 /// Build picker rows, tinted by state — green ready, grey draft, magenta
 /// merged, red closed. The source branch is part of the label so it is
 /// fuzzy-matchable, not just the title.
@@ -77,7 +111,9 @@ fn items(prs: &[PullRequest]) -> Vec<PickItem> {
                 author = pr.author_login(),
                 head = pr.head_ref_name,
             );
-            PickItem::new(label, pr.number.to_string()).color(pr.color())
+            PickItem::new(label, pr.number.to_string())
+                .color(pr.color())
+                .preview(preview(pr))
         })
         .collect()
 }
@@ -122,10 +158,11 @@ mod tests {
             r#"[
             {"number":7,"title":"Add branch picker","author":{"login":"joakimen"},
              "headRefName":"feat/branches","isDraft":false,"state":"OPEN",
-             "updatedAt":"2026-07-27T09:12:33Z"},
+             "updatedAt":"2026-07-27T09:12:33Z",
+             "body":"Adds a picker.\r\n\r\nSecond paragraph."},
             {"number":123,"title":"WIP","author":{"login":"someone"},
              "headRefName":"wip","isDraft":true,"state":"OPEN",
-             "updatedAt":"2026-07-20T11:00:00Z"}
+             "updatedAt":"2026-07-20T11:00:00Z","body":""}
         ]"#,
         )
         .unwrap()
@@ -151,6 +188,39 @@ mod tests {
     fn drafts_are_tinted_differently() {
         let items = items(&prs());
         assert_ne!(items[0].color, items[1].color);
+    }
+
+    /// The preview must be ready-made text: a command here would mean a `gh`
+    /// network call for every row the user scrolls past.
+    #[test]
+    fn preview_is_rendered_in_memory() {
+        let Preview::Text(text) = preview(&prs()[0]) else {
+            panic!("a PR preview must not spawn a command");
+        };
+        assert!(text.contains("#7"), "{text}");
+        assert!(text.contains("Add branch picker"), "{text}");
+        assert!(text.contains("@joakimen"), "{text}");
+        assert!(text.contains("[feat/branches]"), "{text}");
+        assert!(text.contains("Adds a picker"), "the body is the preview");
+    }
+
+    #[test]
+    fn preview_handles_a_missing_description() {
+        let Preview::Text(text) = preview(&prs()[1]) else {
+            panic!("expected text");
+        };
+        assert!(text.contains("(no description)"), "{text}");
+    }
+
+    /// GitHub stores CRLF; leaving it in litters the pane with stray carriage
+    /// returns.
+    #[test]
+    fn preview_normalises_line_endings() {
+        let text = match preview(&prs()[0]) {
+            Preview::Text(text) => text,
+            Preview::Command(_) => panic!("expected text"),
+        };
+        assert!(!text.contains('\r'), "CRLF leaked into the preview");
     }
 
     /// Numbers are padded to a common width so titles start in one column.

@@ -8,7 +8,7 @@
 use anyhow::{Result, bail};
 
 use crate::git::{self, Branch, Filter};
-use crate::pick::PickItem;
+use crate::pick::{PickItem, Preview};
 use crate::term;
 use crate::{Ctx, pick};
 
@@ -82,6 +82,24 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
     Ok(())
 }
 
+/// The preview for a branch: its recent commits, with who wrote them and when.
+///
+/// That is the question a branch list actually raises — whose work is this, and
+/// is it still live — and it is answered by the same `git log` invocation for a
+/// local or a remote ref. The trailing `--` keeps a branch named like a file
+/// from being read as a path.
+///
+/// Bounded to 30 commits and run with `--no-optional-locks`, so scrolling the
+/// list never takes the repository's index lock or reads more history than the
+/// pane can show.
+fn preview(branch: &Branch) -> Preview {
+    Preview::Command(format!(
+        "git --no-optional-locks log --color=always --max-count=30 --date=relative \
+         --format='%C(auto)%h%C(reset)  %C(blue)%an%C(reset)  %C(green)%ad%C(reset)  %s' {} --",
+        pick::quote(&branch.name)
+    ))
+}
+
 /// Build picker rows: current-branch marker, name, last commit date, subject,
 /// each row tinted by [`BranchKind`](crate::git::BranchKind) — yellow
 /// local-only, green local+remote, cyan remote-only.
@@ -98,7 +116,9 @@ fn items(branches: &[Branch]) -> Vec<PickItem> {
                 date = branch.date,
                 subject = branch.subject,
             );
-            PickItem::new(label.trim_end(), branch.name.clone()).color(branch.kind.color())
+            PickItem::new(label.trim_end(), branch.name.clone())
+                .color(branch.kind.color())
+                .preview(preview(branch))
         })
         .collect()
 }
@@ -195,5 +215,21 @@ mod tests {
     fn columns_align() {
         let items = items(&branches());
         assert_eq!(items[0].label.find("init"), items[1].label.find("wip"));
+    }
+
+    #[test]
+    fn preview_logs_the_branch_with_authors() {
+        let Preview::Command(cmd) = preview(&branches()[1]) else {
+            panic!("expected a command preview");
+        };
+        assert!(cmd.contains(" log "), "{cmd}");
+        assert!(
+            cmd.contains("%an"),
+            "author is what the preview is for: {cmd}"
+        );
+        assert!(cmd.ends_with("'origin/feature' --"), "{cmd}");
+        // Browsing a branch list must not take the repository's index lock.
+        assert!(cmd.contains("--no-optional-locks"), "{cmd}");
+        assert!(cmd.contains("--max-count=30"), "unbounded log: {cmd}");
     }
 }

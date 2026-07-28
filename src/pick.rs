@@ -28,13 +28,37 @@ impl std::fmt::Display for Cancelled {
 
 impl std::error::Error for Cancelled {}
 
+/// What the preview pane shows for the highlighted row.
+///
+/// Prefer [`Preview::Text`] whenever the data is already in hand: it renders
+/// instantly, with nothing to spawn or wait for. A [`Preview::Command`] is only
+/// appropriate for work that is local and fast (tens of milliseconds), because
+/// skim spawns it again on every move through the list and does not kill the
+/// previous child.
+pub enum Preview {
+    /// Ready-made text; ANSI escapes are honoured.
+    Text(String),
+    /// A shell command, run only when the row is highlighted — so the cost is
+    /// paid per look, not per item. skim exports `COLUMNS` and `ROWS` to it,
+    /// for tools that wrap their own output.
+    Command(String),
+}
+
+/// Quote `arg` for the shell that runs a [`Preview::Command`], so a branch name
+/// or path containing spaces or quotes cannot alter the command.
+pub fn quote(arg: &str) -> String {
+    format!("'{}'", arg.replace('\'', r"'\''"))
+}
+
 /// One choice in the picker: `label` is displayed and matched against, `value`
-/// is returned when it is selected, and `color` optionally tints the row (an
-/// ANSI 256-colour index, so it respects the terminal theme).
+/// is returned when it is selected, `color` optionally tints the row (an ANSI
+/// 256-colour index, so it respects the terminal theme), and `preview` fills
+/// the preview pane while the row is highlighted.
 pub struct PickItem {
     pub label: String,
     pub value: String,
     pub color: Option<u8>,
+    pub preview: Option<Preview>,
 }
 
 impl PickItem {
@@ -45,6 +69,7 @@ impl PickItem {
             label: text.clone(),
             value: text,
             color: None,
+            preview: None,
         }
     }
 
@@ -54,6 +79,7 @@ impl PickItem {
             label: label.into(),
             value: value.into(),
             color: None,
+            preview: None,
         }
     }
 
@@ -62,14 +88,22 @@ impl PickItem {
         self.color = Some(color);
         self
     }
+
+    /// Show `preview` in the preview pane while this row is highlighted.
+    pub fn preview(mut self, preview: Preview) -> Self {
+        self.preview = Some(preview);
+        self
+    }
 }
 
 /// Bridges a [`PickItem`] to skim: `text()` drives display and matching,
-/// `output()` is what a selection yields, and `display()` tints the row.
+/// `output()` is what a selection yields, `display()` tints the row, and
+/// `preview()` fills the preview pane.
 struct SkItem {
     label: String,
     value: String,
     color: Option<u8>,
+    preview: Option<Preview>,
 }
 
 impl SkimItem for SkItem {
@@ -88,6 +122,16 @@ impl SkimItem for SkItem {
             context.base_style = context.base_style.fg(Color::Indexed(idx));
         }
         context.to_line(self.text())
+    }
+
+    fn preview(&self, _context: PreviewContext) -> ItemPreview {
+        match &self.preview {
+            Some(Preview::Text(text)) => ItemPreview::AnsiText(text.clone()),
+            Some(Preview::Command(cmd)) => ItemPreview::Command(cmd.clone()),
+            // Blank rather than `Global`, which would run the (empty) global
+            // preview command for rows that have nothing to show.
+            None => ItemPreview::Text(String::new()),
+        }
     }
 }
 
@@ -118,11 +162,24 @@ fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> R
         anyhow::bail!("interactive selection needs a terminal");
     }
 
-    let options = SkimOptionsBuilder::default()
+    let mut builder = SkimOptionsBuilder::default();
+    builder
         .height(cfg.height.clone())
         .prompt(format!("{prompt}> "))
         .reverse(true)
-        .multi(multi)
+        .multi(multi);
+
+    // The pane only exists when skim has a preview command; the per-item
+    // `preview()` above supplies the actual content, so an empty string is
+    // enough to turn it on. Skipped entirely when no item has a preview, so
+    // pickers without one keep the full width.
+    if cfg.preview && items.iter().any(|item| item.preview.is_some()) {
+        builder
+            .preview("")
+            .preview_window(cfg.preview_window.as_str());
+    }
+
+    let options = builder
         .build()
         .map_err(|e| anyhow!("configuring picker: {e}"))?;
 
@@ -135,6 +192,7 @@ fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> R
                 label: it.label,
                 value: it.value,
                 color: it.color,
+                preview: it.preview,
             }) as Arc<dyn SkimItem>
         })
         .collect();
@@ -151,4 +209,23 @@ fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> R
         .iter()
         .map(|item| item.output().to_string())
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quotes_plain_values() {
+        assert_eq!(quote("main"), "'main'");
+        assert_eq!(quote("/home/u/my repo"), "'/home/u/my repo'");
+    }
+
+    /// A single quote in a branch name or path must not end the quoted string
+    /// and let the rest be read as shell syntax.
+    #[test]
+    fn quotes_escape_embedded_single_quotes() {
+        assert_eq!(quote("it's"), r"'it'\''s'");
+        assert_eq!(quote("'; rm -rf /; '"), r"''\''; rm -rf /; '\'''");
+    }
 }

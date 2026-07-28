@@ -32,6 +32,8 @@ depth = 0
 [picker]
 height = "50%"        # finder height, e.g. "50%" or "20"
 # display = "relative" # repo path rendering: relative | tilde | full
+# preview = true       # show a preview pane for the highlighted row
+# preview_window = "right:50%" # preview layout: [up|down|left|right][:SIZE][:hidden]
 "#;
 
 /// `scriv config init` — write `config.toml` into the config directory,

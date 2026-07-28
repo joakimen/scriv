@@ -18,7 +18,11 @@ use serde::Deserialize;
 use crate::Reported;
 
 /// JSON fields requested from `gh pr list`.
-const FIELDS: &str = "number,title,author,headRefName,isDraft,state,updatedAt";
+///
+/// `body` is fetched here, with everything else, so the preview pane can be
+/// rendered from memory. It costs no extra request — only a larger response —
+/// and saves a `gh pr view` round trip per highlighted row.
+const FIELDS: &str = "number,title,author,headRefName,isDraft,state,updatedAt,body";
 
 /// A pull request, as much of it as the picker needs.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -39,6 +43,9 @@ pub struct PullRequest {
     /// ISO-8601 timestamp, e.g. `2026-07-27T09:12:33Z`.
     #[serde(default)]
     pub updated_at: String,
+    /// The description, as markdown. Empty when none was written.
+    #[serde(default)]
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

@@ -6,9 +6,22 @@ use anyhow::{Context, Result, bail};
 use ignore::WalkBuilder;
 
 use crate::path::{display_path, expand_tilde, sanitize_file_path};
-use crate::pick::PickItem;
+use crate::pick::{PickItem, Preview};
 use crate::term;
 use crate::{Ctx, files, pick};
+
+/// The preview for a file: its contents.
+///
+/// `bat` renders them with syntax highlighting when it is installed; `head`
+/// covers everyone else, and its error text is the preview when the path is
+/// gone — which the known-files list expects to happen.
+fn preview(path: &str) -> Preview {
+    let path = pick::quote(path);
+    Preview::Command(format!(
+        "bat --color=always --style=plain --line-range=:200 -- {path} 2>/dev/null \
+         || head -n 200 -- {path}"
+    ))
+}
 
 /// `scriv file ls` — print known files, optionally with existence status.
 pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
@@ -119,8 +132,9 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
     let items: Vec<PickItem> = lines
         .iter()
         .map(|line| {
-            let shown = display_path(&expand_tilde(line, ctx.home_str()), ctx.home_str(), false);
-            PickItem::new(shown, line.clone())
+            let expanded = expand_tilde(line, ctx.home_str());
+            let shown = display_path(&expanded, ctx.home_str(), false);
+            PickItem::new(shown, line.clone()).preview(preview(&expanded))
         })
         .collect();
 
@@ -157,7 +171,7 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
         .map(|line| {
             let abs = expand_tilde(line, ctx.home_str());
             let shown = display_path(&abs, ctx.home_str(), false);
-            PickItem::new(shown, abs)
+            PickItem::new(shown, abs.clone()).preview(preview(&abs))
         })
         .collect();
 
@@ -174,7 +188,13 @@ fn pick_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
     if candidates.is_empty() {
         bail!("no files found in the current directory");
     }
-    let items = candidates.into_iter().map(PickItem::plain).collect();
+    let items = candidates
+        .into_iter()
+        .map(|file| {
+            let preview = preview(&file);
+            PickItem::plain(file).preview(preview)
+        })
+        .collect();
     match pick::pick_one(items, "Add a file", &ctx.config.picker) {
         Ok(choice) => Ok(Some(choice)),
         Err(e) if e.is::<pick::Cancelled>() => Ok(None),

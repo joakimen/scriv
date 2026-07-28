@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 use crate::config::RepoDisplay;
 use crate::path::{display_path, relative_label};
-use crate::pick::PickItem;
+use crate::pick::{PickItem, Preview};
 use crate::repo::FoundRepo;
 use crate::{Ctx, pick, repo};
 
@@ -52,6 +52,27 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
 /// the terminal theme; cycles if there are more groups than colours.
 const GROUP_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
 
+/// The preview for a repository: its current branch and working-tree state,
+/// then recent commits.
+///
+/// That is what distinguishes two similarly named checkouts — which branch is
+/// out, whether it is dirty, and what was last done there. Both commands are
+/// local and take tens of milliseconds, which is the bar for running anything
+/// per highlighted row.
+///
+/// `--no-optional-locks` matters here: a plain `git status` refreshes and
+/// rewrites the index, so merely scrolling past a repository would take its
+/// index lock and contend with whatever the user is running in it.
+fn preview(path: &str) -> Preview {
+    let repo = pick::quote(path);
+    Preview::Command(format!(
+        "git --no-optional-locks -C {repo} -c color.status=always status --short --branch \
+         | head -n 10; \
+         git --no-optional-locks -C {repo} log --color=always --max-count=20 --date=relative \
+         --format='%C(auto)%h%C(reset)  %C(blue)%an%C(reset)  %C(green)%ad%C(reset)  %s'"
+    ))
+}
+
 /// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
 ///
 /// Each row is prefixed with its group name, coloured per group so groups are
@@ -81,7 +102,7 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
                 RepoDisplay::Full => abs.clone(),
             };
             let label = format!("{group:<width$}  {shown}", group = repo.group);
-            let mut item = PickItem::new(label, abs);
+            let mut item = PickItem::new(label, abs.clone()).preview(preview(&abs));
             if let Some(&color) = colors.get(repo.group.as_str()) {
                 item = item.color(color);
             }
