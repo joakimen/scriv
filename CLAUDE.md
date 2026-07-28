@@ -1,21 +1,45 @@
 # Working on scriv
 
 scriv scans the paths you configure for Git repositories, tracks files you
-return to, and switches branches and pull requests — all through one built-in
-fuzzy picker (skim).
+return to, opens files in your editor, and switches branches and pull
+requests — all through one built-in fuzzy picker (skim).
 
 ## Before opening a pull request
 
 - `make` — fmt check, clippy (`-D warnings`), tests, release build. All four
   must pass; CI runs the same set.
-- **If anything changed what a picker shows on screen — row layout, colours,
-  preview contents, the commands or flags in `demo/demo.tape` — re-record the
-  demo with `make demo` and commit the resulting `docs/demo.gif`.** CI only
-  plays the tape (`make demo-check`); it never commits a GIF, so a stale demo
-  is invisible until someone looks at the README. Recording needs `vhs`
-  (`brew install vhs`) and takes about 30 seconds.
 - Keep commits logical and self-contained: each one should build and test
   green on its own.
+
+### The three docs that go stale silently
+
+Nothing in CI compares these against the code, so a change that outdates one
+looks green all the way to merge. Walk the list on every pull request and say
+in the PR body which ones you touched, or why none needed it.
+
+**1. CLI help text — `src/main.rs`.** The `about`, every doc comment on a
+command or flag, and the `EXAMPLES` block are the only documentation most
+users read, and clap ships them straight to the terminal. A new command or
+flag is not done until it has a doc comment; a renamed or re-scoped one is not
+done until the old wording is gone. `EXAMPLES` covers the common entry point
+of each command group — add a line when you add a group, not when you add
+every flag.
+
+**2. README.md.** Check each of these in turn, since a change rarely touches
+just one: the feature table under the demo, the `Commands` section (including
+the abbreviations sentence), the key-binding table when `shell.rs` bindings
+change, and the sample `config.toml` when a config key is added or renamed.
+The README's command table and `scriv --help` describe the same surface and
+must not disagree.
+
+**3. `docs/demo.gif`.** If anything changed what a picker shows on screen —
+row layout, colours, preview contents, the commands or flags in
+`demo/demo.tape` — re-record with `make demo` and commit the GIF. CI only
+plays the tape (`make demo-check`); it never commits a GIF, so a stale demo is
+invisible until someone looks at the README. Recording needs `vhs`
+(`brew install vhs`) and takes about 30 seconds. A change that adds a command
+without altering any existing picker's output does not need a re-record — say
+so in the PR rather than leaving it unmentioned.
 
 ## Layout
 
@@ -27,6 +51,7 @@ is expected to follow it:
 | `config.rs`, `path.rs`, `files.rs` | parsing and path rules, no I/O |
 | `git.rs`, `gh.rs` | ref classification, checkout resolution, JSON parsing — pure functions, plus the process helpers |
 | `repo.rs` | discovery traversal rules |
+| `walk.rs` | the `ignore`-crate file walk shared by `edit` and `file add` |
 | `pick.rs` | the skim wrapper: rows, colours, previews |
 | `cmd/*.rs` | the imperative shell — reads the environment, spawns processes, drives selection |
 | `shell.rs` | the fish integration and completions that `scriv init` emits |
@@ -50,9 +75,19 @@ reference, so command implementations do no environment lookups of their own.
   lock and contend with whatever the user is running in it.
 - **Preview commands are built through `pick::quote`.** A branch name or path
   containing a quote must not be able to alter the command that runs.
-- **`git` and `gh` explain their own failures.** When a spawned child fails,
-  return `Reported(code)` so the process exits with the child's status instead
-  of printing a second, vaguer error line on top of git's.
+- **`git`, `gh` and the editor explain their own failures.** When a spawned
+  child fails, return `Reported(code)` so the process exits with the child's
+  status instead of printing a second, vaguer error line on top of git's.
+- **The top-level commands are registries; `edit` is the exception.**
+  `repo`/`file`/`branch`/`pr` are each a set scriv knows about, with `ls`/`pick`
+  and a verb over that set. `edit` acts on the directory the user is standing
+  in, so it is a verb at the top level rather than a fifth noun — and it has no
+  `ls`. Resist filing ambient-directory work under a noun group.
+- **Only `cd` needs the shell.** A child cannot change its parent's directory,
+  which is why `repo pick` prints a path for a fish function to consume. Running
+  an editor needs no such help: `scriv edit` spawns it directly and skim restores
+  the terminal on its way out. Add a fish wrapper only for what genuinely cannot
+  work from a child process.
 - **Colour is dropped when stdout is not a terminal**, and `NO_COLOR` is
   honoured — `ls` output has to stay pipe-safe. Use `term::stdout_color()`.
 - **Key bindings use `alt-<letter>`.** fish leaves that space entirely unbound,
