@@ -5,6 +5,10 @@ edition = "2024"
 description = "scriv discovers Git repositories and tracks the files you visit often."
 license = "MIT"
 repository = "https://github.com/joakimen/scriv"
+# Artwork, the demo recording and CI config belong to the repository, not the
+# crate. Nothing under src/ reads them, so keep them out of `cargo package`
+# too — otherwise every published tarball carries the GIF and the SVGs.
+exclude = ["docs/", "demo/", ".github/", ".claude/", ".idea/"]
 
 [dependencies]
 anyhow = "1"
