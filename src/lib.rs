@@ -1,19 +1,23 @@
 //! `scriv` — discover Git repositories and track the files you visit often.
 //!
 //! The crate is split into an I/O-free core ([`config`], [`path`], [`files`]'s
-//! pure helpers, [`repo`]'s traversal rules) and an imperative shell: the
-//! [`cmd`] modules that read the environment, touch the filesystem, and drive
+//! pure helpers, [`repo`]'s traversal rules, [`git`] and [`gh`]'s parsing and
+//! classification) and an imperative shell: the [`cmd`] modules that read the
+//! environment, touch the filesystem, shell out to `git`/`gh`, and drive
 //! interactive selection. [`Ctx`] resolves the environment once and hands it to
 //! every command.
 
 pub mod cmd;
 pub mod config;
 pub mod files;
+pub mod gh;
+pub mod git;
 pub mod logger;
 pub mod path;
 pub mod pick;
 pub mod repo;
 pub mod shell;
+pub mod term;
 
 use std::path::{Path, PathBuf};
 
@@ -21,6 +25,22 @@ use anyhow::{Context, Result};
 
 use config::Config;
 use logger::Logger;
+
+/// A subprocess that already explained its own failure on stderr — `git` and
+/// `gh` both do, in their own well-known wording.
+///
+/// Propagated instead of a message so the command exits with the child's status
+/// without scriv restating what the user just read.
+#[derive(Debug)]
+pub struct Reported(pub i32);
+
+impl std::fmt::Display for Reported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "subprocess exited with status {}", self.0)
+    }
+}
+
+impl std::error::Error for Reported {}
 
 /// Resolved runtime environment shared by every command.
 ///
