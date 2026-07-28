@@ -4,6 +4,8 @@
 
 > "We found him wandering around, with a candle."
 
+![scriv: pick a repository, check out a remote branch, list pull requests](docs/demo.gif)
+
 [Scriv](https://kingkiller.fandom.com/wiki/Scriv) is a CLI for finding your way
 around a machine. Four things, each with the same built-in fuzzy picker:
 
@@ -203,6 +205,35 @@ end
 
 For other shells, `scriv init bash` / `zsh` / `powershell` / `elvish` emit
 completions you can source or install.
+
+## Development
+
+```sh
+make            # fmt check, clippy, tests, release build
+make demo       # re-record docs/demo.gif
+make demo-fixture   # build the demo sandbox and poke at it by hand
+```
+
+The demo in this README is generated, not recorded by hand. `demo/fixture.sh`
+builds a throwaway sandbox — fictional repositories, branches, and pull
+requests — and `demo/demo.tape` drives it with
+[VHS](https://github.com/charmbracelet/vhs), so re-recording produces the same
+demo rather than whatever happened to be on someone's screen.
+
+Nothing in scriv knows it is being demoed. The sandbox is applied entirely from
+outside, through seams that already existed:
+
+- `HOME` and `XDG_CONFIG_HOME` point discovery at the sandbox, so paths render
+  as `~/dev/github.com/acme/billing-api`
+- commit dates are written as offsets from *now*, so relative dates read the
+  same whenever it is re-recorded
+- a stub `gh` earlier on `PATH` than the real one answers the pull request
+  commands, so the demo needs no network and no GitHub account
+
+Re-recording is deliberate: the render depends on the fonts installed locally,
+so CI only plays the tape (`make demo-check`) to catch one that has stopped
+working, and never commits a GIF of its own. Recording needs `vhs`
+(`brew install vhs`).
 
 ## Configuration
 
