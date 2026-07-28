@@ -1,7 +1,8 @@
 # Working on scriv
 
-scriv discovers Git repositories, tracks files you return to, and switches
-branches and pull requests — all through one built-in fuzzy picker (skim).
+scriv scans the paths you configure for Git repositories, tracks files you
+return to, and switches branches and pull requests — all through one built-in
+fuzzy picker (skim).
 
 ## Before opening a pull request
 

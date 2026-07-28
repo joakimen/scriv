@@ -1,4 +1,5 @@
-//! `scriv repo` — list and pick discovered Git repositories.
+//! `scriv repo` — list and pick the Git repositories found under the
+//! configured search paths.
 
 use anyhow::{Context, Result};
 

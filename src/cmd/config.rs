@@ -10,7 +10,7 @@ use crate::Ctx;
 /// A commented starter config covering the common layout: search roots grouped
 /// by label and the default picker. Users edit it to taste.
 const TEMPLATE: &str = r#"# scriv configuration.
-# Repositories are discovered by searching each path below, up to its depth.
+# scriv looks for repositories under each path below, up to its depth.
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 

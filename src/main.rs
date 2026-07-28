@@ -42,7 +42,7 @@ const STYLES: Styles = Styles::styled()
 #[command(
     name = "scriv",
     version,
-    about = "Discover Git repositories and track the files you visit often.",
+    about = "Pick your repositories, files, git branches and GitHub pull requests from one fuzzy finder.",
     after_help = EXAMPLES,
     styles = STYLES,
     disable_help_subcommand = true
@@ -63,7 +63,7 @@ struct Cli {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 enum Command {
-    /// Discover and open Git repositories
+    /// List and pick the Git repositories under your search paths
     Repo {
         #[command(subcommand)]
         command: RepoCmd,
@@ -101,7 +101,7 @@ enum Command {
 
 #[derive(Subcommand)]
 enum RepoCmd {
-    /// List all discovered repositories
+    /// List every repository found under your search paths
     #[command(alias = "list")]
     Ls {
         /// Return absolute file paths
