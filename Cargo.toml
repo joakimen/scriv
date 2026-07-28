@@ -2,7 +2,7 @@
 name = "scriv"
 version = "0.1.0"
 edition = "2024"
-description = "scriv discovers Git repositories and tracks the files you visit often."
+description = "Pick your repositories, files, git branches and GitHub pull requests from one fuzzy finder."
 license = "MIT"
 repository = "https://github.com/joakimen/scriv"
 # Artwork, the demo recording and CI config belong to the repository, not the

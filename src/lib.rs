@@ -1,4 +1,5 @@
-//! `scriv` — discover Git repositories and track the files you visit often.
+//! `scriv` — pick repositories, files, git branches and GitHub pull requests
+//! from one fuzzy finder.
 //!
 //! The crate is split into an I/O-free core ([`config`], [`path`], [`files`]'s
 //! pure helpers, [`repo`]'s traversal rules, [`git`] and [`gh`]'s parsing and
