@@ -19,6 +19,7 @@ pub mod pick;
 pub mod repo;
 pub mod shell;
 pub mod term;
+pub mod walk;
 
 use std::path::{Path, PathBuf};
 
