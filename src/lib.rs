@@ -19,6 +19,7 @@ pub mod pick;
 pub mod repo;
 pub mod shell;
 pub mod term;
+pub mod walk;
 
 use std::path::{Path, PathBuf};
 
@@ -57,6 +58,8 @@ pub struct Ctx {
     pub files_path: PathBuf,
     /// The standalone `kf` tool's config, read once to migrate its list.
     pub legacy_kf_path: PathBuf,
+    /// The editor `scriv edit` launches, from config or the environment.
+    editor: Option<String>,
     pub config: Config,
     pub log: Logger,
 }
@@ -84,6 +87,12 @@ impl Ctx {
         let legacy_kf_path = config::legacy_kf_path(xdg_env.as_deref(), &home);
         let config = config::load_config(&config_path)?;
 
+        let editor = config::resolve_editor(
+            config.editor.as_deref(),
+            std::env::var("VISUAL").ok().as_deref(),
+            std::env::var("EDITOR").ok().as_deref(),
+        );
+
         Ok(Self {
             home_s: home.to_string_lossy().into_owned(),
             pwd_s: pwd.to_string_lossy().into_owned(),
@@ -91,9 +100,32 @@ impl Ctx {
             config_path,
             files_path,
             legacy_kf_path,
+            editor,
             config,
             log: Logger::new(verbose),
         })
+    }
+
+    /// The resolved editor command, or `None` when nothing is set. For
+    /// reporting; [`Ctx::editor`] is what launching goes through.
+    pub fn editor_setting(&self) -> Option<&str> {
+        self.editor.as_deref()
+    }
+
+    /// The editor command to launch, split into program and arguments.
+    ///
+    /// Errors when nothing is configured, naming every place the user can set
+    /// one rather than failing on an empty program name deeper in.
+    pub fn editor(&self) -> Result<Vec<String>> {
+        let command = self.editor.as_deref().context(
+            "no editor set — set $EDITOR or $VISUAL, \
+             or add `editor = \"nvim\"` to the config file",
+        )?;
+        let parts = config::split_editor(command);
+        if parts.is_empty() {
+            anyhow::bail!("the configured editor is empty");
+        }
+        Ok(parts)
     }
 
     pub fn home(&self) -> &Path {

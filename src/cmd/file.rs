@@ -2,26 +2,12 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
-use ignore::WalkBuilder;
+use anyhow::{Result, bail};
 
 use crate::path::{display_path, expand_tilde, sanitize_file_path};
-use crate::pick::{PickItem, Preview};
+use crate::pick::{PickItem, file_preview};
 use crate::term;
-use crate::{Ctx, files, pick};
-
-/// The preview for a file: its contents.
-///
-/// `bat` renders them with syntax highlighting when it is installed; `head`
-/// covers everyone else, and its error text is the preview when the path is
-/// gone — which the known-files list expects to happen.
-fn preview(path: &str) -> Preview {
-    let path = pick::quote(path);
-    Preview::Command(format!(
-        "bat --color=always --style=plain --line-range=:200 -- {path} 2>/dev/null \
-         || head -n 200 -- {path}"
-    ))
-}
+use crate::{Ctx, files, pick, walk};
 
 /// `scriv file ls` — print known files, optionally with existence status.
 pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
@@ -134,7 +120,7 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
         .map(|line| {
             let expanded = expand_tilde(line, ctx.home_str());
             let shown = display_path(&expanded, ctx.home_str(), false);
-            PickItem::new(shown, line.clone()).preview(preview(&expanded))
+            PickItem::new(shown, line.clone()).preview(file_preview(&expanded))
         })
         .collect();
 
@@ -171,7 +157,7 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
         .map(|line| {
             let abs = expand_tilde(line, ctx.home_str());
             let shown = display_path(&abs, ctx.home_str(), false);
-            PickItem::new(shown, abs.clone()).preview(preview(&abs))
+            PickItem::new(shown, abs.clone()).preview(file_preview(&abs))
         })
         .collect();
 
@@ -184,14 +170,14 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
 ///
 /// Returns `Ok(None)` when the user cancels the picker.
 fn pick_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
-    let candidates = list_files(Path::new("."))?;
+    let candidates = walk::list_files(Path::new("."))?;
     if candidates.is_empty() {
         bail!("no files found in the current directory");
     }
     let items = candidates
         .into_iter()
         .map(|file| {
-            let preview = preview(&file);
+            let preview = file_preview(&file);
             PickItem::plain(file).preview(preview)
         })
         .collect();
@@ -199,81 +185,5 @@ fn pick_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
         Ok(choice) => Ok(Some(choice)),
         Err(e) if e.is::<pick::Cancelled>() => Ok(None),
         Err(e) => Err(e),
-    }
-}
-
-/// Directory names never worth walking into when picking a file to add,
-/// matching the user's fzf `--walker-skip` list.
-const WALKER_SKIP: &[&str] = &[
-    ".git",
-    "node_modules",
-    ".clj-kondo",
-    ".cpcache",
-    ".venv",
-    "lib",
-];
-
-/// List files under `root`, as paths relative to `root`.
-///
-/// Uses the `ignore` crate — the same directory walker fd is built on — so it
-/// honours `.gitignore` and skips [`WALKER_SKIP`] directories, all in-process
-/// with no `fd` subprocess.
-fn list_files(root: &Path) -> Result<Vec<String>> {
-    let walker = WalkBuilder::new(root)
-        .hidden(false) // include dotfiles; config files are common targets
-        .require_git(false) // honour .gitignore/.ignore even outside a git repo
-        .filter_entry(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_none_or(|name| !WALKER_SKIP.contains(&name))
-        })
-        .build();
-
-    let mut files = Vec::new();
-    for entry in walker {
-        let entry = entry.context("walking the directory")?;
-        if entry.file_type().is_some_and(|ft| ft.is_file()) {
-            let path = entry.path();
-            let rel = path.strip_prefix(root).unwrap_or(path);
-            files.push(rel.to_string_lossy().into_owned());
-        }
-    }
-    files.sort();
-    Ok(files)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    #[test]
-    fn list_files_walks_and_skips() {
-        let dir = TempDir::new().unwrap();
-        let root = dir.path();
-        fs::write(root.join("a.txt"), "").unwrap();
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src/main.rs"), "").unwrap();
-        // A skipped directory and a gitignored file must not appear.
-        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
-        fs::write(root.join("node_modules/pkg/index.js"), "").unwrap();
-        fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
-        fs::write(root.join("ignored.txt"), "").unwrap();
-
-        let got = list_files(root).unwrap();
-
-        assert!(got.contains(&"a.txt".to_string()));
-        assert!(got.contains(&"src/main.rs".to_string()));
-        assert!(got.contains(&".gitignore".to_string())); // dotfiles included
-        assert!(
-            !got.iter().any(|f| f.contains("node_modules")),
-            "WALKER_SKIP dir leaked: {got:?}"
-        );
-        assert!(
-            !got.contains(&"ignored.txt".to_string()),
-            ".gitignore not honoured: {got:?}"
-        );
     }
 }

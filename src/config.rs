@@ -37,6 +37,8 @@ pub struct Config {
     pub paths: Groups,
     pub ignore: Vec<String>,
     pub picker: PickerConfig,
+    /// Editor launched by `scriv edit`, overriding `$VISUAL` and `$EDITOR`.
+    pub editor: Option<String>,
 }
 
 impl Config {
@@ -47,8 +49,39 @@ impl Config {
             paths: Groups::new(),
             ignore: default_ignored_dirs(),
             picker: PickerConfig::default(),
+            editor: None,
         }
     }
+}
+
+/// Pick the editor `scriv edit` launches: the `editor` config key first, then
+/// `$VISUAL`, then `$EDITOR` — the order every other terminal tool uses, with
+/// the config key on top so scriv can differ from the rest of the shell.
+///
+/// Blank and whitespace-only values count as unset: `EDITOR=""` is a common way
+/// to say "no editor", and honouring it literally would try to spawn `""`.
+pub fn resolve_editor(
+    configured: Option<&str>,
+    visual: Option<&str>,
+    editor: Option<&str>,
+) -> Option<String> {
+    [configured, visual, editor]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|candidate| !candidate.is_empty())
+        .map(str::to_string)
+}
+
+/// Split an editor command into program and arguments on whitespace, so
+/// `EDITOR="code -w"` spawns `code` with `-w` rather than looking for a program
+/// with a space in its name.
+///
+/// Whitespace is the whole of the syntax — no quoting, no escapes — which is
+/// what git's own `core.editor` fallback does for the simple cases and covers
+/// every editor invocation short of an embedded shell command.
+pub fn split_editor(command: &str) -> Vec<String> {
+    command.split_whitespace().map(str::to_string).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -108,6 +141,7 @@ struct RawToml {
     ignore: Option<Vec<String>>,
     #[serde(default)]
     picker: PickerConfig,
+    editor: Option<String>,
 }
 
 /// `paths` accepts two shapes. The grouped form keys entries by a group label
@@ -169,6 +203,7 @@ fn parse_toml(data: &str) -> Result<Config> {
         paths: raw.paths.into_groups(),
         ignore: raw.ignore.unwrap_or_else(default_ignored_dirs),
         picker: raw.picker,
+        editor: raw.editor,
     })
 }
 
@@ -185,6 +220,7 @@ fn parse_json(data: &str) -> Result<Config> {
         paths: flat_to_groups(raw.paths),
         ignore,
         picker: PickerConfig::default(),
+        editor: None,
     })
 }
 
@@ -535,5 +571,53 @@ depth = 0
             legacy_kf_path(Some("/xdg"), home),
             PathBuf::from("/xdg/kf/config")
         );
+    }
+
+    #[test]
+    fn parses_editor() {
+        assert_eq!(
+            parse_toml("editor = \"hx\"\n").unwrap().editor.as_deref(),
+            Some("hx")
+        );
+        assert_eq!(parse_toml("").unwrap().editor, None);
+    }
+
+    #[test]
+    fn editor_precedence_prefers_config_then_visual() {
+        assert_eq!(
+            resolve_editor(Some("hx"), Some("code"), Some("vi")).as_deref(),
+            Some("hx")
+        );
+        assert_eq!(
+            resolve_editor(None, Some("code"), Some("vi")).as_deref(),
+            Some("code")
+        );
+        assert_eq!(
+            resolve_editor(None, None, Some("vi")).as_deref(),
+            Some("vi")
+        );
+        assert_eq!(resolve_editor(None, None, None), None);
+    }
+
+    /// `EDITOR=""` means "no editor", not a program named "".
+    #[test]
+    fn editor_ignores_blank_values() {
+        assert_eq!(
+            resolve_editor(None, Some("  "), Some("vi")).as_deref(),
+            Some("vi")
+        );
+        assert_eq!(resolve_editor(Some(""), None, None), None);
+        // A value that is only padded still resolves, trimmed.
+        assert_eq!(
+            resolve_editor(Some(" hx "), None, None).as_deref(),
+            Some("hx")
+        );
+    }
+
+    #[test]
+    fn splits_editor_into_program_and_args() {
+        assert_eq!(split_editor("nvim"), vec!["nvim"]);
+        assert_eq!(split_editor("code -w"), vec!["code", "-w"]);
+        assert_eq!(split_editor("  nvim   -p  "), vec!["nvim", "-p"]);
     }
 }

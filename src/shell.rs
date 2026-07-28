@@ -44,18 +44,22 @@ function scriv-repo-cd --description "Pick a repository and cd into it"
     test -n "$dir"; and builtin cd $dir
 end
 
-function scriv-file-edit --description "Pick a known file and open it in \$EDITOR"
-    set -l file (command scriv file pick)
-    or return
-    if test -z "$file"
-        return
-    end
-    if set -q EDITOR
-        $EDITOR $file
-    else
-        echo "scriv: \$EDITOR is not set" >&2
-        return 1
-    end
+# `scriv edit` spawns the editor itself — unlike cd, that needs no shell help —
+# so these are thin wrappers kept only to hang key bindings off.
+function scriv-edit --description "Pick a file under \$PWD and open it in \$EDITOR"
+    command scriv edit
+end
+
+function scriv-file-edit --description "Pick a tracked file and open it in \$EDITOR"
+    command scriv edit --tracked
+end
+
+# The find -> fuzzy-pick -> edit pipeline under the name it is usually aliased
+# to. Arguments pass straight through, so `fe -t` and `fe path/to/file` work.
+# This is the one unprefixed name scriv defines: redefine `fe` after sourcing
+# if you already have one.
+function fe --description "Find a file, fuzzy-pick it, open it in \$EDITOR"
+    command scriv edit $argv
 end
 
 function scriv-branch-checkout --description "Pick a git branch and check it out"
@@ -67,12 +71,13 @@ function scriv-pr-checkout --description "Pick a GitHub pull request and check i
 end
 
 # Bindings use alt-<letter>, which fish leaves entirely unbound by default, and
-# are chosen so the chord falls under one hand: alt-b (branch) and alt-g (git)
-# are both left-hand, alt-o and alt-p right-hand. Rebind any of them by calling
-# `bind` yourself after `scriv_key_bindings`.
+# are chosen so the chord falls under one hand: alt-b (branch), alt-g (git) and
+# alt-e (edit) are left-hand, alt-o and alt-p right-hand. Rebind any of them by
+# calling `bind` yourself after `scriv_key_bindings`.
 function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind ctrl-o "scriv-repo-cd; commandline -f execute"
     bind alt-o  "scriv-repo-cd; commandline -f execute"
+    bind alt-e  "scriv-edit; commandline -f execute"
     bind f3     "scriv-file-edit; commandline -f execute"
     bind alt-b  "scriv-branch-checkout; commandline -f execute"
     bind alt-g  "scriv-branch-checkout; commandline -f execute"
@@ -93,7 +98,9 @@ mod tests {
     fn fish_emits_helper_functions() {
         let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("function scriv-repo-cd"));
+        assert!(out.contains("function scriv-edit"));
         assert!(out.contains("function scriv-file-edit"));
+        assert!(out.contains("function fe"));
         assert!(out.contains("function scriv-branch-checkout"));
         assert!(out.contains("function scriv-pr-checkout"));
         assert!(out.contains("function scriv_key_bindings"));
@@ -105,10 +112,34 @@ mod tests {
         assert!(out.contains("complete -c scriv"));
         assert!(out.contains("bind ctrl-o"));
         assert!(out.contains("bind alt-o"));
+        assert!(out.contains("bind alt-e"));
         assert!(out.contains("bind f3"));
         assert!(out.contains("bind alt-b"));
         assert!(out.contains("bind alt-g"));
         assert!(out.contains("bind alt-p"));
+    }
+
+    /// `fe` takes arguments, so it stands in for `scriv edit` completely rather
+    /// than only its no-argument form.
+    #[test]
+    fn fe_forwards_arguments() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(out.contains("command scriv edit $argv"));
+    }
+
+    /// `fe` is deliberately the *only* unprefixed function scriv defines: every
+    /// other helper is namespaced, so sourcing the integration cannot quietly
+    /// shadow commands the user already has.
+    #[test]
+    fn fish_defines_one_unprefixed_function() {
+        let out = integration(Shell::Fish, &mut dummy());
+        let unprefixed: Vec<&str> = out
+            .lines()
+            .filter_map(|line| line.strip_prefix("function "))
+            .filter_map(|rest| rest.split_whitespace().next())
+            .filter(|name| !name.starts_with("scriv"))
+            .collect();
+        assert_eq!(unprefixed, vec!["fe"]);
     }
 
     /// f4 and f5 are common in user configs (awsvault, editors); fish leaves

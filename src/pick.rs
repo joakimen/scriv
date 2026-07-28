@@ -50,6 +50,20 @@ pub fn quote(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
+/// The preview for a file: its contents.
+///
+/// `bat` renders them with syntax highlighting when it is installed; `head`
+/// covers everyone else, and its error text is the preview when the path is
+/// gone — which the known-files list expects to happen. Both are bounded to
+/// 200 lines, so scrolling a list never reads a large file in full.
+pub fn file_preview(path: &str) -> Preview {
+    let path = quote(path);
+    Preview::Command(format!(
+        "bat --color=always --style=plain --line-range=:200 -- {path} 2>/dev/null \
+         || head -n 200 -- {path}"
+    ))
+}
+
 /// One choice in the picker: `label` is displayed and matched against, `value`
 /// is returned when it is selected, `color` optionally tints the row (an ANSI
 /// 256-colour index, so it respects the terminal theme), and `preview` fills
