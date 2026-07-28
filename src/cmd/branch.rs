@@ -214,9 +214,9 @@ mod tests {
     fn rows_mark_head_and_return_the_branch_name() {
         let items = items(&branches());
         assert!(items[0].label.starts_with("* main"));
-        assert_eq!(items[0].value, "main");
+        assert_eq!(items[0].value(), "main");
         assert!(items[1].label.starts_with("  origin/feature"));
-        assert_eq!(items[1].value, "origin/feature");
+        assert_eq!(items[1].value(), "origin/feature");
     }
 
     #[test]
