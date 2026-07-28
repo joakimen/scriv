@@ -74,14 +74,22 @@ end
 # are chosen so the chord falls under one hand: alt-b (branch), alt-g (git) and
 # alt-e (edit) are left-hand, alt-o and alt-p right-hand. Rebind any of them by
 # calling `bind` yourself after `scriv_key_bindings`.
+#
+# Every binding ends in `commandline -f repaint`, never `execute`. skim renders
+# inline: it asks the terminal for the cursor position and draws its UI starting
+# on that row, which is the row the prompt is on, then clears that region when it
+# exits — leaving the prompt blank until fish redraws it. `repaint` is what
+# redraws it. `execute` looks like it works only because submitting an empty
+# command line prints a fresh prompt further down; with anything typed it runs
+# the line, so pressing ctrl-o mid-command would execute whatever was there.
 function scriv_key_bindings --description "Bind scriv pickers to keys"
-    bind ctrl-o "scriv-repo-cd; commandline -f execute"
-    bind alt-o  "scriv-repo-cd; commandline -f execute"
-    bind alt-e  "scriv-edit; commandline -f execute"
-    bind f3     "scriv-file-edit; commandline -f execute"
-    bind alt-b  "scriv-branch-checkout; commandline -f execute"
-    bind alt-g  "scriv-branch-checkout; commandline -f execute"
-    bind alt-p  "scriv-pr-checkout; commandline -f execute"
+    bind ctrl-o "scriv-repo-cd; commandline -f repaint"
+    bind alt-o  "scriv-repo-cd; commandline -f repaint"
+    bind alt-e  "scriv-edit; commandline -f repaint"
+    bind f3     "scriv-file-edit; commandline -f repaint"
+    bind alt-b  "scriv-branch-checkout; commandline -f repaint"
+    bind alt-g  "scriv-branch-checkout; commandline -f repaint"
+    bind alt-p  "scriv-pr-checkout; commandline -f repaint"
 end
 "#;
 
@@ -140,6 +148,31 @@ mod tests {
             .filter(|name| !name.starts_with("scriv"))
             .collect();
         assert_eq!(unprefixed, vec!["fe"]);
+    }
+
+    /// `commandline -f execute` submits the command line, so a binding pressed
+    /// with anything typed would run it — ctrl-o mid-`rm` is not a picker. It
+    /// also never repaints the prompt skim drew over; it just prints a new one
+    /// below the damage. `repaint` is the fish idiom for both.
+    #[test]
+    fn bindings_repaint_rather_than_execute() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(
+            !out.contains("commandline -f execute"),
+            "a binding still submits the command line",
+        );
+        let binds: Vec<&str> = out
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("bind "))
+            .collect();
+        assert!(!binds.is_empty(), "no bindings emitted");
+        for bind in &binds {
+            assert!(
+                bind.contains("commandline -f repaint"),
+                "binding does not repaint the prompt: {bind}",
+            );
+        }
     }
 
     /// f4 and f5 are common in user configs (awsvault, editors); fish leaves

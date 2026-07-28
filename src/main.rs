@@ -23,6 +23,7 @@ const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv config init            Write a starter configuration
   scriv repo pick              Fuzzy-pick a repository, print its path
   cd (scriv repo pick)         Jump to a repository (fish)
+  scriv repo clone             Pick an owner, then repositories to clone
   scriv file add <path>        Track a file you visit often
   scriv edit                   Pick a file under the current directory, edit it
   scriv edit --tracked         Pick one of your tracked files and edit it
@@ -128,6 +129,24 @@ enum RepoCmd {
     },
     /// Fuzzy-select a repository and print its absolute path
     Pick,
+    /// Clone repositories from GitHub into your root
+    ///
+    /// With no argument, pick an owner — suggested from your config, the owners
+    /// already under your root, and your own GitHub account — or type any other.
+    /// Then fuzzy-select one or more of that owner's repositories; `tab` selects
+    /// several and they clone concurrently. `owner/repo` skips both pickers.
+    ///
+    /// Everything lands at `<root>/<owner>/<repo>`, so a clone is in
+    /// `scriv repo pick` immediately afterwards. Repositories you already have
+    /// are listed but greyed, and are skipped rather than re-cloned.
+    Clone {
+        /// `owner` to pick from, or `owner/repo` to clone directly
+        #[arg(value_name = "OWNER[/REPO]")]
+        target: Option<String>,
+        /// Maximum number of repositories to fetch for an owner
+        #[arg(short = 'L', long, default_value_t = 1000)]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -350,6 +369,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Repo { command } => match command {
             RepoCmd::Ls { absolute_paths } => cmd::repo::ls(&ctx, absolute_paths),
             RepoCmd::Pick => cmd::repo::pick(&ctx),
+            RepoCmd::Clone { target, limit } => cmd::repo::clone(&ctx, target.as_deref(), limit),
         },
         Command::File { command } => match command {
             FileCmd::Ls {

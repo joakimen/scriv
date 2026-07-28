@@ -24,17 +24,33 @@ pub const CONFIG_ENV_VAR: &str = "SCRIV_CONFIG";
 pub const XDG_ENV_VAR: &str = "XDG_CONFIG_HOME";
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &["node_modules", "vendor", "dist", "build", "target"];
-/// Group name assigned to paths from an ungrouped (flat or legacy) config.
-pub const DEFAULT_GROUP: &str = "default";
 
-/// Search paths keyed by group name. Insertion order is preserved so groups
-/// display in the order the user wrote them.
-pub type Groups = IndexMap<String, Vec<PathEntry>>;
+/// How deep below [`Config::root`] a repository sits: `<root>/<owner>/<repo>`.
+///
+/// Fixed rather than configurable. The root mirrors GitHub's own namespace, so
+/// the depth is a property of that layout, not a preference — and fixing it is
+/// what lets `repo clone` know where a clone belongs without being told.
+pub const ROOT_DEPTH: usize = 2;
+
+/// Category label for a repository whose owner is in no configured category.
+pub const UNCATEGORIZED: &str = "-";
+
+/// Owner categories, keyed by label. Insertion order is preserved so categories
+/// colour and sort in the order they were written.
+pub type Owners = IndexMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
-    /// Search paths, keyed by the group label repos under them belong to.
-    pub paths: Groups,
+    /// The directory holding `<owner>/<repo>` checkouts, e.g.
+    /// `~/dev/github.com`. Everything cloned lands here.
+    pub root: Option<String>,
+    /// Repositories outside [`Self::root`], listed individually. An escape
+    /// hatch for checkouts that predate the single-root layout — not somewhere
+    /// `clone` will ever write.
+    pub extra: Vec<String>,
+    /// Owner categories: a label to the GitHub owners it covers, one label to
+    /// many owners, so `work` can span several orgs and colour as one.
+    pub owners: Owners,
     pub ignore: Vec<String>,
     pub picker: PickerConfig,
     /// Editor launched by `scriv edit`, overriding `$VISUAL` and `$EDITOR`.
@@ -46,11 +62,31 @@ impl Config {
     /// nothing to search, but the known-files commands remain fully usable.
     pub fn empty() -> Self {
         Self {
-            paths: Groups::new(),
+            root: None,
+            extra: Vec::new(),
+            owners: Owners::new(),
             ignore: default_ignored_dirs(),
             picker: PickerConfig::default(),
             editor: None,
         }
+    }
+
+    /// The category `owner` belongs to, or `None` when it is in no category.
+    ///
+    /// Matched case-insensitively: GitHub treats `CapraLifecycle` and
+    /// `capralifecycle` as the same owner, and a directory on disk may be
+    /// spelled either way.
+    pub fn category_of(&self, owner: &str) -> Option<&str> {
+        self.owners
+            .iter()
+            .find(|(_, owners)| owners.iter().any(|o| o.eq_ignore_ascii_case(owner)))
+            .map(|(label, _)| label.as_str())
+    }
+
+    /// Every owner named in the config, in category order — the owners worth
+    /// offering first when there is an owner to choose.
+    pub fn known_owners(&self) -> Vec<&str> {
+        self.owners.values().flatten().map(String::as_str).collect()
     }
 }
 
@@ -136,92 +172,147 @@ impl Default for PickerConfig {
 /// The serialized shape of `config.toml`.
 #[derive(Deserialize)]
 struct RawToml {
+    root: Option<String>,
     #[serde(default)]
-    paths: RawPaths,
+    extra: Vec<String>,
+    #[serde(default)]
+    owners: Owners,
     ignore: Option<Vec<String>>,
     #[serde(default)]
     picker: PickerConfig,
     editor: Option<String>,
+    /// Only ever present in a pre-root config, and only so it can be detected
+    /// and turned into migration advice. See [`migration_hint`].
+    #[serde(default)]
+    paths: Option<LegacyPaths>,
 }
 
-/// `paths` accepts two shapes. The grouped form keys entries by a group label
-/// (`[[paths.work]]`); the flat form is a bare list (`[[paths]]`) whose entries
-/// land in the [`DEFAULT_GROUP`]. Untagged, so serde picks by structure.
-#[derive(Deserialize)]
+/// The `paths` key from the config format that preceded [`Config::root`]:
+/// either grouped (`[[paths.work]]`) or a bare list (`[[paths]]`).
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum RawPaths {
-    Grouped(Groups),
+pub enum LegacyPaths {
+    Grouped(IndexMap<String, Vec<PathEntry>>),
     Flat(Vec<PathEntry>),
 }
 
-impl Default for RawPaths {
-    fn default() -> Self {
-        RawPaths::Grouped(Groups::new())
-    }
-}
-
-impl RawPaths {
-    fn into_groups(self) -> Groups {
+impl LegacyPaths {
+    /// Flatten to (category, entry) pairs; a bare list has no category.
+    fn entries(&self) -> Vec<(Option<&str>, &PathEntry)> {
         match self {
-            RawPaths::Grouped(groups) => groups,
-            RawPaths::Flat(entries) => flat_to_groups(entries),
+            Self::Grouped(groups) => groups
+                .iter()
+                .flat_map(|(g, es)| es.iter().map(move |e| (Some(g.as_str()), e)))
+                .collect(),
+            Self::Flat(entries) => entries.iter().map(|e| (None, e)).collect(),
         }
     }
 }
 
-/// The serialized shape of the legacy `config.json` (always a flat list).
+/// Turn an old `paths` config into the config that replaces it, as text the
+/// user can paste.
 ///
-/// `ignore` has been written both at the top level and nested under `settings`;
-/// both are accepted, with the top-level key winning when both are present.
-#[derive(Deserialize)]
-struct RawJson {
-    #[serde(default)]
-    paths: Vec<PathEntry>,
-    ignore: Option<Vec<String>>,
-    #[serde(default)]
-    settings: Option<JsonSettings>,
-}
+/// The old format encoded the owner in the path — `~/dev/github.com/joakimen`
+/// at depth 1 — which is exactly the two facts the new format wants stated
+/// separately: one root, and which owners fall in which category. An entry that
+/// does not fit that shape (`~/bin` at depth 0) becomes an `extra` path, since
+/// that is what `extra` is for.
+pub fn migration_hint(paths: &LegacyPaths) -> String {
+    let mut roots: IndexMap<String, usize> = IndexMap::new();
+    let mut owners: Owners = Owners::new();
+    let mut extra: Vec<String> = Vec::new();
 
-#[derive(Deserialize)]
-struct JsonSettings {
-    ignore: Option<Vec<String>>,
-}
-
-/// Wrap a flat entry list in the default group, or nothing when empty.
-fn flat_to_groups(entries: Vec<PathEntry>) -> Groups {
-    let mut groups = Groups::new();
-    if !entries.is_empty() {
-        groups.insert(DEFAULT_GROUP.to_string(), entries);
+    for (category, entry) in paths.entries() {
+        // `<root>/<owner>` at depth 1 is the layout the new root replaces.
+        let split = entry.path.rsplit_once('/');
+        match (entry.depth, split) {
+            (1, Some((root, owner))) if !root.is_empty() && !owner.is_empty() => {
+                *roots.entry(root.to_string()).or_insert(0) += 1;
+                owners
+                    .entry(category.unwrap_or("personal").to_string())
+                    .or_default()
+                    .push(owner.to_string());
+            }
+            // Anything else keeps working, just listed one path at a time.
+            _ => extra.push(entry.path.clone()),
+        }
     }
-    groups
+
+    let root = roots
+        .into_iter()
+        .max_by_key(|&(_, n)| n)
+        .map(|(r, _)| r)
+        .unwrap_or_else(|| "~/dev/github.com".to_string());
+
+    let mut out = format!("root = {root:?}\n");
+    if !extra.is_empty() {
+        let list: Vec<String> = extra.iter().map(|p| format!("{p:?}")).collect();
+        out.push_str(&format!("extra = [{}]\n", list.join(", ")));
+    }
+    if !owners.is_empty() {
+        out.push_str("\n[owners]\n");
+        for (category, list) in &owners {
+            let list: Vec<String> = list.iter().map(|o| format!("{o:?}")).collect();
+            out.push_str(&format!("{category} = [{}]\n", list.join(", ")));
+        }
+    }
+    out
+}
+
+/// The error raised for a config still written in the old `paths` format.
+fn legacy_error(paths: &LegacyPaths) -> anyhow::Error {
+    anyhow::anyhow!(
+        "this config uses the old `paths` format, which scriv no longer reads.\n\n\
+         Repositories now live under one root as `<owner>/<repo>`, and categories \
+         label owners rather than paths. Rewrite the `paths` section as:\n\n{}\n\
+         `extra` is for repositories outside the root; drop the key if there are none.",
+        indent(&migration_hint(paths))
+    )
+}
+
+fn indent(text: &str) -> String {
+    text.lines()
+        .map(|l| {
+            if l.is_empty() {
+                l.to_string()
+            } else {
+                format!("    {l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Parse `config.toml` contents.
 fn parse_toml(data: &str) -> Result<Config> {
     let raw: RawToml = toml::from_str(data).context("parsing configuration file")?;
+    if let Some(paths) = &raw.paths {
+        return Err(legacy_error(paths));
+    }
     Ok(Config {
-        paths: raw.paths.into_groups(),
+        root: raw.root,
+        extra: raw.extra,
+        owners: raw.owners,
         ignore: raw.ignore.unwrap_or_else(default_ignored_dirs),
         picker: raw.picker,
         editor: raw.editor,
     })
 }
 
-/// Parse legacy `config.json` contents. A missing `ignore` key — at either
-/// supported location — falls back to the default ignore list; an explicit
-/// empty list is preserved.
+/// The serialized shape of the legacy `config.json`, which only ever had the
+/// old flat `paths` list.
+#[derive(Deserialize)]
+struct RawJson {
+    #[serde(default)]
+    paths: Vec<PathEntry>,
+}
+
+/// Legacy `config.json` predates the root layout entirely, so it gets the same
+/// migration advice — pointed at a `config.toml`, which is what it should have
+/// become long before now.
 fn parse_json(data: &str) -> Result<Config> {
     let raw: RawJson = serde_json::from_str(data).context("parsing configuration file")?;
-    let ignore = raw
-        .ignore
-        .or_else(|| raw.settings.and_then(|s| s.ignore))
-        .unwrap_or_else(default_ignored_dirs);
-    Ok(Config {
-        paths: flat_to_groups(raw.paths),
-        ignore,
-        picker: PickerConfig::default(),
-        editor: None,
-    })
+    Err(legacy_error(&LegacyPaths::Flat(raw.paths)))
 }
 
 /// Read and parse the config file at `path`, dispatching on its extension.
@@ -325,53 +416,129 @@ mod tests {
     }
 
     #[test]
-    fn parses_flat_toml_into_default_group() {
+    fn parses_root_extra_and_owners() {
         let cfg = parse_toml(
             r#"
-ignore = ["foo", "bar"]
+root = "~/dev/github.com"
+extra = ["~/bin"]
 
-[[paths]]
-path = "~/dev"
-depth = 2
+[owners]
+personal = ["joakimen"]
+work = ["capralifecycle", "nsbno"]
 "#,
         )
         .unwrap();
-        assert_eq!(cfg.paths[DEFAULT_GROUP], vec![entry("~/dev", 2)]);
-        assert_eq!(cfg.ignore, vec!["foo".to_string(), "bar".to_string()]);
+        assert_eq!(cfg.root.as_deref(), Some("~/dev/github.com"));
+        assert_eq!(cfg.extra, vec!["~/bin".to_string()]);
+        // Config order, not alphabetical: it drives colour assignment.
+        assert_eq!(
+            cfg.owners.keys().collect::<Vec<_>>(),
+            vec!["personal", "work"]
+        );
+    }
+
+    /// One category covers many owners, which is the whole point: everything
+    /// touched for work colours alike however many orgs it spans.
+    #[test]
+    fn a_category_spans_several_owners() {
+        let cfg = parse_toml("[owners]\nwork = [\"capralifecycle\", \"nsbno\"]\n").unwrap();
+        assert_eq!(cfg.category_of("capralifecycle"), Some("work"));
+        assert_eq!(cfg.category_of("nsbno"), Some("work"));
+        assert_eq!(cfg.category_of("joakimen"), None);
+    }
+
+    /// GitHub owners are case-insensitive, and a directory on disk may be
+    /// spelled differently from the config.
+    #[test]
+    fn owner_lookup_ignores_case() {
+        let cfg = parse_toml("[owners]\nwork = [\"CapraLifecycle\"]\n").unwrap();
+        assert_eq!(cfg.category_of("capralifecycle"), Some("work"));
+        assert_eq!(cfg.category_of("CAPRALIFECYCLE"), Some("work"));
     }
 
     #[test]
-    fn parses_grouped_toml_preserving_order() {
-        let cfg = parse_toml(
-            r#"
-[[paths.work]]
-path = "~/work"
-depth = 2
+    fn empty_toml_has_no_root() {
+        let cfg = parse_toml("").unwrap();
+        assert_eq!(cfg.root, None);
+        assert!(cfg.extra.is_empty());
+        assert!(cfg.owners.is_empty());
+        assert_eq!(cfg.ignore, default_ignored_dirs());
+    }
 
+    /// The old format is refused rather than half-understood — but the error
+    /// has to be worth reading, so it derives the replacement from what was
+    /// there. `<root>/<owner>` at depth 1 is exactly the two facts the new
+    /// format states separately.
+    #[test]
+    fn legacy_paths_config_is_rejected_with_a_migration() {
+        let err = parse_toml(
+            r#"
 [[paths.personal]]
-path = "~/dev"
+path = "~/dev/github.com/joakimen"
 depth = 1
 
 [[paths.personal]]
 path = "~/bin"
 depth = 0
+
+[[paths.work]]
+path = "~/dev/github.com/capralifecycle"
+depth = 1
 "#,
         )
-        .unwrap();
-        assert_eq!(
-            cfg.paths.keys().collect::<Vec<_>>(),
-            vec!["work", "personal"] // config order, not alphabetical
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("old `paths` format"), "{err}");
+        assert!(err.contains(r#"root = "~/dev/github.com""#), "{err}");
+        assert!(err.contains(r#"personal = ["joakimen"]"#), "{err}");
+        assert!(err.contains(r#"work = ["capralifecycle"]"#), "{err}");
+        // ~/bin does not fit <root>/<owner>, so it becomes an extra path.
+        assert!(err.contains(r#"extra = ["~/bin"]"#), "{err}");
+    }
+
+    /// The root is the one shared by most entries, not whichever came first.
+    #[test]
+    fn migration_picks_the_most_common_root() {
+        let paths = LegacyPaths::Grouped(
+            [
+                (
+                    "a".to_string(),
+                    vec![entry("~/odd/one-off", 1), entry("~/dev/github.com/x", 1)],
+                ),
+                ("b".to_string(), vec![entry("~/dev/github.com/y", 1)]),
+            ]
+            .into_iter()
+            .collect(),
         );
-        assert_eq!(cfg.paths["work"], vec![entry("~/work", 2)]);
-        assert_eq!(
-            cfg.paths["personal"],
-            vec![entry("~/dev", 1), entry("~/bin", 0)]
+        assert!(
+            migration_hint(&paths).contains(r#"root = "~/dev/github.com""#),
+            "{}",
+            migration_hint(&paths)
         );
     }
 
+    /// A flat legacy list has no categories to carry over, but still needs a
+    /// root and must not lose any path.
     #[test]
-    fn empty_toml_has_no_groups() {
-        assert!(parse_toml("").unwrap().paths.is_empty());
+    fn migration_handles_an_ungrouped_list() {
+        let hint = migration_hint(&LegacyPaths::Flat(vec![
+            entry("~/dev/github.com/joakimen", 1),
+            entry("~/bin", 0),
+        ]));
+        assert!(hint.contains(r#"root = "~/dev/github.com""#), "{hint}");
+        assert!(hint.contains(r#"extra = ["~/bin"]"#), "{hint}");
+    }
+
+    /// Legacy JSON predates the root layout too; it gets the same advice
+    /// instead of being silently half-read.
+    #[test]
+    fn legacy_json_is_rejected_with_a_migration() {
+        let err = parse_json(r#"{ "paths": [{"path": "~/dev/github.com/joakimen", "depth": 1}] }"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("old `paths` format"), "{err}");
+        assert!(err.contains(r#"root = "~/dev/github.com""#), "{err}");
     }
 
     #[test]
@@ -424,13 +591,6 @@ depth = 0
     }
 
     #[test]
-    fn toml_applies_default_ignore_when_absent() {
-        let cfg = parse_toml("[[paths]]\npath = \"~/dev\"\n").unwrap();
-        assert_eq!(cfg.ignore, default_ignored_dirs());
-        assert_eq!(cfg.paths[DEFAULT_GROUP][0].depth, 0);
-    }
-
-    #[test]
     fn toml_preserves_explicit_empty_ignore() {
         assert!(parse_toml("ignore = []").unwrap().ignore.is_empty());
     }
@@ -438,52 +598,6 @@ depth = 0
     #[test]
     fn rejects_invalid_toml() {
         assert!(parse_toml("[[paths]\npath =").is_err());
-    }
-
-    #[test]
-    fn parses_legacy_json_into_default_group() {
-        let cfg = parse_json(r#"{ "paths": [{"path": "~/dev", "depth": 2}], "ignore": ["foo"] }"#)
-            .unwrap();
-        assert_eq!(cfg.paths[DEFAULT_GROUP], vec![entry("~/dev", 2)]);
-        assert_eq!(cfg.ignore, vec!["foo".to_string()]);
-    }
-
-    /// Regression: the nested form was silently dropped, leaving users on the
-    /// default ignore list with no warning.
-    #[test]
-    fn json_accepts_ignore_nested_under_settings() {
-        let cfg =
-            parse_json(r#"{ "paths": [], "settings": { "ignore": ["node_modules", "target"] } }"#)
-                .unwrap();
-        assert_eq!(
-            cfg.ignore,
-            vec!["node_modules".to_string(), "target".to_string()]
-        );
-    }
-
-    #[test]
-    fn json_top_level_ignore_beats_nested() {
-        let cfg =
-            parse_json(r#"{ "ignore": ["top"], "settings": { "ignore": ["nested"] } }"#).unwrap();
-        assert_eq!(cfg.ignore, vec!["top".to_string()]);
-    }
-
-    #[test]
-    fn json_applies_default_ignore_when_absent() {
-        let cfg = parse_json(r#"{ "paths": [{"path": "~/dev"}] }"#).unwrap();
-        assert_eq!(cfg.ignore, default_ignored_dirs());
-    }
-
-    #[test]
-    fn json_preserves_explicit_empty_ignore() {
-        let cfg = parse_json(r#"{ "paths": [], "ignore": [] }"#).unwrap();
-        assert!(cfg.ignore.is_empty());
-    }
-
-    #[test]
-    fn json_preserves_explicit_empty_nested_ignore() {
-        let cfg = parse_json(r#"{ "settings": { "ignore": [] } }"#).unwrap();
-        assert!(cfg.ignore.is_empty());
     }
 
     #[test]
