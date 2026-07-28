@@ -177,8 +177,8 @@ mod tests {
     #[test]
     fn rows_return_the_pr_number() {
         let items = items(&prs());
-        assert_eq!(items[0].value, "7");
-        assert_eq!(items[1].value, "123");
+        assert_eq!(items[0].value(), "7");
+        assert_eq!(items[1].value(), "123");
     }
 
     #[test]
@@ -222,9 +222,8 @@ mod tests {
     /// returns.
     #[test]
     fn preview_normalises_line_endings() {
-        let text = match preview(&prs()[0]) {
-            Preview::Text(text) => text,
-            Preview::Command(_) => panic!("expected text"),
+        let Preview::Text(text) = preview(&prs()[0]) else {
+            panic!("expected text");
         };
         assert!(!text.contains('\r'), "CRLF leaked into the preview");
     }

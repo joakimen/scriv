@@ -15,7 +15,7 @@ use std::process::Command;
 use anyhow::{Result, anyhow, bail};
 
 use crate::path::{display_path, expand_tilde};
-use crate::pick::{PickItem, file_preview};
+use crate::pick::{PickItem, Preview, file_preview};
 use crate::{Ctx, Reported, files, pick, walk};
 
 /// `scriv edit [FILE]...` — open `paths`, or pick interactively when empty.
@@ -49,23 +49,24 @@ pub fn run(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
 }
 
 /// Choose files from the current directory tree.
+///
+/// The walk is streamed into the picker rather than collected first: a home
+/// directory can hold a million files, and waiting out the last one before
+/// showing the first is the difference between a picker that opens instantly
+/// and one that appears to hang. An empty tree simply gives an empty picker,
+/// as it would in `fzf`.
 fn pick_from_cwd(ctx: &Ctx) -> Result<Option<Vec<String>>> {
-    let candidates = walk::list_files(Path::new("."))?;
-    if candidates.is_empty() {
-        bail!("no files found in the current directory");
-    }
-
     // Paths stay relative to the working directory: the editor is launched from
     // it, and relative paths are what shows up in its buffer list.
-    let items = candidates
-        .into_iter()
-        .map(|file| {
-            let preview = file_preview(&file);
-            PickItem::plain(file).preview(preview)
-        })
-        .collect();
+    let items =
+        walk::files(Path::new(".")).map(|file| PickItem::plain(file).preview(Preview::File));
 
-    cancellable(pick::pick_many(items, "Edit", &ctx.config.picker))
+    cancellable(pick::pick_many_streamed(
+        items,
+        "Edit",
+        true,
+        &ctx.config.picker,
+    ))
 }
 
 /// Choose files from the known-files list.

@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 
 use crate::path::{display_path, expand_tilde, sanitize_file_path};
-use crate::pick::{PickItem, file_preview};
+use crate::pick::{PickItem, Preview, file_preview};
 use crate::term;
 use crate::{Ctx, files, pick, walk};
 
@@ -168,20 +168,13 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
 
 /// Interactively choose a file from the current directory tree to add.
 ///
-/// Returns `Ok(None)` when the user cancels the picker.
+/// The walk is streamed into the picker, so it opens on the first filename
+/// rather than the last — see [`crate::cmd::edit`]. Returns `Ok(None)` when the
+/// user cancels the picker.
 fn pick_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
-    let candidates = walk::list_files(Path::new("."))?;
-    if candidates.is_empty() {
-        bail!("no files found in the current directory");
-    }
-    let items = candidates
-        .into_iter()
-        .map(|file| {
-            let preview = file_preview(&file);
-            PickItem::plain(file).preview(preview)
-        })
-        .collect();
-    match pick::pick_one(items, "Add a file", &ctx.config.picker) {
+    let items =
+        walk::files(Path::new(".")).map(|file| PickItem::plain(file).preview(Preview::File));
+    match pick::pick_one_streamed(items, "Add a file", true, &ctx.config.picker) {
         Ok(choice) => Ok(Some(choice)),
         Err(e) if e.is::<pick::Cancelled>() => Ok(None),
         Err(e) => Err(e),

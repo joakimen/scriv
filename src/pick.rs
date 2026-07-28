@@ -5,8 +5,15 @@
 //! goes through here, so selection looks and behaves the same everywhere.
 //!
 //! Items carry a separate [`PickItem::label`] (shown and fuzzy-matched) and
-//! [`PickItem::value`] (returned on selection), so the picker can show a
-//! `~`-collapsed path or a group tag while still returning an absolute path.
+//! value (returned on selection), so the picker can show a `~`-collapsed path
+//! or a group tag while still returning an absolute path.
+//!
+//! Rows can arrive either all at once ([`pick_one`], [`pick_many`]) or as they
+//! are discovered ([`pick_one_streamed`], [`pick_many_streamed`]) — the latter
+//! is what makes a walk of a large tree usable, since the picker opens on the
+//! first rows instead of the last.
+
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use ratatui::style::Color;
@@ -42,6 +49,11 @@ pub enum Preview {
     /// paid per look, not per item. skim exports `COLUMNS` and `ROWS` to it,
     /// for tools that wrap their own output.
     Command(String),
+    /// The row's own value, previewed as a file — [`file_preview`] built when
+    /// the row is highlighted rather than when the row is created. A streamed
+    /// walk can produce a million rows, and a formatted command string on each
+    /// of them is a hundred megabytes of panes nobody looks at.
+    File,
 }
 
 /// Quote `arg` for the shell that runs a [`Preview::Command`], so a branch name
@@ -57,20 +69,28 @@ pub fn quote(arg: &str) -> String {
 /// gone — which the known-files list expects to happen. Both are bounded to
 /// 200 lines, so scrolling a list never reads a large file in full.
 pub fn file_preview(path: &str) -> Preview {
-    let path = quote(path);
-    Preview::Command(format!(
-        "bat --color=always --style=plain --line-range=:200 -- {path} 2>/dev/null \
-         || head -n 200 -- {path}"
-    ))
+    Preview::Command(file_preview_cmd(path))
 }
 
-/// One choice in the picker: `label` is displayed and matched against, `value`
-/// is returned when it is selected, `color` optionally tints the row (an ANSI
-/// 256-colour index, so it respects the terminal theme), and `preview` fills
-/// the preview pane while the row is highlighted.
+/// The command behind [`Preview::File`] and [`file_preview`].
+fn file_preview_cmd(path: &str) -> String {
+    let path = quote(path);
+    format!(
+        "bat --color=always --style=plain --line-range=:200 -- {path} 2>/dev/null \
+         || head -n 200 -- {path}"
+    )
+}
+
+/// One choice in the picker: `label` is displayed and matched against,
+/// [`PickItem::value`] is returned when it is selected, `color` optionally
+/// tints the row (an ANSI 256-colour index, so it respects the terminal
+/// theme), and `preview` fills the preview pane while the row is highlighted.
 pub struct PickItem {
     pub label: String,
-    pub value: String,
+    /// `None` when the value is the label itself, which is the common case for
+    /// path rows — worth not storing twice when a walk streams in a million of
+    /// them. Read it through [`PickItem::value`].
+    value: Option<String>,
     pub color: Option<u8>,
     pub preview: Option<Preview>,
 }
@@ -78,10 +98,9 @@ pub struct PickItem {
 impl PickItem {
     /// An item whose displayed label is also its returned value.
     pub fn plain(text: impl Into<String>) -> Self {
-        let text = text.into();
         Self {
-            label: text.clone(),
-            value: text,
+            label: text.into(),
+            value: None,
             color: None,
             preview: None,
         }
@@ -91,10 +110,15 @@ impl PickItem {
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            value: value.into(),
+            value: Some(value.into()),
             color: None,
             preview: None,
         }
+    }
+
+    /// What selecting this row yields — the label unless one was set apart.
+    pub fn value(&self) -> &str {
+        self.value.as_deref().unwrap_or(&self.label)
     }
 
     /// Tint the row with an ANSI 256-colour index.
@@ -114,34 +138,32 @@ impl PickItem {
 /// `output()` is what a selection yields, `display()` tints the row, and
 /// `preview()` fills the preview pane.
 struct SkItem {
-    label: String,
-    value: String,
-    color: Option<u8>,
-    preview: Option<Preview>,
+    item: PickItem,
 }
 
 impl SkimItem for SkItem {
     fn text(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.label)
+        Cow::Borrowed(&self.item.label)
     }
 
     fn output(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.value)
+        Cow::Borrowed(self.item.value())
     }
 
     fn display(&self, mut context: DisplayContext) -> Line<'_> {
         // Tint the whole row in the group's colour; skim still overlays its
         // match highlighting on top via `to_line`.
-        if let Some(idx) = self.color {
+        if let Some(idx) = self.item.color {
             context.base_style = context.base_style.fg(Color::Indexed(idx));
         }
         context.to_line(self.text())
     }
 
     fn preview(&self, _context: PreviewContext) -> ItemPreview {
-        match &self.preview {
+        match &self.item.preview {
             Some(Preview::Text(text)) => ItemPreview::AnsiText(text.clone()),
             Some(Preview::Command(cmd)) => ItemPreview::Command(cmd.clone()),
+            Some(Preview::File) => ItemPreview::Command(file_preview_cmd(self.item.value())),
             // Blank rather than `Global`, which would run the (empty) global
             // preview command for rows that have nothing to show.
             None => ItemPreview::Text(String::new()),
@@ -153,20 +175,132 @@ impl SkimItem for SkItem {
 /// error on cancel; the caller decides whether that is a silent exit or a
 /// failure.
 pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<String> {
-    run(items, prompt, false, cfg)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| Cancelled.into())
+    one(Feed::batch(items), prompt, cfg)
 }
 
 /// Pick zero or more items, returning their values. An empty result means the
 /// user selected nothing; cancelling still yields [`Cancelled`].
 pub fn pick_many(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<Vec<String>> {
-    run(items, prompt, true, cfg)
+    run(Feed::batch(items), prompt, true, cfg)
 }
 
-/// Drive skim over `items` and return the selected values.
-fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<String>> {
+/// [`pick_one`] over rows that arrive as they are found.
+///
+/// The picker opens immediately and fills in as `items` yields, so the user can
+/// type against the first rows while the rest are still being discovered.
+/// Because no row exists yet when the pane is configured, whether previews are
+/// offered has to be stated up front in `preview`.
+pub fn pick_one_streamed(
+    items: impl IntoIterator<Item = PickItem, IntoIter: Send + 'static>,
+    prompt: &str,
+    preview: bool,
+    cfg: &PickerConfig,
+) -> Result<String> {
+    one(Feed::stream(items, preview), prompt, cfg)
+}
+
+/// [`pick_many`] over rows that arrive as they are found. See
+/// [`pick_one_streamed`].
+pub fn pick_many_streamed(
+    items: impl IntoIterator<Item = PickItem, IntoIter: Send + 'static>,
+    prompt: &str,
+    preview: bool,
+    cfg: &PickerConfig,
+) -> Result<Vec<String>> {
+    run(Feed::stream(items, preview), prompt, true, cfg)
+}
+
+fn one(feed: Feed, prompt: &str, cfg: &PickerConfig) -> Result<String> {
+    run(feed, prompt, false, cfg)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| Cancelled.into())
+}
+
+/// Rows to feed skim, and whether any of them can fill the preview pane.
+struct Feed {
+    rows: Rows,
+    preview: bool,
+}
+
+enum Rows {
+    /// Every row known before the picker opens.
+    Batch(Vec<PickItem>),
+    /// Rows produced over time, drained on a background thread.
+    Stream(Box<dyn Iterator<Item = PickItem> + Send>),
+}
+
+/// How many rows to accumulate before handing a batch to skim, and how long to
+/// let one sit unsent. Sending each row on its own would put a million channel
+/// round-trips in front of a walk; 15ms is under a frame, so the picker still
+/// fills in as fast as the eye reads it.
+const FEED_BATCH: usize = 512;
+const FEED_INTERVAL: Duration = Duration::from_millis(15);
+
+impl Feed {
+    fn batch(items: Vec<PickItem>) -> Self {
+        let preview = items.iter().any(|item| item.preview.is_some());
+        Self {
+            rows: Rows::Batch(items),
+            preview,
+        }
+    }
+
+    fn stream(
+        items: impl IntoIterator<Item = PickItem, IntoIter: Send + 'static>,
+        preview: bool,
+    ) -> Self {
+        Self {
+            rows: Rows::Stream(Box::new(items.into_iter())),
+            preview,
+        }
+    }
+
+    /// Hand the rows to `tx`, closing it when they run out — that is how skim
+    /// learns the source is exhausted and stops showing itself as still
+    /// reading.
+    fn send(self, tx: SkimItemSender) -> Result<()> {
+        match self.rows {
+            Rows::Batch(items) => {
+                let batch: Vec<Arc<dyn SkimItem>> = items.into_iter().map(into_skim).collect();
+                tx.send(batch).map_err(|e| anyhow!("feeding picker: {e}"))?;
+            }
+            Rows::Stream(items) => {
+                // Detached: `Skim::run_with` has returned by the time the walk
+                // notices the picker is gone, and there is nothing to join for.
+                std::thread::spawn(move || {
+                    let mut batch: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(FEED_BATCH);
+                    let mut flushed = Instant::now();
+                    for item in items {
+                        batch.push(into_skim(item));
+                        if batch.len() < FEED_BATCH && flushed.elapsed() < FEED_INTERVAL {
+                            continue;
+                        }
+                        let full = std::mem::replace(&mut batch, Vec::with_capacity(FEED_BATCH));
+                        // A closed channel means the user has selected or
+                        // cancelled: stop walking rather than spend the rest of
+                        // the tree on a picker that is no longer there.
+                        if tx.send(full).is_err() {
+                            return;
+                        }
+                        flushed = Instant::now();
+                    }
+                    if !batch.is_empty() {
+                        let _ = tx.send(batch);
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn into_skim(item: PickItem) -> Arc<dyn SkimItem> {
+    Arc::new(SkItem { item }) as Arc<dyn SkimItem>
+}
+
+/// Drive skim over `feed` and return the selected values.
+fn run(feed: Feed, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<String>> {
     // skim needs a terminal for its UI. Fail with a clear message rather than
     // skim's raw "Device not configured" when there is none (e.g. in a pipe
     // with no controlling tty). Command substitution — `cd (scriv repo pick)` —
@@ -187,7 +321,7 @@ fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> R
     // `preview()` above supplies the actual content, so an empty string is
     // enough to turn it on. Skipped entirely when no item has a preview, so
     // pickers without one keep the full width.
-    if cfg.preview && items.iter().any(|item| item.preview.is_some()) {
+    if cfg.preview && feed.preview {
         builder
             .preview("")
             .preview_window(cfg.preview_window.as_str());
@@ -197,21 +331,10 @@ fn run(items: Vec<PickItem>, prompt: &str, multi: bool, cfg: &PickerConfig) -> R
         .build()
         .map_err(|e| anyhow!("configuring picker: {e}"))?;
 
-    // Feed all items through a channel, then close it so skim stops waiting.
+    // Feed the items through a channel; the sender is dropped when they run
+    // out, which is how skim stops waiting for more.
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-    let batch: Vec<Arc<dyn SkimItem>> = items
-        .into_iter()
-        .map(|it| {
-            Arc::new(SkItem {
-                label: it.label,
-                value: it.value,
-                color: it.color,
-                preview: it.preview,
-            }) as Arc<dyn SkimItem>
-        })
-        .collect();
-    tx.send(batch).map_err(|e| anyhow!("feeding picker: {e}"))?;
-    drop(tx);
+    feed.send(tx)?;
 
     let output = Skim::run_with(options, Some(rx)).map_err(|e| anyhow!("running picker: {e}"))?;
 

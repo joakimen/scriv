@@ -78,8 +78,11 @@ scriv edit src/main.rs  # skip the picker
 ```
 
 Select several with `tab` and they open together. The walk honours
-`.gitignore`, `.ignore` and `.fdignore`. The editor is `$VISUAL`, then
-`$EDITOR`, unless the config sets `editor`. `edit` abbreviates to `e`.
+`.gitignore`, `.ignore` and `.fdignore`, streams into the picker as it goes —
+so a directory of a million files is typeable in milliseconds, not once the
+last one is found — and quietly skips paths it is not allowed to read. The
+editor is `$VISUAL`, then `$EDITOR`, unless the config sets `editor`. `edit`
+abbreviates to `e`.
 
 Every `pick` prints one line and nothing else, so it composes:
 
