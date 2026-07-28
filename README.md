@@ -19,6 +19,7 @@ candidates apart without leaving the picker.
 | --- | --- |
 | **repos** | pick one of your repositories and `cd` into it |
 | **files** | keep a list of files you return to, and open one |
+| **editing** | fuzzy-find a file where you are standing and open it in `$EDITOR` |
 | **branches** | switch to a local branch, or check out a remote one |
 | **pull requests** | check out a GitHub pull request |
 
@@ -67,6 +68,19 @@ Four nouns, the same few verbs:
 `scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
 `ls` to `list`. Any command takes `--help` for its flags.
 
+`scriv edit` is the one verb rather than a noun: it searches the directory
+you are in — not a list scriv keeps — and opens what you choose.
+
+```fish
+scriv edit              # pick a file below $PWD, open it in your editor
+scriv edit --tracked    # pick from your tracked files instead
+scriv edit src/main.rs  # skip the picker
+```
+
+Select several with `tab` and they open together. The walk honours
+`.gitignore`, `.ignore` and `.fdignore`. The editor is `$VISUAL`, then
+`$EDITOR`, unless the config sets `editor`. `edit` abbreviates to `e`.
+
 Every `pick` prints one line and nothing else, so it composes:
 
 ```fish
@@ -92,9 +106,15 @@ end
 | Key | Does |
 | --- | --- |
 | `ctrl-o`, `alt-o` | pick a repository and `cd` into it |
+| `alt-e` | pick a file below `$PWD` and open it in `$EDITOR` |
 | `f3` | pick a tracked file and open it in `$EDITOR` |
 | `alt-b`, `alt-g` | pick a branch and check it out |
 | `alt-p` | pick a pull request and check it out |
+
+It also defines `fe` — find, fuzzy-pick, edit — as a short alias for
+`scriv edit`, forwarding its arguments so `fe -t` and `fe src/main.rs` work
+too. That is the only unprefixed name scriv defines; redefine it after sourcing
+if you have your own.
 
 To use your own keys, bind them after `scriv_key_bindings` — the last binding
 for a key wins. For other shells, `scriv init bash`/`zsh`/`powershell`/`elvish`
@@ -107,6 +127,9 @@ emit completions.
 ```toml
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
+
+# Editor launched by `scriv edit`. Defaults to $VISUAL, then $EDITOR.
+editor = "nvim"
 
 # Where to look for repositories. Paths are grouped by a label, and repo pick
 # shows the group a repo belongs to in a colour of its own, so work and

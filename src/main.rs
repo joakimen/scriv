@@ -3,9 +3,9 @@
 //! library crate.
 //!
 //! Top-level commands: `repo`, `file`, `branch`, and `pr` work with the things
-//! scriv finds; `config` manages its configuration; `init` prints shell
-//! integration. The help layout follows clap's default (description, usage,
-//! commands, options).
+//! scriv finds; `edit` opens a file from the directory you are in; `config`
+//! manages its configuration; `init` prints shell integration. The help layout
+//! follows clap's default (description, usage, commands, options).
 
 use std::process::ExitCode;
 
@@ -23,6 +23,8 @@ const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv repo pick              Fuzzy-pick a repository, print its path
   cd (scriv repo pick)         Jump to a repository (fish)
   scriv file add <path>        Track a file you visit often
+  scriv edit                   Pick a file under the current directory, edit it
+  scriv edit --tracked         Pick one of your tracked files and edit it
   scriv branch checkout        Pick a local or remote branch and switch to it
   scriv pr checkout            Pick a GitHub pull request and check it out
   scriv init fish | source     Load shell integration + completions";
@@ -72,6 +74,21 @@ enum Command {
     File {
         #[command(subcommand)]
         command: FileCmd,
+    },
+    /// Fuzzy-find a file and open it in your editor
+    ///
+    /// Selection comes from the current directory tree, honouring `.gitignore`,
+    /// or from your tracked files with `--tracked`. Selecting several opens them
+    /// all. The editor is `$VISUAL`, then `$EDITOR`, unless the config file sets
+    /// `editor`.
+    #[command(alias = "e")]
+    Edit {
+        /// Files to open; omit to pick interactively
+        #[arg(value_name = "FILE")]
+        files: Vec<String>,
+        /// Pick from your tracked files instead of the current directory
+        #[arg(short, long, conflicts_with = "files")]
+        tracked: bool,
     },
     /// Switch between local and remote git branches
     #[command(alias = "br")]
@@ -286,6 +303,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             FileCmd::Add { file } => cmd::file::add(&ctx, file.as_deref()),
             FileCmd::Remove { file } => cmd::file::remove(&ctx, file.as_deref()),
         },
+        Command::Edit { files, tracked } => cmd::edit::run(&ctx, &files, tracked),
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {
                 cmd::branch::ls(&ctx, scope.filter(), status, scope.fetch)

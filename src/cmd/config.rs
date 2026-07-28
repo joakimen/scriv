@@ -14,6 +14,9 @@ const TEMPLATE: &str = r#"# scriv configuration.
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
+# Editor launched by `scriv edit`. Defaults to $VISUAL, then $EDITOR.
+# editor = "nvim"
+
 # Search paths are grouped by a label; `repo pick` shows which group a repo
 # belongs to. Add more groups (e.g. per client) as needed.
 [[paths.personal]]
@@ -91,6 +94,11 @@ pub fn print(ctx: &Ctx) -> Result<()> {
     }
     println!();
     println!("ignore: {}", ctx.config.ignore.join(", "));
+    println!(
+        "editor: {}",
+        ctx.editor_setting()
+            .unwrap_or("(unset — set $EDITOR or $VISUAL)")
+    );
     Ok(())
 }
 
