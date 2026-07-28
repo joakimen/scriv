@@ -21,7 +21,7 @@ candidates apart without leaving the picker.
 | **files** | keep a list of files you return to, and open one |
 | **editing** | fuzzy-find a file where you are standing and open it in `$EDITOR` |
 | **branches** | switch to a local branch, or check out a remote one |
-| **pull requests** | check out a GitHub pull request |
+| **pull requests** | see what is green, then check one out, open it, or merge it |
 
 It is self-contained: the fuzzy finder ([skim](https://github.com/skim-rs/skim))
 and the file walker (the [`ignore`](https://docs.rs/ignore) crate behind
@@ -68,6 +68,44 @@ Four nouns, the same few verbs:
 `scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
 `ls` to `list`. Any command takes `--help` for its flags.
 
+`scriv pr` has two more verbs of its own — `open` puts a pull request in the
+browser, `merge` merges it — and both fuzzy-pick when given no number:
+
+```fish
+scriv pr open               # pick one, open it on github.com
+scriv pr merge              # pick one; gh asks how to merge
+scriv pr merge --squash -d  # squash it and delete the source branch
+```
+
+Every pull request list carries its CI — `scriv pr ls` and every `pr` picker,
+not just `--status`:
+
+```
+#128  ✓    Add a token bucket per API key  @ada
+#127  ✗    Round partial usage up  @grace
+#126  ⧗ ⊘  Cache quotas in redis  @ada
+```
+
+Green `✓` checks passed, red `✗` one failed, yellow `⧗` still running, and `⊘`
+conflicts with the base branch. It costs no extra request — the checks come back
+with the same `gh pr list` that fetches the titles — and a column appears only
+when some pull request in the list has something to put in it, so a repository
+with no CI shows neither. Merging cleanly is deliberately left unmarked: it is
+true of nearly every row, and GitHub reports it as unknown until a background
+job has run, and always for a pull request that is already merged. The preview
+spells all of it out in words and names the checks that are failing or still
+running.
+
+The marks are shapes, not just colours, so a piped or `NO_COLOR` listing says
+exactly as much as a coloured one — and each is a single terminal column in
+every locale, so the titles line up whatever the row happens to report.
+
+`scriv pr merge` goes further and colours the whole row by whether it can
+actually go in — green ready, yellow waiting on checks, red blocked by a failure
+or a conflict, grey for a draft or something already closed. Colouring by state
+there would paint a list of open pull requests one uniform green, exactly where
+the colour is worth the most.
+
 `scriv edit` is the one verb rather than a noun: it searches the directory
 you are in — not a list scriv keeps — and opens what you choose.
 
@@ -92,9 +130,9 @@ gh pr view (scriv pr pick)
 ```
 
 Previews show commits and working-tree status for repositories and branches,
-title and description for pull requests, and contents for files. They come from
-data already fetched, or from local commands kept to tens of milliseconds, so
-scrolling a long list never stalls.
+title, failing checks and description for pull requests, and contents for
+files. They come from data already fetched, or from local commands kept to tens
+of milliseconds, so scrolling a long list never stalls.
 
 ## Shell integration (fish)
 

@@ -13,6 +13,7 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
+use scriv::gh::MergeMethod;
 use scriv::git::Filter;
 use scriv::pick::Cancelled;
 use scriv::{Ctx, Reported, cmd, shell};
@@ -219,12 +220,42 @@ struct PrScope {
     limit: usize,
 }
 
+/// How to merge, when the user has decided. With none of these, `gh` asks.
+///
+/// No short flags: `-s` is already `--state` on every `pr` subcommand, and
+/// offering `-m`/`-r` but not `-s` would be worse than offering none.
+#[derive(clap::Args)]
+struct MergeMethodArg {
+    /// Merge with a merge commit
+    #[arg(long, conflicts_with_all = ["squash", "rebase"])]
+    merge: bool,
+    /// Squash the commits into one
+    #[arg(long, conflicts_with = "rebase")]
+    squash: bool,
+    /// Rebase the commits onto the base branch
+    #[arg(long)]
+    rebase: bool,
+}
+
+impl MergeMethodArg {
+    fn method(&self) -> Option<MergeMethod> {
+        match (self.merge, self.squash, self.rebase) {
+            (true, _, _) => Some(MergeMethod::Merge),
+            (_, true, _) => Some(MergeMethod::Squash),
+            (_, _, true) => Some(MergeMethod::Rebase),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum PrCmd {
     /// List pull requests
     #[command(alias = "list")]
     Ls {
-        /// Show the state tag, source branch, and last-updated date
+        /// Also show the state tag, source branch, and last-updated date
+        ///
+        /// The check and conflict marks are in the plain listing already.
         #[arg(long)]
         status: bool,
         #[command(flatten)]
@@ -240,6 +271,33 @@ enum PrCmd {
     Checkout {
         /// Pull request number
         number: Option<u64>,
+        #[command(flatten)]
+        scope: PrScope,
+    },
+    /// Open a pull request in the browser; omit the number to pick one
+    Open {
+        /// Pull request number
+        number: Option<u64>,
+        #[command(flatten)]
+        scope: PrScope,
+    },
+    /// Merge a pull request; omit the number to pick one
+    ///
+    /// The picker colours each row by whether it can actually be merged — green
+    /// ready, yellow waiting on checks, red blocked, grey draft or closed — so
+    /// you see what you are merging as you choose it. With no merge method
+    /// given, `gh` asks for one.
+    Merge {
+        /// Pull request number
+        number: Option<u64>,
+        #[command(flatten)]
+        method: MergeMethodArg,
+        /// Delete the source branch after merging
+        #[arg(short, long)]
+        delete_branch: bool,
+        /// Merge once the required checks pass, rather than now
+        #[arg(long)]
+        auto: bool,
         #[command(flatten)]
         scope: PrScope,
     },
@@ -319,6 +377,22 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             PrCmd::Checkout { number, scope } => {
                 cmd::pr::checkout(&ctx, number, &scope.state, scope.limit)
             }
+            PrCmd::Open { number, scope } => cmd::pr::open(&ctx, number, &scope.state, scope.limit),
+            PrCmd::Merge {
+                number,
+                method,
+                delete_branch,
+                auto,
+                scope,
+            } => cmd::pr::merge(
+                &ctx,
+                number,
+                &scope.state,
+                scope.limit,
+                method.method(),
+                delete_branch,
+                auto,
+            ),
         },
         Command::Config { command } => match command {
             ConfigCmd::Init { force } => cmd::config::init(&ctx, force),
