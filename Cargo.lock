@@ -1693,6 +1693,7 @@ dependencies = [
  "skim",
  "tempfile",
  "toml",
+ "unicode-width",
 ]
 
 [[package]]

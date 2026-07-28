@@ -26,6 +26,20 @@ pub fn paint(text: &str, color: u8, on: bool) -> String {
     }
 }
 
+/// Paint `text`, then return to `back` rather than to the terminal default —
+/// for a cell that carries its own colour inside a row that already has one.
+///
+/// [`paint`] ends with a reset, so using it for a cell mid-row would leave
+/// everything after that cell uncoloured. Here the row's own colour is
+/// re-opened instead, and the row's trailing reset still closes it.
+pub fn paint_within(text: &str, color: u8, back: u8, on: bool) -> String {
+    if on {
+        format!("\x1b[38;5;{color}m{text}\x1b[38;5;{back}m")
+    } else {
+        text.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -38,5 +52,17 @@ mod tests {
     #[test]
     fn paint_wraps_when_on() {
         assert_eq!(paint("main", 2, true), "\x1b[38;5;2mmain\x1b[0m");
+    }
+
+    /// A cell painted mid-row has to hand the row's colour back, or everything
+    /// after it renders in the terminal default.
+    #[test]
+    fn paint_within_returns_to_the_row_colour() {
+        assert_eq!(
+            paint_within("✓", 2, 5, true),
+            "\x1b[38;5;2m✓\x1b[38;5;5m",
+            "the cell must not end in a reset",
+        );
+        assert_eq!(paint_within("✓", 2, 5, false), "✓");
     }
 }

@@ -142,19 +142,34 @@ if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
 [
   {"number":128,"title":"Add a token bucket per API key","author":{"login":"ada"},
    "headRefName":"feat/token-bucket","isDraft":false,"state":"OPEN",
-   "updatedAt":"2026-07-27T09:12:33Z",
+   "updatedAt":"2026-07-27T09:12:33Z","mergeable":"MERGEABLE",
+   "statusCheckRollup":[
+     {"__typename":"CheckRun","name":"build","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"},
+     {"__typename":"CheckRun","name":"test","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"},
+     {"__typename":"CheckRun","name":"lint","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],
    "body":"Replaces the fixed window with a token bucket, so a client that is quiet for a minute can burst afterwards.\n\n- refill is lazy, computed on read\n- burst size is one minute of quota\n- the old limiter stays behind a flag for one release"},
   {"number":127,"title":"Round partial usage up","author":{"login":"grace"},
    "headRefName":"fix/round-usage","isDraft":false,"state":"OPEN",
-   "updatedAt":"2026-07-26T16:40:00Z",
+   "updatedAt":"2026-07-26T16:40:00Z","mergeable":"MERGEABLE",
+   "statusCheckRollup":[
+     {"__typename":"CheckRun","name":"build","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"},
+     {"__typename":"CheckRun","name":"test","workflowName":"ci","status":"COMPLETED","conclusion":"FAILURE"},
+     {"__typename":"CheckRun","name":"lint","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],
    "body":"A request costing 0.4 units was billed as 0. Round up at the meter instead of at the invoice."},
   {"number":126,"title":"Cache quotas in redis","author":{"login":"ada"},
    "headRefName":"spike/redis-cache","isDraft":true,"state":"OPEN",
-   "updatedAt":"2026-07-25T11:02:00Z",
+   "updatedAt":"2026-07-25T11:02:00Z","mergeable":"CONFLICTING",
+   "statusCheckRollup":[
+     {"__typename":"CheckRun","name":"build","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"},
+     {"__typename":"CheckRun","name":"test","workflowName":"ci","status":"IN_PROGRESS","conclusion":""}],
    "body":"Spike, not for review yet. Measuring whether the round trip is cheaper than recomputing."},
   {"number":124,"title":"Meter requests per API key","author":{"login":"ada"},
    "headRefName":"feat/metering","isDraft":false,"state":"MERGED",
-   "updatedAt":"2026-07-22T08:15:00Z","body":"The metering groundwork everything else builds on."}
+   "updatedAt":"2026-07-22T08:15:00Z","mergeable":"UNKNOWN",
+   "statusCheckRollup":[
+     {"__typename":"CheckRun","name":"build","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"},
+     {"__typename":"CheckRun","name":"test","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"}],
+   "body":"The metering groundwork everything else builds on."}
 ]
 JSON
     exit 0
@@ -172,6 +187,18 @@ if [ "$1" = "pr" ] && [ "$2" = "checkout" ]; then
         git checkout -q "$branch"
     echo "Switched to branch '$branch'"
     echo "branch '$branch' set up to track 'origin/$branch'."
+    exit 0
+fi
+
+# `open` and `merge` reach the network for real, so the stub only says what it
+# would have done — enough to try the pickers by hand without a GitHub account.
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
+    echo "demo stub: would open https://github.com/acme/billing-api/pull/$4"
+    exit 0
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
+    echo "demo stub: would merge pull request $3"
     exit 0
 fi
 
