@@ -42,8 +42,25 @@ fn collect(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<Vec<Branch>> {
 }
 
 /// Width of the widest branch name, for column alignment.
+///
+/// Counted in characters, not bytes: `{:<width$}` pads by character count, so a
+/// byte length would over-pad any row containing non-ASCII and leave the
+/// columns ragged.
 fn name_width(branches: &[Branch]) -> usize {
-    branches.iter().map(|b| b.name.len()).max().unwrap_or(0)
+    branches
+        .iter()
+        .map(|b| b.name.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+/// Width of the widest relative date, counted in characters as above.
+fn date_width(branches: &[Branch]) -> usize {
+    branches
+        .iter()
+        .map(|b| b.date.chars().count())
+        .max()
+        .unwrap_or(0)
 }
 
 /// `scriv branch ls` — print branch names, one per line.
@@ -64,7 +81,7 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
     }
 
     let width = name_width(&branches);
-    let date_width = branches.iter().map(|b| b.date.len()).max().unwrap_or(0);
+    let date_width = date_width(&branches);
     for branch in &branches {
         let marker = if branch.head { "*" } else { " " };
         let row = format!(
@@ -105,7 +122,7 @@ fn preview(branch: &Branch) -> Preview {
 /// local-only, green local+remote, cyan remote-only.
 fn items(branches: &[Branch]) -> Vec<PickItem> {
     let width = name_width(branches);
-    let date_width = branches.iter().map(|b| b.date.len()).max().unwrap_or(0);
+    let date_width = date_width(branches);
     branches
         .iter()
         .map(|branch| {
@@ -215,6 +232,25 @@ mod tests {
     fn columns_align() {
         let items = items(&branches());
         assert_eq!(items[0].label.find("init"), items[1].label.find("wip"));
+    }
+
+    /// `{:<width$}` pads by character count, so a width measured in bytes makes
+    /// the column wider than the longest name whenever one is non-ASCII —
+    /// `café` is four characters but five bytes.
+    #[test]
+    fn column_width_counts_characters_not_bytes() {
+        let rows = classify(&[RefLine {
+            refname: "refs/heads/café".into(),
+            head: false,
+            upstream: String::new(),
+            date: "now".into(),
+            subject: "one".into(),
+        }]);
+        let label = &items(&rows)[0].label;
+        assert!(
+            label.starts_with("  café  now"),
+            "column padded past the longest name: {label:?}"
+        );
     }
 
     #[test]

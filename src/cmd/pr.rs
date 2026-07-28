@@ -16,7 +16,13 @@ fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
     let prs = gh::list(state, limit)?;
     ctx.log.info(&format!("found {} pull requests", prs.len()));
     if prs.is_empty() {
-        bail!("no {state} pull requests found for this repository");
+        // `--state all` would otherwise read "no all pull requests found".
+        let scope = if state == "all" {
+            String::new()
+        } else {
+            format!("{state} ")
+        };
+        bail!("no {scope}pull requests found for this repository");
     }
     Ok(prs)
 }

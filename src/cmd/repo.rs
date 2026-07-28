@@ -89,7 +89,13 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
         .enumerate()
         .map(|(i, group)| (group.as_str(), GROUP_COLORS[i % GROUP_COLORS.len()]))
         .collect();
-    let width = repos.iter().map(|r| r.group.len()).max().unwrap_or(0);
+    // Character count, not bytes: `{:<width$}` pads by characters, so a byte
+    // length would over-pad a group label containing non-ASCII.
+    let width = repos
+        .iter()
+        .map(|r| r.group.chars().count())
+        .max()
+        .unwrap_or(0);
 
     let mode = ctx.config.picker.display;
     let items: Vec<PickItem> = repos
