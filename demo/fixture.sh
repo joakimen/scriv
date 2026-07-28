@@ -102,15 +102,13 @@ done
 
 # --- configuration -----------------------------------------------------------
 cat > "$FIX/.config/scriv/config.toml" <<EOF
+root = "~/dev/github.com"
 ignore = ["node_modules", "target"]
 
-[[paths.work]]
-path = "~/dev/github.com/acme"
-depth = 1
-
-[[paths.personal]]
-path = "~/dev/github.com/personal"
-depth = 1
+# Categories label owners, so the picker colours acme's repos as work.
+[owners]
+work = ["acme"]
+personal = ["personal"]
 
 [picker]
 height = "100%"

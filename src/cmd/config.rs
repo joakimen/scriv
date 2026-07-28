@@ -10,26 +10,28 @@ use crate::Ctx;
 /// A commented starter config covering the common layout: search roots grouped
 /// by label and the default picker. Users edit it to taste.
 const TEMPLATE: &str = r#"# scriv configuration.
-# scriv looks for repositories under each path below, up to its depth.
+
+# Every repository lives under one root, laid out as <owner>/<repo> — the same
+# shape as GitHub itself. `repo clone` writes here, so a clone always lands
+# somewhere `repo pick` will find it.
+root = "~/dev/github.com"
+
+# Repositories outside the root, listed one at a time. An escape hatch for
+# checkouts that predate the layout; `clone` never writes here.
+# extra = ["~/bin"]
+
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
 # Editor launched by `scriv edit`. Defaults to $VISUAL, then $EDITOR.
 # editor = "nvim"
 
-# Search paths are grouped by a label; `repo pick` shows which group a repo
-# belongs to. Add more groups (e.g. per client) as needed.
-[[paths.personal]]
-path = "~/dev/github.com"
-depth = 2
-
-[[paths.personal]]
-path = "~/bin"
-depth = 0
-
-# [[paths.work]]
-# path = "~/work/acme"
-# depth = 2
+# Categories label owners, one category to many owners, so everything you touch
+# for work colours as one group in the picker however many orgs it spans. An
+# owner in no category still shows up — just uncoloured.
+[owners]
+# personal = ["your-github-user"]
+# work = ["acme", "acme-labs"]
 
 # Built-in fuzzy picker.
 [picker]
@@ -85,11 +87,14 @@ pub fn print(ctx: &Ctx) -> Result<()> {
         ctx.config_path.display()
     ));
 
-    println!("paths:");
-    for (group, entries) in &ctx.config.paths {
-        println!("  {group}:");
-        for entry in entries {
-            println!("    - {} (depth: {})", entry.path, entry.depth);
+    println!("root: {}", ctx.config.root.as_deref().unwrap_or("(unset)"));
+    if !ctx.config.extra.is_empty() {
+        println!("extra: {}", ctx.config.extra.join(", "));
+    }
+    if !ctx.config.owners.is_empty() {
+        println!("owners:");
+        for (category, owners) in &ctx.config.owners {
+            println!("  {category}: {}", owners.join(", "));
         }
     }
     println!();

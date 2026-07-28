@@ -17,7 +17,7 @@ candidates apart without leaving the picker.
 
 | | |
 | --- | --- |
-| **repos** | pick one of your repositories and `cd` into it |
+| **repos** | pick one of your repositories and `cd` into it, or clone new ones |
 | **files** | keep a list of files you return to, and open one |
 | **editing** | fuzzy-find a file where you are standing and open it in `$EDITOR` |
 | **branches** | switch to a local branch, or check out a remote one |
@@ -48,8 +48,8 @@ cargo install --path .
 
 ```sh
 scriv config init          # write ~/.config/scriv/config.toml
-scriv config print         # set your search paths, then check them
-scriv repo ls              # see what scriv finds under them
+scriv config print         # set your root, then check it
+scriv repo ls              # see what scriv finds under it
 scriv init fish | source   # helpers, key bindings, completions
 ```
 
@@ -63,6 +63,20 @@ Four nouns, the same few verbs:
 | `scriv file` | your tracked files | an absolute path | — |
 | `scriv branch` | local and remote branches | a branch name | switches, tracking the remote |
 | `scriv pr` | pull requests | a PR number | hands off to `gh pr checkout` |
+
+`scriv repo clone` adds to that first list: pick a GitHub owner — suggested from
+your config, the owners already under your root, and your own account, with
+anything you type accepted — then fuzzy-select one or more of their repositories.
+`tab` selects several and they clone concurrently. Repositories you already have
+stay in the list, greyed and marked `✓`, and are skipped rather than re-cloned.
+Everything lands at `<root>/<owner>/<repo>`, so a clone is in `repo pick` the
+moment it finishes.
+
+```fish
+scriv repo clone                # pick an owner, then repositories
+scriv repo clone capralifecycle # scope to one owner (any owner, not just yours)
+scriv repo clone tailscale/tailscale   # skip both pickers
+```
 
 `scriv file add`/`remove` maintain the tracked list, and `scriv config` /
 `scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
@@ -166,22 +180,27 @@ emit completions.
 `scriv config init` writes `~/.config/scriv/config.toml`:
 
 ```toml
+# Every repository lives under one root, laid out as <owner>/<repo> — the same
+# shape as GitHub itself. `repo clone` writes here, so a clone always lands
+# somewhere `repo pick` will find it.
+root = "~/dev/github.com"
+
+# Repositories outside the root, listed one at a time. An escape hatch for
+# checkouts that predate the layout; `clone` never writes here.
+extra = ["~/bin"]
+
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
 # Editor launched by `scriv edit`. Defaults to $VISUAL, then $EDITOR.
 editor = "nvim"
 
-# Where to look for repositories. Paths are grouped by a label, and repo pick
-# shows the group a repo belongs to in a colour of its own, so work and
-# personal checkouts stay apart.
-[[paths.personal]]
-path = "~/dev/github.com"
-depth = 2                     # how far below the path to look
-
-[[paths.work]]
-path = "~/work/acme"
-depth = 2
+# Categories label owners, one category to many owners, so everything you touch
+# for work colours as one group however many orgs it spans. An owner in no
+# category still shows up — just uncoloured.
+[owners]
+personal = ["joakimen"]
+work = ["capralifecycle", "nsbno"]
 
 [picker]
 height = "50%"                # built-in finder height
@@ -190,9 +209,18 @@ preview = true                # show a preview pane for the highlighted row
 preview_window = "right:50%"  # preview layout
 ```
 
-`depth` is the main lever on how long a scan takes; keep it as low as your
-layout allows. The tracked-files list sits beside the config in
-`~/.config/scriv/files`, one path per line, managed by `scriv file add`/`remove`.
+One root, always two levels deep. The depth is not a setting because it is not a
+preference: the root mirrors GitHub's own namespace, and fixing it is what lets
+`repo clone` work out where a repository belongs without being told. Categories
+label *owners* rather than directories, so moving an org between `work` and
+`personal` is a one-word edit instead of a reshuffle on disk.
+
+A config still using the older `[[paths.*]]` format is refused with the
+replacement written out for you, derived from what was there — including which
+of your paths become `extra`.
+
+The tracked-files list sits beside the config in `~/.config/scriv/files`, one
+path per line, managed by `scriv file add`/`remove`.
 
 ## Development
 

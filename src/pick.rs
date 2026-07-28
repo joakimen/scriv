@@ -178,6 +178,34 @@ pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Resul
     one(Feed::batch(items), prompt, cfg)
 }
 
+/// What [`pick_one_or_query`] came back with.
+pub enum Choice {
+    /// A row the user selected.
+    Item(String),
+    /// What the user typed, when it matched no row.
+    Query(String),
+}
+
+/// Pick one item, or accept what the user typed when nothing matched.
+///
+/// For lists that are suggestions rather than the whole truth. scriv knows the
+/// GitHub owners you have already cloned from and the ones in your config, but
+/// it cannot know the one you are about to clone from for the first time — and
+/// a picker that refuses to accept an unlisted answer would make the common
+/// case convenient by making the uncommon case impossible.
+///
+/// An empty query with no selection is a cancel, not an empty answer.
+pub fn pick_one_or_query(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<Choice> {
+    let (values, query) = run_with_query(Feed::batch(items), prompt, false, cfg)?;
+    if let Some(value) = values.into_iter().next() {
+        return Ok(Choice::Item(value));
+    }
+    match query.trim() {
+        "" => Err(Cancelled.into()),
+        typed => Ok(Choice::Query(typed.to_string())),
+    }
+}
+
 /// Pick zero or more items, returning their values. An empty result means the
 /// user selected nothing; cancelling still yields [`Cancelled`].
 pub fn pick_many(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<Vec<String>> {
@@ -301,6 +329,17 @@ fn into_skim(item: PickItem) -> Arc<dyn SkimItem> {
 
 /// Drive skim over `feed` and return the selected values.
 fn run(feed: Feed, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<String>> {
+    run_with_query(feed, prompt, multi, cfg).map(|(values, _)| values)
+}
+
+/// [`run`], also returning what the user had typed — which is the answer itself
+/// when the list is a set of suggestions and nothing matched.
+fn run_with_query(
+    feed: Feed,
+    prompt: &str,
+    multi: bool,
+    cfg: &PickerConfig,
+) -> Result<(Vec<String>, String)> {
     // skim needs a terminal for its UI. Fail with a clear message rather than
     // skim's raw "Device not configured" when there is none (e.g. in a pipe
     // with no controlling tty). Command substitution — `cd (scriv repo pick)` —
@@ -341,11 +380,14 @@ fn run(feed: Feed, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<
     if output.is_abort {
         return Err(Cancelled.into());
     }
-    Ok(output
-        .selected_items
-        .iter()
-        .map(|item| item.output().to_string())
-        .collect())
+    Ok((
+        output
+            .selected_items
+            .iter()
+            .map(|item| item.output().to_string())
+            .collect(),
+        output.query,
+    ))
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@
 //! only [`list`] and the process helpers touch the outside world.
 
 use std::io::ErrorKind;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -533,6 +534,151 @@ pub fn merge(
         args.push("--auto");
     }
     run(&args)
+}
+
+/// JSON fields requested from `gh repo list`.
+///
+/// Only what a picker row and its preview can use. `gh` will happily return
+/// license, topics, and fork parentage; none of it helps choose between two
+/// repositories, and all of it costs response size on an org with hundreds.
+const REPO_FIELDS: &str =
+    "nameWithOwner,description,isPrivate,isArchived,isFork,primaryLanguage,pushedAt";
+
+/// A repository on GitHub, as much of it as the clone picker needs.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Repo {
+    /// `owner/name`.
+    pub name_with_owner: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_private: bool,
+    #[serde(default)]
+    pub is_archived: bool,
+    #[serde(default)]
+    pub is_fork: bool,
+    #[serde(default)]
+    pub primary_language: Option<Language>,
+    /// ISO-8601 timestamp of the last push.
+    #[serde(default)]
+    pub pushed_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct Language {
+    #[serde(default)]
+    pub name: String,
+}
+
+impl Repo {
+    /// The repository name without its owner — the directory it clones into.
+    pub fn name(&self) -> &str {
+        self.name_with_owner
+            .split_once('/')
+            .map_or(self.name_with_owner.as_str(), |(_, name)| name)
+    }
+
+    pub fn owner(&self) -> &str {
+        self.name_with_owner
+            .split_once('/')
+            .map_or("", |(owner, _)| owner)
+    }
+
+    pub fn language(&self) -> &str {
+        self.primary_language
+            .as_ref()
+            .map_or("", |l| l.name.as_str())
+    }
+
+    /// Just the date part of [`Self::pushed_at`].
+    pub fn pushed_date(&self) -> &str {
+        self.pushed_at.split('T').next().unwrap_or_default()
+    }
+
+    /// The one-word tags worth showing: what makes this repository unusual.
+    /// A public, unarchived, non-fork repository is the default and says
+    /// nothing.
+    pub fn tags(&self) -> Vec<&'static str> {
+        let mut tags = Vec::new();
+        if self.is_archived {
+            tags.push("archived");
+        }
+        if self.is_private {
+            tags.push("private");
+        }
+        if self.is_fork {
+            tags.push("fork");
+        }
+        tags
+    }
+}
+
+/// Parse the array `gh repo list --json …` prints.
+pub fn parse_repos(data: &str) -> Result<Vec<Repo>> {
+    if data.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(data).context("parsing `gh repo list` output")
+}
+
+/// Every repository belonging to `owner`.
+///
+/// `--limit` is what drives pagination: `gh` pages through the API until it has
+/// that many, so one generous number stands in for a page loop. It is exposed
+/// rather than hard-coded because an org with more repositories than the limit
+/// would otherwise silently show a truncated list.
+pub fn list_repos(owner: &str, limit: usize) -> Result<Vec<Repo>> {
+    let limit = limit.to_string();
+    let out = capture(&[
+        "repo",
+        "list",
+        owner,
+        "--json",
+        REPO_FIELDS,
+        "--limit",
+        &limit,
+    ])?;
+    parse_repos(&out)
+}
+
+/// Clone `owner/repo` into `dest`.
+///
+/// Output is captured rather than inherited: clones run concurrently, and
+/// several `git` progress meters writing to one terminal at once is illegible.
+/// The child's own diagnostics are returned on failure so the caller can
+/// attribute them to the right repository.
+pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
+    let output = Command::new("gh")
+        .args(["repo", "clone", name_with_owner, &dest.to_string_lossy()])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(spawn_error)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        bail!(if stderr.is_empty() {
+            format!("cloning {name_with_owner} failed")
+        } else {
+            stderr.to_string()
+        });
+    }
+    Ok(())
+}
+
+/// The authenticated user's login, and the organisations they belong to.
+///
+/// This is the answer to "which owners do you actually clone from" on a machine
+/// with nothing cloned yet, where looking at the filesystem would find nothing.
+pub fn owners() -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    if let Ok(login) = capture(&["api", "user", "--jq", ".login"]) {
+        out.extend(login.split_whitespace().map(str::to_string));
+    }
+    if let Ok(orgs) = capture(&["api", "user/orgs", "--jq", ".[].login"]) {
+        out.extend(orgs.split_whitespace().map(str::to_string));
+    }
+    Ok(out)
 }
 
 /// Run `gh` with the terminal attached, passing its exit status through.
