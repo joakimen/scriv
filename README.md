@@ -82,6 +82,11 @@ scriv repo clone tailscale/tailscale   # skip both pickers
 `scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
 `ls` to `list`. Any command takes `--help` for its flags.
 
+Branch listings lead with the branch you are on, then the branches in this
+clone, then the ones that only exist on a remote — each block most recently
+committed to first, so what you were last working on is at the top and
+somebody else's month-old remote branch is not.
+
 `scriv pr` has two more verbs of its own — `open` puts a pull request in the
 browser, `merge` merges it — and both fuzzy-pick when given no number:
 

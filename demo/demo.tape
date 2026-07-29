@@ -42,10 +42,15 @@ Sleep 400ms
 Enter
 Sleep 1500ms
 
-# Green is local+remote, yellow local-only, cyan remote-only. The preview shows
-# who has been working on the highlighted branch.
+# The current branch leads, then local branches, then remote-only ones, each
+# newest first. Green is local+remote, yellow local-only, cyan remote-only. The
+# preview shows who has been working on the highlighted branch.
+#
+# Three rows down is the remote-only branch, at the bottom of the list.
 Down
-Sleep 700ms
+Sleep 600ms
+Down
+Sleep 600ms
 Down
 Sleep 1500ms
 

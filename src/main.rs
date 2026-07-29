@@ -93,6 +93,9 @@ enum Command {
         tracked: bool,
     },
     /// Switch between local and remote git branches
+    ///
+    /// Listings lead with the current branch, then local branches, then
+    /// remote-only ones, each most recently committed to first.
     #[command(alias = "br")]
     Branch {
         #[command(subcommand)]

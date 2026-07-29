@@ -4,6 +4,10 @@
 //! live, so switching to a branch you have and checking out one you do not are
 //! the same gesture. Picking a remote-only branch creates the local branch and
 //! sets its upstream, which is the step that otherwise has to be typed by hand.
+//!
+//! Every listing arrives ordered by [`git::by_relevance`] — current branch,
+//! then local, then remote-only, newest first within each — so the top of the
+//! list is where the answer usually is.
 
 use anyhow::{Result, bail};
 

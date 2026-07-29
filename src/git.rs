@@ -7,7 +7,8 @@
 //!
 //! Branches are enumerated with a single `for-each-ref` over `refs/heads` and
 //! `refs/remotes`, so local and remote branches arrive in one pass, already
-//! ordered by commit recency.
+//! ordered by commit recency; [`by_relevance`] then groups that order into
+//! current branch, local, remote-only without asking git anything more.
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -235,6 +236,35 @@ pub fn classify(lines: &[RefLine]) -> Vec<Branch> {
     branches
 }
 
+/// Which block of the listing a branch belongs in: the current branch, then
+/// what is already in this clone, then what is only on a remote.
+fn tier(branch: &Branch) -> u8 {
+    match (branch.head, branch.kind) {
+        (true, _) => 0,
+        (_, BranchKind::Remote) => 2,
+        _ => 1,
+    }
+}
+
+/// Order branches by how likely one is to be the one wanted: the current
+/// branch, then local branches, then remote-only ones, each block most
+/// recently committed first.
+///
+/// The recency half is free — [`branches`] asks `for-each-ref` for
+/// `--sort=-committerdate`, so the input already arrives newest first and this
+/// is a stable sort that only regroups it. Nothing here reads a ref or parses a
+/// date, which is what keeps a repository with a thousand stale remote branches
+/// as cheap to list as an empty one.
+///
+/// Grouping before recency is deliberate: a remote branch someone else pushed
+/// an hour ago is newer than anything local, but it is not what the person who
+/// typed `branch checkout` in their own working tree is usually reaching for.
+pub fn by_relevance(mut branches: Vec<Branch>) -> Vec<Branch> {
+    // Stable, so committer-date order survives inside each block.
+    branches.sort_by_key(tier);
+    branches
+}
+
 /// Apply a [`Filter`] to a branch list.
 pub fn filtered(branches: Vec<Branch>, filter: Filter) -> Vec<Branch> {
     branches
@@ -339,7 +369,9 @@ pub fn ensure_repo() -> Result<()> {
     Ok(())
 }
 
-/// Every branch in the repository, most recently committed to first.
+/// Every branch in the repository, ordered by [`by_relevance`]: the current
+/// branch, then local branches, then remote-only ones, newest first within
+/// each.
 pub fn branches() -> Result<Vec<Branch>> {
     let format = format!(
         "--format=%(refname){SEP}%(HEAD){SEP}%(upstream:short){SEP}%(committerdate:relative){SEP}%(subject)"
@@ -352,7 +384,7 @@ pub fn branches() -> Result<Vec<Branch>> {
         "refs/remotes",
     ])
     .context("listing branches")?;
-    Ok(classify(&parse_ref_lines(&out)))
+    Ok(by_relevance(classify(&parse_ref_lines(&out))))
 }
 
 /// Refresh remote-tracking refs, dropping ones deleted upstream.
@@ -508,6 +540,57 @@ mod tests {
         assert_eq!(
             got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
             vec!["b", "a"]
+        );
+    }
+
+    /// Current branch, then local, then remote-only — regardless of where
+    /// git's date order put them.
+    #[test]
+    fn relevance_groups_current_then_local_then_remote() {
+        let got = by_relevance(classify(&[
+            line("refs/remotes/origin/hot", false, ""),
+            line("refs/heads/scratch", false, ""),
+            line("refs/heads/main", true, "origin/main"),
+            line("refs/remotes/origin/main", false, ""),
+        ]));
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "scratch", "origin/hot"]
+        );
+    }
+
+    /// Within a block, git's `--sort=-committerdate` order has to survive: the
+    /// sort is stable, and that is the entire recency half of the ordering.
+    #[test]
+    fn relevance_keeps_commit_order_inside_each_group() {
+        let got = by_relevance(classify(&[
+            line("refs/heads/newest", false, ""),
+            line("refs/remotes/origin/newest-remote", false, ""),
+            line("refs/heads/older", false, ""),
+            line("refs/remotes/origin/oldest-remote", false, ""),
+        ]));
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec![
+                "newest",
+                "older",
+                "origin/newest-remote",
+                "origin/oldest-remote"
+            ]
+        );
+    }
+
+    /// A detached HEAD has no current branch row; the listing must still be
+    /// grouped rather than falling back to raw date order.
+    #[test]
+    fn relevance_handles_no_current_branch() {
+        let got = by_relevance(classify(&[
+            line("refs/remotes/origin/feature", false, ""),
+            line("refs/heads/scratch", false, ""),
+        ]));
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["scratch", "origin/feature"]
         );
     }
 
