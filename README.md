@@ -196,8 +196,10 @@ ignore = ["node_modules", "target"]
 editor = "nvim"
 
 # Categories label owners, one category to many owners, so everything you touch
-# for work colours as one group however many orgs it spans. An owner in no
-# category still shows up — just uncoloured.
+# for work colours as one group however many orgs it spans. `work` is cyan and
+# `personal` green wherever they appear; any other category takes one of the
+# remaining hues. An owner in no category still shows up, in the terminal's
+# ordinary foreground.
 [owners]
 personal = ["joakimen"]
 work = ["capralifecycle", "nsbno"]
