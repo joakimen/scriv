@@ -272,19 +272,37 @@ fn items(prs: &[PullRequest], tint: Tint) -> Vec<PickItem> {
         .collect()
 }
 
-/// Fuzzy-select one pull request and return its number.
-fn select(ctx: &Ctx, prs: &[PullRequest], prompt: &str, tint: Tint) -> Result<u64> {
-    let choice = pick::pick_one(items(prs, tint), prompt, &ctx.config.picker)?;
-    choice
-        .parse()
-        .map_err(|_| anyhow::anyhow!("unexpected picker result: {choice}"))
+/// Fuzzy-select one pull request and return its number, re-asking `gh` and
+/// reopening on [`REFRESH_KEY`](pick::REFRESH_KEY).
+///
+/// A pull request list is stale the moment it is drawn — a check finishes, a
+/// review lands, someone merges — and a picker over it is exactly where you
+/// notice. The reload is the same `gh pr list` the command opened with, run
+/// between pickers rather than inside one: `gh` is a network round trip, and
+/// skim's preview thread is no place for it.
+fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Result<u64> {
+    let mut prs = collect(ctx, state, limit)?;
+    let mut query = String::new();
+    loop {
+        match pick::pick_one_refreshable(items(&prs, tint), prompt, &query, &ctx.config.picker)? {
+            pick::Picked::Chosen(choice) => {
+                return choice
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("unexpected picker result: {choice}"));
+            }
+            pick::Picked::Refresh { query: typed } => {
+                query = typed;
+                ctx.log.info("refreshing pull requests");
+                prs = collect(ctx, state, limit)?;
+            }
+        }
+    }
 }
 
 /// `scriv pr pick` — fuzzy-select a pull request and print its number, so it
 /// composes with `gh`: `gh pr view (scriv pr pick)`.
 pub fn pick(ctx: &Ctx, state: &str, limit: usize) -> Result<()> {
-    let prs = collect(ctx, state, limit)?;
-    let number = select(ctx, &prs, "Pick a pull request", Tint::State)?;
+    let number = select(ctx, state, limit, "Pick a pull request", Tint::State)?;
     println!("{number}");
     Ok(())
 }
@@ -300,10 +318,7 @@ fn resolve(
 ) -> Result<u64> {
     match number {
         Some(number) => Ok(number),
-        None => {
-            let prs = collect(ctx, state, limit)?;
-            select(ctx, &prs, prompt, tint)
-        }
+        None => select(ctx, state, limit, prompt, tint),
     }
 }
 

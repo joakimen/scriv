@@ -153,6 +153,13 @@ title, failing checks and description for pull requests, and contents for
 files. They come from data already fetched, or from local commands kept to tens
 of milliseconds, so scrolling a long list never stalls.
 
+In a branch or pull request picker, `ctrl-r` reloads the list in place —
+`git fetch --all --prune` for branches, another `gh pr list` for pull requests —
+and reopens it with whatever you had typed still in the query. Those are the two
+lists that go stale while you read them: a colleague pushes, a check goes green.
+The pickers over local data have nothing to re-ask, so they leave `ctrl-r` to
+skim, where it switches between fuzzy and regex matching.
+
 ## Shell integration (fish)
 
 ```fish

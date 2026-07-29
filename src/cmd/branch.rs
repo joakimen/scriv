@@ -144,17 +144,50 @@ fn items(branches: &[Branch]) -> Vec<PickItem> {
         .collect()
 }
 
-/// Fuzzy-select one branch and return its name (`main`, or `origin/main` for a
-/// branch that only exists on a remote).
-fn select(ctx: &Ctx, branches: &[Branch], prompt: &str) -> Result<String> {
-    pick::pick_one(items(branches), prompt, &ctx.config.picker)
+/// Fuzzy-select one branch, fetching and reopening on
+/// [`REFRESH_KEY`](pick::REFRESH_KEY).
+///
+/// Returns the chosen name (`main`, or `origin/main` for a branch that only
+/// exists on a remote) together with the unfiltered list it came from: a
+/// refresh replaces that list, and [`git::resolve`] must not decide what a
+/// checkout means from the one the picker opened with.
+///
+/// The fetch happens between runs of the picker, which is the only place it can
+/// happen: skim owns the terminal while it is up, and its preview thread is the
+/// wrong place for a network round trip.
+fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Result<Selection> {
+    let mut all = branches;
+    let mut query = String::new();
+    loop {
+        let offered = narrow(all.clone(), filter)?;
+        match pick::pick_one_refreshable(items(&offered), prompt, &query, &ctx.config.picker)? {
+            pick::Picked::Chosen(name) => {
+                return Ok(Selection {
+                    name,
+                    branches: all,
+                });
+            }
+            pick::Picked::Refresh { query: typed } => {
+                query = typed;
+                ctx.log.info("refreshing branches");
+                git::fetch_quiet()?;
+                all = git::branches()?;
+            }
+        }
+    }
+}
+
+/// A chosen branch, and the branch list as it stood when it was chosen.
+struct Selection {
+    name: String,
+    branches: Vec<Branch>,
 }
 
 /// `scriv branch pick` — fuzzy-select a branch and print its name.
 pub fn pick(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
-    let branches = collect(ctx, filter, fetch)?;
-    let choice = select(ctx, &branches, "Pick a branch")?;
-    println!("{choice}");
+    let branches = load(ctx, fetch)?;
+    let chosen = select(ctx, branches, filter, "Pick a branch")?;
+    println!("{}", chosen.name);
     Ok(())
 }
 
@@ -169,12 +202,12 @@ pub fn pick(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
 /// line always resolves against every branch — `--local` is about choosing, not
 /// about what `origin/feature` is allowed to mean.
 pub fn checkout(ctx: &Ctx, name: Option<&str>, filter: Filter, fetch: bool) -> Result<()> {
-    let branches = load(ctx, fetch)?;
-    let name = match name {
-        Some(name) => name.to_string(),
+    let loaded = load(ctx, fetch)?;
+    let (name, branches) = match name {
+        Some(name) => (name.to_string(), loaded),
         None => {
-            let offered = narrow(branches.clone(), filter)?;
-            select(ctx, &offered, "Check out a branch")?
+            let chosen = select(ctx, loaded, filter, "Check out a branch")?;
+            (chosen.name, chosen.branches)
         }
     };
 
