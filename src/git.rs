@@ -392,6 +392,28 @@ pub fn fetch() -> Result<()> {
     passthrough(&["fetch", "--all", "--prune"]).context("fetching from remotes")
 }
 
+/// [`fetch`], with git's stdout swallowed.
+///
+/// For fetching from inside a picker: `scriv branch pick`'s stdout is very
+/// often a command substitution, and `git fetch --all` writes a `Fetching
+/// origin` line there. That line would be read as part of the branch name.
+/// stderr is left alone, so progress and any error still reach the user.
+pub fn fetch_quiet() -> Result<()> {
+    let status = Command::new("git")
+        .args(["fetch", "--all", "--prune"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|e| match e.kind() {
+            ErrorKind::NotFound => anyhow!("`git` was not found on PATH"),
+            _ => anyhow!(e).context("fetching from remotes"),
+        })?;
+    if !status.success() {
+        return Err(Reported(status.code().unwrap_or(1)).into());
+    }
+    Ok(())
+}
+
 /// Perform a resolved checkout.
 ///
 /// `switch --track origin/foo` creates local `foo` with its upstream already

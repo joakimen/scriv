@@ -178,6 +178,56 @@ pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Resul
     one(Feed::batch(items), prompt, cfg)
 }
 
+/// The key that asks a refreshable picker to reload its rows.
+///
+/// This displaces skim's own `ctrl-r` (rotate between matching modes), which is
+/// why only the pickers over remote data offer it: those are the lists that go
+/// stale while you look at them, and re-reading them is worth more there than
+/// switching to regex matching.
+pub const REFRESH_KEY: &str = "ctrl-r";
+
+/// The outcome of a picker that offers [`REFRESH_KEY`].
+pub enum Picked {
+    /// A row the user selected.
+    Chosen(String),
+    /// The user asked for fresher rows. `query` is what they had typed, so the
+    /// reopened picker can start where they left off rather than making them
+    /// type it again.
+    Refresh { query: String },
+}
+
+/// [`pick_one`], with [`REFRESH_KEY`] bound to "close and tell the caller to
+/// reload".
+///
+/// The reload itself is the caller's: only it knows whether fresh rows mean a
+/// `git fetch` or a `gh pr list`, and doing the work between runs of the picker
+/// rather than inside one keeps it off skim's preview thread, where a slow
+/// command piles up copies of itself.
+///
+/// `query` pre-fills the input, which is how a refresh keeps its place.
+pub fn pick_one_refreshable(
+    items: Vec<PickItem>,
+    prompt: &str,
+    query: &str,
+    cfg: &PickerConfig,
+) -> Result<Picked> {
+    let run = Run {
+        prompt,
+        multi: false,
+        query,
+        refreshable: true,
+    };
+    let out = run_picker(Feed::batch(items), &run, cfg)?;
+    if out.refresh {
+        return Ok(Picked::Refresh { query: out.query });
+    }
+    out.values
+        .into_iter()
+        .next()
+        .map(Picked::Chosen)
+        .ok_or_else(|| Cancelled.into())
+}
+
 /// What [`pick_one_or_query`] came back with.
 pub enum Choice {
     /// A row the user selected.
@@ -327,19 +377,57 @@ fn into_skim(item: PickItem) -> Arc<dyn SkimItem> {
     Arc::new(SkItem { item }) as Arc<dyn SkimItem>
 }
 
+/// Everything about one run of the picker except its rows.
+struct Run<'a> {
+    prompt: &'a str,
+    /// Whether several rows can be selected.
+    multi: bool,
+    /// Text the input starts with, so a refreshed picker keeps its place.
+    query: &'a str,
+    /// Offer [`REFRESH_KEY`] and report it when pressed.
+    refreshable: bool,
+}
+
+impl<'a> Run<'a> {
+    fn new(prompt: &'a str, multi: bool) -> Self {
+        Self {
+            prompt,
+            multi,
+            query: "",
+            refreshable: false,
+        }
+    }
+}
+
+/// What one run of the picker came back with.
+struct Outcome {
+    values: Vec<String>,
+    /// What the user had typed — the answer itself when the list is a set of
+    /// suggestions and nothing matched.
+    query: String,
+    /// [`REFRESH_KEY`] was pressed, so there is no selection to speak of.
+    refresh: bool,
+}
+
 /// Drive skim over `feed` and return the selected values.
 fn run(feed: Feed, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<String>> {
     run_with_query(feed, prompt, multi, cfg).map(|(values, _)| values)
 }
 
-/// [`run`], also returning what the user had typed — which is the answer itself
-/// when the list is a set of suggestions and nothing matched.
+/// [`run`], also returning what the user had typed.
 fn run_with_query(
     feed: Feed,
     prompt: &str,
     multi: bool,
     cfg: &PickerConfig,
 ) -> Result<(Vec<String>, String)> {
+    let out = run_picker(feed, &Run::new(prompt, multi), cfg)?;
+    Ok((out.values, out.query))
+}
+
+/// Drive skim over `feed` once.
+fn run_picker(feed: Feed, run: &Run, cfg: &PickerConfig) -> Result<Outcome> {
+    let (prompt, multi) = (run.prompt, run.multi);
     // skim needs a terminal for its UI. Fail with a clear message rather than
     // skim's raw "Device not configured" when there is none (e.g. in a pipe
     // with no controlling tty). Command substitution — `cd (scriv repo pick)` —
@@ -366,6 +454,19 @@ fn run_with_query(
             .preview_window(cfg.preview_window.as_str());
     }
 
+    if !run.query.is_empty() {
+        builder.query(run.query.to_string());
+    }
+
+    // `accept(<key>)` is skim's `--expect`: it closes the picker and names the
+    // key that did it, which is how a keystroke can mean something other than
+    // "this row" without skim knowing what a refresh is.
+    if run.refreshable {
+        builder
+            .bind(vec![refresh_bind()])
+            .header(format!("{REFRESH_KEY} to refresh"));
+    }
+
     let options = builder
         .build()
         .map_err(|e| anyhow!("configuring picker: {e}"))?;
@@ -380,14 +481,33 @@ fn run_with_query(
     if output.is_abort {
         return Err(Cancelled.into());
     }
-    Ok((
-        output
+    Ok(Outcome {
+        values: output
             .selected_items
             .iter()
             .map(|item| item.output().to_string())
             .collect(),
-        output.query,
-    ))
+        refresh: accepted_with(&output.final_event, REFRESH_KEY),
+        query: output.query,
+    })
+}
+
+/// The skim binding that closes the picker and names [`REFRESH_KEY`] as the
+/// reason — the two halves of the round trip, written once.
+fn refresh_bind() -> String {
+    format!("{REFRESH_KEY}:accept({REFRESH_KEY})")
+}
+
+/// Whether skim closed because `key` was pressed, rather than `enter`.
+///
+/// The key comes back inside the accept event as the string it was bound
+/// under, which is why the binding above and this comparison use the same
+/// [`REFRESH_KEY`] constant.
+fn accepted_with(event: &Event, key: &str) -> bool {
+    matches!(
+        event,
+        Event::Action(Action::Accept(Some(pressed))) if pressed == key
+    )
 }
 
 #[cfg(test)]
@@ -406,5 +526,28 @@ mod tests {
     fn quotes_escape_embedded_single_quotes() {
         assert_eq!(quote("it's"), r"'it'\''s'");
         assert_eq!(quote("'; rm -rf /; '"), r"''\''; rm -rf /; '\'''");
+    }
+
+    /// Enter and the refresh key both leave skim through `accept`; only the
+    /// key that came with it says which happened. Reading that wrong turns a
+    /// refresh into a selection of whatever row was highlighted.
+    #[test]
+    fn only_the_refresh_key_reads_as_a_refresh() {
+        let accept = |key: Option<&str>| Event::Action(Action::Accept(key.map(str::to_string)));
+        assert!(accepted_with(&accept(Some(REFRESH_KEY)), REFRESH_KEY));
+        // Plain enter: accepted, but with no key attached.
+        assert!(!accepted_with(&accept(None), REFRESH_KEY));
+        assert!(!accepted_with(&accept(Some("ctrl-t")), REFRESH_KEY));
+        assert!(!accepted_with(&Event::Action(Action::Abort), REFRESH_KEY));
+    }
+
+    /// skim has to be told both which key to close on and what to call it, and
+    /// the name it reports back is what [`accepted_with`] matches. A binding
+    /// that named a different key would close the picker and refresh nothing.
+    #[test]
+    fn the_binding_names_the_key_it_is_checked_against() {
+        assert_eq!(refresh_bind(), "ctrl-r:accept(ctrl-r)");
+        let reported = Event::Action(Action::Accept(Some(REFRESH_KEY.to_string())));
+        assert!(accepted_with(&reported, REFRESH_KEY));
     }
 }
