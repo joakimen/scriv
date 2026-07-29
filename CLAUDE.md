@@ -41,6 +41,32 @@ invisible until someone looks at the README. Recording needs `vhs`
 without altering any existing picker's output does not need a re-record — say
 so in the PR rather than leaving it unmentioned.
 
+## Shipping without being asked
+
+Open and merge your own pull requests. That is standing authorisation for this
+repository, not something to confirm each time — finishing a piece of work and
+then stopping to ask permission to land it wastes the round trip that made the
+work worth doing.
+
+The gate is confidence that the change is sound, and that has a definition
+here already: `make` green, each commit building and testing green on its own,
+and the three docs above walked and accounted for in the PR body. Meet it and
+merge. Squash-merge and delete the branch, matching the existing history.
+
+Never commit straight to `main`. The pull request is what leaves a reviewable
+record of work nobody watched happen — which matters more when there is no
+reviewer standing by, not less.
+
+Stop and say so rather than merging when the work does not clear that bar:
+
+- a change you could not actually verify, as opposed to one you believe is fine
+- a test deleted rather than replaced, or a guarantee quietly dropped
+- a trade-off with a real cost that has not been named out loud in the PR body
+- rewriting history that is already pushed, touching CI credentials or secrets,
+  or publishing the crate
+
+Those are worth a sentence and a pause. Everything else — ship it.
+
 ## Layout
 
 The crate is split into an I/O-free core and an imperative shell, and new code
