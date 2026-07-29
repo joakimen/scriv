@@ -2,8 +2,8 @@
 //!
 //! Colour is opt-out per the `NO_COLOR` convention and is never emitted when
 //! stdout is redirected, so `scriv … ls` stays pipe-safe by default. The same
-//! rule governs [`Spinner`]: it is drawn only when there is a terminal to draw
-//! it on.
+//! rule governs [`Spinner`] and [`ScratchRow`]: they touch the display only
+//! when there is one to touch.
 
 use std::io::{IsTerminal, Write};
 use std::sync::Arc;
@@ -46,6 +46,71 @@ pub fn paint_within(text: &str, color: u8, back: u8, on: bool) -> String {
     }
 }
 
+/// A row of the terminal to draw on that is not the shell's.
+///
+/// Everything scriv draws inline — the spinner, the picker's viewport — starts
+/// on the row the cursor is on, and when scriv is invoked from a key binding
+/// that is the last row of the shell's prompt. Drawing there overwrites it, and
+/// erasing there leaves it blank. A one-line prompt survives either, because
+/// the shell redraws the whole thing afterwards; a two-line prompt does not —
+/// its first row is still on screen, so what is left is a prompt cut in half.
+///
+/// Taking a fresh row instead keeps any prompt intact. Stepping back up on the
+/// way out is what makes that safe: it leaves the cursor on the row the shell
+/// left it on, which is where its repaint expects to find it. Without that the
+/// shell redraws one row lower and strands a copy of the prompt above the new
+/// one.
+///
+/// Bind it for as long as the drawing lasts — `let _row = ScratchRow::take()`.
+/// A bare statement gives the row straight back.
+#[must_use]
+pub struct ScratchRow {
+    /// `false` when there was no terminal to take a row on, which makes the
+    /// whole type a no-op rather than a check at each call site.
+    taken: bool,
+}
+
+impl ScratchRow {
+    /// Move to a fresh row below the cursor, giving it back when dropped.
+    pub fn take() -> Self {
+        let taken = std::io::stderr().is_terminal();
+        if taken {
+            let mut err = std::io::stderr().lock();
+            // An explicit carriage return: the cursor sits part-way along the
+            // prompt row, and whether a bare newline also returns to column 0
+            // depends on a terminal mode the shell owns, not scriv.
+            let _ = err.write_all(b"\r\n");
+            let _ = err.flush();
+        }
+        Self { taken }
+    }
+
+    /// No row at all, for a caller that has nothing to protect.
+    pub fn none() -> Self {
+        Self { taken: false }
+    }
+
+    /// Whether a row was actually taken — false without a terminal to take one
+    /// on. For tests and for callers deciding what to draw.
+    pub fn is_taken(&self) -> bool {
+        self.taken
+    }
+}
+
+impl Drop for ScratchRow {
+    fn drop(&mut self) {
+        if !self.taken {
+            return;
+        }
+        let mut err = std::io::stderr().lock();
+        let _ = err.write_all(CURSOR_UP);
+        let _ = err.flush();
+    }
+}
+
+/// Move the cursor up one row, staying in its column.
+const CURSOR_UP: &[u8] = b"\x1b[A";
+
 /// Frames of the spinner, in order. Braille dots: one cell wide in every
 /// terminal, so the line never changes width as it turns.
 const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -66,6 +131,11 @@ const CLEAR_LINE: &str = "\r\x1b[2K";
 /// name there for a shell to read, and an animation in the middle of it would
 /// be read as part of the name.
 ///
+/// It takes a [`ScratchRow`] to turn on, because each frame erases the whole
+/// row it is drawn on: on the prompt's row that would wipe the prompt, and
+/// unlike the picker that follows it, a spinner is not big enough to hide what
+/// it destroyed.
+///
 /// Nothing is drawn at all when stderr is not a terminal, so a redirected or
 /// piped run stays clean, and the animation is never what a script has to
 /// parse around.
@@ -74,6 +144,8 @@ pub struct Spinner {
     /// `None` when there was no terminal to draw on, which makes every method
     /// here a no-op rather than a special case at each call site.
     thread: Option<JoinHandle<()>>,
+    /// Dropped after the animation is erased, handing the row back.
+    _row: ScratchRow,
 }
 
 /// Start a spinner labelled `label` (e.g. `fetching`), running until it is
@@ -86,8 +158,13 @@ pub struct Spinner {
 pub fn spinner(label: &str) -> Spinner {
     let stop = Arc::new(AtomicBool::new(false));
     if !std::io::stderr().is_terminal() {
-        return Spinner { stop, thread: None };
+        return Spinner {
+            stop,
+            thread: None,
+            _row: ScratchRow::none(),
+        };
     }
+    let row = ScratchRow::take();
 
     let label = label.to_string();
     let color = !no_color();
@@ -114,12 +191,14 @@ pub fn spinner(label: &str) -> Spinner {
     Spinner {
         stop,
         thread: Some(thread),
+        _row: row,
     }
 }
 
 impl Drop for Spinner {
-    /// Stop the animation and erase its line, leaving the terminal exactly as
-    /// it was found — the picker that opens next draws over nothing.
+    /// Stop the animation and erase its line before the row it was drawn on
+    /// goes back, leaving the terminal exactly as it was found — the picker
+    /// that opens next draws over nothing.
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         let Some(thread) = self.thread.take() else {
@@ -185,5 +264,38 @@ mod tests {
         // The test harness captures stderr, so this is the redirected case.
         let spinner = spinner("fetching");
         assert!(spinner.thread.is_none(), "spun without a terminal");
+    }
+
+    /// The spinner has to draw on a row of its own: every frame erases the
+    /// whole line, so on the prompt's row it would wipe the prompt and leave
+    /// nothing but a blank line behind once it stopped.
+    #[test]
+    fn the_spinner_draws_on_a_row_of_its_own() {
+        let spinner = spinner("fetching");
+        assert_eq!(
+            spinner._row.is_taken(),
+            spinner.thread.is_some(),
+            "the spinner drew somewhere it did not own",
+        );
+    }
+
+    /// Taking a row writes to the terminal, so a redirected run must take
+    /// none — the newline and the cursor-up would otherwise end up in
+    /// whatever is reading stderr.
+    #[test]
+    fn no_terminal_means_no_row_taken() {
+        assert_eq!(
+            ScratchRow::take().is_taken(),
+            std::io::stderr().is_terminal()
+        );
+        assert!(!ScratchRow::none().is_taken());
+    }
+
+    /// Stepping back up is what leaves the cursor where the shell left it. A
+    /// sequence that also moved the column, or one that scrolled, would put
+    /// the shell's repaint somewhere else entirely.
+    #[test]
+    fn the_row_is_given_back_by_moving_up_one() {
+        assert_eq!(CURSOR_UP, b"\x1b[A");
     }
 }

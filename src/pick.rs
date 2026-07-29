@@ -22,6 +22,7 @@ use ratatui::text::Line;
 use skim::prelude::*;
 
 use crate::config::PickerConfig;
+use crate::term;
 
 /// A user-cancelled selection (Esc / Ctrl-C). Distinct from "nothing matched"
 /// so the caller can exit 130 without printing anything.
@@ -551,6 +552,9 @@ fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
     feed.send(tx)?;
 
+    // Held until the picker is done with the terminal, however it ends —
+    // selection, cancel, or an error out of skim.
+    let _room = room_for(&cfg.height);
     let output = Skim::run_with(options, Some(rx)).map_err(|e| anyhow!("running picker: {e}"))?;
 
     if output.is_abort {
@@ -564,6 +568,39 @@ fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
             .collect(),
         query: output.query,
     })
+}
+
+/// The row an inline picker opens on, so it never draws over the prompt.
+///
+/// skim's inline viewport starts on the row the cursor is on — and when the
+/// picker is opened from a key binding, that is the last row of the shell's
+/// prompt. skim draws over it and clears it on the way out, which a one-line
+/// prompt survives because the shell redraws the whole thing afterwards. A
+/// two-line prompt does not: only its last row is taken, so the picker appears
+/// welded to the middle of a prompt whose first row is still sitting above it.
+/// A [`term::ScratchRow`] moves the whole picker one row down, clear of it.
+///
+/// A full-screen picker takes the alternate screen and gives the display back
+/// untouched, so it needs no row of its own.
+fn room_for(height: &str) -> term::ScratchRow {
+    if draws_inline(height) {
+        term::ScratchRow::take()
+    } else {
+        term::ScratchRow::none()
+    }
+}
+
+/// Whether skim will draw over the terminal it was launched in, rather than
+/// taking the alternate screen.
+///
+/// Mirrors skim's own rule: `100%` is full-screen, every other height — a
+/// percentage, a row count, or a negative offset — is an inline viewport.
+fn draws_inline(height: &str) -> bool {
+    height
+        .trim()
+        .strip_suffix('%')
+        .and_then(|n| n.trim().parse::<u16>().ok())
+        != Some(100)
 }
 
 /// The picker's header when it is showing what it has.
@@ -597,6 +634,42 @@ mod tests {
     fn quotes_plain_values() {
         assert_eq!(quote("main"), "'main'");
         assert_eq!(quote("/home/u/my repo"), "'/home/u/my repo'");
+    }
+
+    /// Only a full-height picker takes the alternate screen, and only that one
+    /// leaves the display untouched on its own. Get this wrong in the generous
+    /// direction and scriv reserves a row a full-screen picker never draws in,
+    /// leaving a stray blank line above every prompt.
+    #[test]
+    fn only_a_full_height_picker_keeps_off_the_display() {
+        assert!(!draws_inline("100%"));
+        assert!(!draws_inline(" 100% "));
+        for height in ["50%", "99%", "20", "-2", "", "garbage"] {
+            assert!(draws_inline(height), "{height:?} does not draw inline");
+        }
+    }
+
+    /// A row count of 100 is a hundred rows, not a hundred per cent — the `%`
+    /// is what makes it full-screen.
+    #[test]
+    fn a_bare_hundred_is_not_full_height() {
+        assert!(draws_inline("100"));
+    }
+
+    /// Taking a row means writing to the terminal, so it must not happen when
+    /// there is no terminal there: a redirected run would otherwise emit a
+    /// stray newline and a cursor-up escape into whatever is reading it.
+    #[test]
+    fn a_row_is_taken_only_when_there_is_a_terminal() {
+        use std::io::IsTerminal;
+        assert_eq!(room_for("50%").is_taken(), std::io::stderr().is_terminal());
+    }
+
+    /// A full-screen picker restores the display itself, so there is nothing
+    /// to take however the run was launched.
+    #[test]
+    fn a_full_height_picker_takes_no_row() {
+        assert!(!room_for("100%").is_taken());
     }
 
     /// A single quote in a branch name or path must not end the quoted string
