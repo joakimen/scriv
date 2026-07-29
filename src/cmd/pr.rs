@@ -4,6 +4,8 @@
 //! inherits whatever authentication `gh auth login` set up — including SSO and
 //! GitHub Enterprise hosts — and stores no credentials of its own.
 
+use std::sync::{Arc, Mutex};
+
 use anyhow::{Result, bail};
 
 use crate::Ctx;
@@ -12,8 +14,16 @@ use crate::pick::{self, PickItem, Preview};
 use crate::term;
 
 /// Fetch pull requests, failing with a useful message when there are none.
+///
+/// The spinner covers the whole `gh` call — a second or two of network on a
+/// good day, more on a large repository — which is otherwise a dead terminal.
+/// It draws on stderr and only when that is a terminal, so `pr ls | …` and
+/// `gh pr view (scriv pr pick)` are untouched by it.
 fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
-    let prs = gh::list(state, limit)?;
+    let prs = {
+        let _spinner = term::spinner("loading pull requests");
+        gh::list(state, limit)?
+    };
     ctx.log.info(&format!("found {} pull requests", prs.len()));
     if prs.is_empty() {
         // `--state all` would otherwise read "no all pull requests found".
@@ -272,31 +282,53 @@ fn items(prs: &[PullRequest], tint: Tint) -> Vec<PickItem> {
         .collect()
 }
 
-/// Fuzzy-select one pull request and return its number, re-asking `gh` and
-/// reopening on [`REFRESH_KEY`](pick::REFRESH_KEY).
+/// Fuzzy-select one pull request and return its number, with
+/// [`REFRESH_KEY`](pick::REFRESH_KEY) asking `gh` again in place.
 ///
 /// A pull request list is stale the moment it is drawn — a check finishes, a
 /// review lands, someone merges — and a picker over it is exactly where you
-/// notice. The reload is the same `gh pr list` the command opened with, run
-/// between pickers rather than inside one: `gh` is a network round trip, and
-/// skim's preview thread is no place for it.
+/// notice. The reload is the same `gh pr list` the command opened with, run on
+/// skim's reader thread so the rows on screen stay put while it is in flight.
+///
+/// A `gh` that fails — rate limit, expired token, no network — leaves the rows
+/// as they were and says so after the picker closes. Losing a list you were
+/// halfway through choosing from would be a worse answer than a slightly old
+/// one.
 fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Result<u64> {
-    let mut prs = collect(ctx, state, limit)?;
-    let mut query = String::new();
-    loop {
-        match pick::pick_one_refreshable(items(&prs, tint), prompt, &query, &ctx.config.picker)? {
-            pick::Picked::Chosen(choice) => {
-                return choice
-                    .parse()
-                    .map_err(|_| anyhow::anyhow!("unexpected picker result: {choice}"));
+    let prs = collect(ctx, state, limit)?;
+    // The opening rows are built before the shared list exists, and deliberately
+    // so: a `known.lock()` written inline in the `pick_one_reloading` call below
+    // would hold its guard for the whole statement — the entire lifetime of the
+    // picker — and the reload would block on it forever.
+    let rows = items(&prs, tint);
+    let known = Arc::new(Mutex::new(prs));
+    let failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let reload = {
+        let (known, failure, state) = (Arc::clone(&known), Arc::clone(&failure), state.to_string());
+        Box::new(move || {
+            let mut known = known.lock().expect("pull request list poisoned");
+            match gh::list(&state, limit) {
+                Ok(fresh) if !fresh.is_empty() => *known = fresh,
+                // An empty answer is not worth blanking the list for: the
+                // pull request you were looking at was there a moment ago.
+                Ok(_) => {}
+                Err(err) => {
+                    *failure.lock().expect("failure slot poisoned") = Some(format!("{err:#}"));
+                }
             }
-            pick::Picked::Refresh { query: typed } => {
-                query = typed;
-                ctx.log.info("refreshing pull requests");
-                prs = collect(ctx, state, limit)?;
-            }
-        }
+            items(&known, tint)
+        })
+    };
+
+    let choice = pick::pick_one_reloading(rows, prompt, &ctx.config.picker, reload)?;
+
+    if let Some(err) = failure.lock().expect("failure slot poisoned").take() {
+        eprintln!("warning: could not refresh pull requests: {err}");
     }
+    choice
+        .parse()
+        .map_err(|_| anyhow::anyhow!("unexpected picker result: {choice}"))
 }
 
 /// `scriv pr pick` — fuzzy-select a pull request and print its number, so it

@@ -96,7 +96,8 @@ enum Command {
     ///
     /// Listings lead with the current branch, then local branches, then
     /// remote-only ones, each most recently committed to first. In a branch
-    /// picker, ctrl-r fetches from every remote and reopens the list.
+    /// picker, ctrl-r fetches from every remote and reloads the list without
+    /// closing the picker.
     #[command(alias = "br")]
     Branch {
         #[command(subcommand)]
@@ -104,8 +105,8 @@ enum Command {
     },
     /// Work with GitHub pull requests (via the `gh` CLI)
     ///
-    /// In a pull request picker, ctrl-r asks GitHub again and reopens the list,
-    /// for when a check has finished while you were looking at it.
+    /// In a pull request picker, ctrl-r asks GitHub again and reloads the list
+    /// in place, for when a check has finished while you were looking at it.
     Pr {
         #[command(subcommand)]
         command: PrCmd,

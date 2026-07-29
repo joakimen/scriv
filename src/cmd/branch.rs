@@ -9,6 +9,8 @@
 //! then local, then remote-only, newest first within each — so the top of the
 //! list is where the answer usually is.
 
+use std::sync::{Arc, Mutex};
+
 use anyhow::{Result, bail};
 
 use crate::git::{self, Branch, Filter};
@@ -17,9 +19,14 @@ use crate::term;
 use crate::{Ctx, pick};
 
 /// Every branch in the current repository, optionally refreshing remotes first.
+///
+/// The fetch is the only slow step here, and it is silent (see [`git::fetch`]),
+/// so it gets the spinner: a network round trip with nothing on screen is
+/// indistinguishable from a hang.
 fn load(ctx: &Ctx, fetch: bool) -> Result<Vec<Branch>> {
     git::ensure_repo()?;
     if fetch {
+        let _spinner = term::spinner("fetching");
         git::fetch()?;
     }
     let branches = git::branches()?;
@@ -144,37 +151,46 @@ fn items(branches: &[Branch]) -> Vec<PickItem> {
         .collect()
 }
 
-/// Fuzzy-select one branch, fetching and reopening on
-/// [`REFRESH_KEY`](pick::REFRESH_KEY).
+/// Fuzzy-select one branch, with [`REFRESH_KEY`](pick::REFRESH_KEY) fetching
+/// and rebuilding the list without closing the picker.
 ///
 /// Returns the chosen name (`main`, or `origin/main` for a branch that only
-/// exists on a remote) together with the unfiltered list it came from: a
-/// refresh replaces that list, and [`git::resolve`] must not decide what a
-/// checkout means from the one the picker opened with.
+/// exists on a remote) together with the branch list as it stood at that
+/// moment: a refresh replaces that list, and [`git::resolve`] must not decide
+/// what a checkout means from the one the picker opened with. That is what the
+/// shared `known` is for — the reload closure runs on skim's reader thread, so
+/// the two need somewhere to meet.
 ///
-/// The fetch happens between runs of the picker, which is the only place it can
-/// happen: skim owns the terminal while it is up, and its preview thread is the
-/// wrong place for a network round trip.
+/// A failed fetch leaves the rows exactly as they were and is reported once the
+/// picker is out of the way. Interrupting a branch list to say the network is
+/// down helps nobody: the list on screen is still perfectly usable, and it is
+/// almost certainly the branch you wanted.
 fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Result<Selection> {
-    let mut all = branches;
-    let mut query = String::new();
-    loop {
-        let offered = narrow(all.clone(), filter)?;
-        match pick::pick_one_refreshable(items(&offered), prompt, &query, &ctx.config.picker)? {
-            pick::Picked::Chosen(name) => {
-                return Ok(Selection {
-                    name,
-                    branches: all,
-                });
+    let offered = narrow(branches.clone(), filter)?;
+    let known = Arc::new(Mutex::new(branches));
+    let failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    let reload = {
+        let (known, failure) = (Arc::clone(&known), Arc::clone(&failure));
+        Box::new(move || {
+            let mut known = known.lock().expect("branch list poisoned");
+            match git::fetch().and_then(|()| git::branches()) {
+                Ok(fresh) => *known = fresh,
+                Err(err) => {
+                    *failure.lock().expect("failure slot poisoned") = Some(format!("{err:#}"))
+                }
             }
-            pick::Picked::Refresh { query: typed } => {
-                query = typed;
-                ctx.log.info("refreshing branches");
-                git::fetch_quiet()?;
-                all = git::branches()?;
-            }
-        }
+            items(&git::filtered(known.clone(), filter))
+        })
+    };
+
+    let name = pick::pick_one_reloading(items(&offered), prompt, &ctx.config.picker, reload)?;
+
+    if let Some(err) = failure.lock().expect("failure slot poisoned").take() {
+        eprintln!("warning: could not refresh branches: {err}");
     }
+    let branches = known.lock().expect("branch list poisoned").clone();
+    Ok(Selection { name, branches })
 }
 
 /// A chosen branch, and the branch list as it stood when it was chosen.

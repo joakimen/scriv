@@ -13,6 +13,7 @@
 //! is what makes a walk of a large tree usable, since the picker opens on the
 //! first rows instead of the last.
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
@@ -178,7 +179,7 @@ pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Resul
     one(Feed::batch(items), prompt, cfg)
 }
 
-/// The key that asks a refreshable picker to reload its rows.
+/// The key that asks a reloadable picker to go and get fresher rows.
 ///
 /// This displaces skim's own `ctrl-r` (rotate between matching modes), which is
 /// why only the pickers over remote data offer it: those are the lists that go
@@ -186,46 +187,110 @@ pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Resul
 /// switching to regex matching.
 pub const REFRESH_KEY: &str = "ctrl-r";
 
-/// The outcome of a picker that offers [`REFRESH_KEY`].
-pub enum Picked {
-    /// A row the user selected.
-    Chosen(String),
-    /// The user asked for fresher rows. `query` is what they had typed, so the
-    /// reopened picker can start where they left off rather than making them
-    /// type it again.
-    Refresh { query: String },
-}
+/// Fetches a fresh set of rows. Called on a background thread, so it may block
+/// for as long as the network takes.
+///
+/// Infallible by construction: a reload that fails is the caller's to explain,
+/// and the useful answer is almost always "keep showing what we had", which
+/// only the caller can rebuild. Hand back the old rows and remember the error.
+pub type Reload = Box<dyn FnMut() -> Vec<PickItem> + Send>;
 
-/// [`pick_one`], with [`REFRESH_KEY`] bound to "close and tell the caller to
-/// reload".
+/// [`pick_one`], with [`REFRESH_KEY`] bound to reloading the list in place.
 ///
-/// The reload itself is the caller's: only it knows whether fresh rows mean a
-/// `git fetch` or a `gh pr list`, and doing the work between runs of the picker
-/// rather than inside one keeps it off skim's preview thread, where a slow
-/// command piles up copies of itself.
+/// The picker does not close and reopen: `reload` runs on a background thread
+/// while skim keeps drawing, with its own reading spinner turning next to the
+/// row count, and the rows already on screen stay there until the new ones
+/// arrive. The query, the cursor and the preview pane are never disturbed —
+/// there is nothing to restore, because nothing was torn down.
 ///
-/// `query` pre-fills the input, which is how a refresh keeps its place.
-pub fn pick_one_refreshable(
+/// This works by handing skim a [`CommandCollector`] of scriv's own. skim's
+/// `reload` action clears the item pool and asks the collector for a new
+/// source; the stock collector runs a shell command, and this one calls
+/// `reload` instead. So the refresh rides skim's real reload path — including
+/// the spinner and the "still reading" state — without a shell in sight.
+pub fn pick_one_reloading(
     items: Vec<PickItem>,
     prompt: &str,
-    query: &str,
     cfg: &PickerConfig,
-) -> Result<Picked> {
+    reload: Reload,
+) -> Result<String> {
     let run = Run {
         prompt,
         multi: false,
-        query,
-        refreshable: true,
+        query: "",
+        reload: Some(reload),
     };
-    let out = run_picker(Feed::batch(items), &run, cfg)?;
-    if out.refresh {
-        return Ok(Picked::Refresh { query: out.query });
-    }
-    out.values
+    run_picker(Feed::batch(items), run, cfg)?
+        .values
         .into_iter()
         .next()
-        .map(Picked::Chosen)
         .ok_or_else(|| Cancelled.into())
+}
+
+/// The [`CommandCollector`] behind [`pick_one_reloading`]: skim thinks it is
+/// running a command, and it is calling a closure.
+struct ReloadCollector {
+    reload: Arc<Mutex<Reload>>,
+}
+
+/// How often the counted thread looks up from waiting to see whether skim has
+/// asked it to stop.
+const RELOAD_POLL: Duration = Duration::from_millis(20);
+
+impl CommandCollector for ReloadCollector {
+    fn invoke(
+        &mut self,
+        _cmd: &str,
+        components_to_stop: Arc<AtomicUsize>,
+    ) -> (SkimItemReceiver, Sender<i32>) {
+        let (tx_item, rx_item): (SkimItemSender, SkimItemReceiver) = unbounded();
+        let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
+        let reload = Arc::clone(&self.reload);
+
+        // The counter is skim's only view of whether this collector has
+        // stopped, and `ReaderControl::kill` *busy-waits* on it. Whatever this
+        // thread does, it has to decrement quickly when asked — so the reload
+        // itself runs on a second, uncounted thread and this one only waits for
+        // it, giving up the moment skim interrupts.
+        //
+        // A reload started while another is still running therefore does not
+        // cancel it: the first finishes into a channel nobody is reading, and
+        // the second waits its turn on whatever the caller's closure locks.
+        // Pressing the key three times means three fetches, one after another,
+        // and a picker that stays responsive throughout — which is a better
+        // trade than killing a `git fetch` halfway.
+        components_to_stop.fetch_add(1, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            let (tx_rows, rx_rows) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let rows = (reload.lock().expect("reload closure poisoned"))();
+                // The receiver is gone if skim gave up waiting; the work is
+                // finished either way and its result is simply dropped.
+                let _ = tx_rows.send(rows);
+            });
+
+            loop {
+                if matches!(rx_interrupt.try_recv(), Ok(Some(_)) | Err(_)) {
+                    break;
+                }
+                match rx_rows.recv_timeout(RELOAD_POLL) {
+                    Ok(rows) => {
+                        let _ = tx_item.send(rows.into_iter().map(into_skim).collect());
+                        break;
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    // The worker panicked; leave the list as it is.
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            // Dropping `tx_item` here is what tells skim the read is over and
+            // stops its spinner, so it must happen before the count drops.
+            drop(tx_item);
+            components_to_stop.fetch_sub(1, Ordering::SeqCst);
+        });
+
+        (rx_item, tx_interrupt)
+    }
 }
 
 /// What [`pick_one_or_query`] came back with.
@@ -382,10 +447,10 @@ struct Run<'a> {
     prompt: &'a str,
     /// Whether several rows can be selected.
     multi: bool,
-    /// Text the input starts with, so a refreshed picker keeps its place.
+    /// Text the input starts with.
     query: &'a str,
-    /// Offer [`REFRESH_KEY`] and report it when pressed.
-    refreshable: bool,
+    /// Given one, [`REFRESH_KEY`] reloads the list through it.
+    reload: Option<Reload>,
 }
 
 impl<'a> Run<'a> {
@@ -394,7 +459,7 @@ impl<'a> Run<'a> {
             prompt,
             multi,
             query: "",
-            refreshable: false,
+            reload: None,
         }
     }
 }
@@ -405,8 +470,6 @@ struct Outcome {
     /// What the user had typed — the answer itself when the list is a set of
     /// suggestions and nothing matched.
     query: String,
-    /// [`REFRESH_KEY`] was pressed, so there is no selection to speak of.
-    refresh: bool,
 }
 
 /// Drive skim over `feed` and return the selected values.
@@ -421,12 +484,12 @@ fn run_with_query(
     multi: bool,
     cfg: &PickerConfig,
 ) -> Result<(Vec<String>, String)> {
-    let out = run_picker(feed, &Run::new(prompt, multi), cfg)?;
+    let out = run_picker(feed, Run::new(prompt, multi), cfg)?;
     Ok((out.values, out.query))
 }
 
-/// Drive skim over `feed` once.
-fn run_picker(feed: Feed, run: &Run, cfg: &PickerConfig) -> Result<Outcome> {
+/// Drive skim over `feed`.
+fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
     let (prompt, multi) = (run.prompt, run.multi);
     // skim needs a terminal for its UI. Fail with a clear message rather than
     // skim's raw "Device not configured" when there is none (e.g. in a pipe
@@ -458,13 +521,25 @@ fn run_picker(feed: Feed, run: &Run, cfg: &PickerConfig) -> Result<Outcome> {
         builder.query(run.query.to_string());
     }
 
-    // `accept(<key>)` is skim's `--expect`: it closes the picker and names the
-    // key that did it, which is how a keystroke can mean something other than
-    // "this row" without skim knowing what a refresh is.
-    if run.refreshable {
+    // skim's own `reload` action, pointed at a collector that calls a closure
+    // instead of running a shell command.
+    //
+    // `no_clear_if_empty` keeps skim from blanking the displayed rows the
+    // instant the key is pressed, which is all it can do: a reload empties the
+    // item pool by definition, so once the matcher runs again the list is empty
+    // until the new rows land. A reload that returns quickly therefore never
+    // flickers, and a slow one shows an empty list — which is what the busy
+    // header is for, since "still fetching" and "no branches" look identical
+    // otherwise.
+    if let Some(reload) = run.reload {
+        let collector = ReloadCollector {
+            reload: Arc::new(Mutex::new(reload)),
+        };
         builder
-            .bind(vec![refresh_bind()])
-            .header(format!("{REFRESH_KEY} to refresh"));
+            .bind(refresh_binds())
+            .header(IDLE_HEADER.to_string())
+            .no_clear_if_empty(true)
+            .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>);
     }
 
     let options = builder
@@ -487,27 +562,31 @@ fn run_picker(feed: Feed, run: &Run, cfg: &PickerConfig) -> Result<Outcome> {
             .iter()
             .map(|item| item.output().to_string())
             .collect(),
-        refresh: accepted_with(&output.final_event, REFRESH_KEY),
         query: output.query,
     })
 }
 
-/// The skim binding that closes the picker and names [`REFRESH_KEY`] as the
-/// reason — the two halves of the round trip, written once.
-fn refresh_bind() -> String {
-    format!("{REFRESH_KEY}:accept({REFRESH_KEY})")
-}
+/// The picker's header when it is showing what it has.
+const IDLE_HEADER: &str = "ctrl-r to refresh";
 
-/// Whether skim closed because `key` was pressed, rather than `enter`.
+/// The header while a reload is in flight. skim empties the list for the
+/// duration of a reload — that is what `reload` means — so the header is what
+/// distinguishes "fetching, one moment" from "there are no branches". Its
+/// spinner keeps turning beside the row count throughout.
+const BUSY_HEADER: &str = "⟳ refreshing…";
+
+/// The skim bindings that turn [`REFRESH_KEY`] into a reload of the item list.
 ///
-/// The key comes back inside the accept event as the string it was bound
-/// under, which is why the binding above and this comparison use the same
-/// [`REFRESH_KEY`] constant.
-fn accepted_with(event: &Event, key: &str) -> bool {
-    matches!(
-        event,
-        Event::Action(Action::Accept(Some(pressed))) if pressed == key
-    )
+/// `reload` with no command of its own is skim's "read the source again"; the
+/// source here is [`ReloadCollector`], so this is what calls the closure. The
+/// second binding is skim's `load` event, which fires when a read finishes —
+/// including the first one — and puts the idle header back without scriv having
+/// to know when the reload landed.
+fn refresh_binds() -> Vec<String> {
+    vec![
+        format!("{REFRESH_KEY}:reload+set-header({BUSY_HEADER})"),
+        format!("load:set-header({IDLE_HEADER})"),
+    ]
 }
 
 #[cfg(test)]
@@ -528,26 +607,108 @@ mod tests {
         assert_eq!(quote("'; rm -rf /; '"), r"''\''; rm -rf /; '\'''");
     }
 
-    /// Enter and the refresh key both leave skim through `accept`; only the
-    /// key that came with it says which happened. Reading that wrong turns a
-    /// refresh into a selection of whatever row was highlighted.
+    /// The binding has to be skim's own `reload`, not an `accept`: an accept
+    /// closes the picker, which is the behaviour this exists to avoid. It also
+    /// has to parse — a binding skim cannot read is dropped, and the key would
+    /// silently do nothing.
     #[test]
-    fn only_the_refresh_key_reads_as_a_refresh() {
-        let accept = |key: Option<&str>| Event::Action(Action::Accept(key.map(str::to_string)));
-        assert!(accepted_with(&accept(Some(REFRESH_KEY)), REFRESH_KEY));
-        // Plain enter: accepted, but with no key attached.
-        assert!(!accepted_with(&accept(None), REFRESH_KEY));
-        assert!(!accepted_with(&accept(Some("ctrl-t")), REFRESH_KEY));
-        assert!(!accepted_with(&Event::Action(Action::Abort), REFRESH_KEY));
+    fn the_refresh_key_is_bound_to_a_reload() {
+        let binds = refresh_binds();
+        let (key, actions) = binds[0]
+            .split_once(':')
+            .expect("not a `key:action` binding");
+        assert_eq!(key, REFRESH_KEY);
+        assert!(
+            actions.starts_with("reload"),
+            "an accept would close the picker: {actions}"
+        );
+        assert!(actions.contains(BUSY_HEADER), "no busy header: {actions}");
     }
 
-    /// skim has to be told both which key to close on and what to call it, and
-    /// the name it reports back is what [`accepted_with`] matches. A binding
-    /// that named a different key would close the picker and refresh nothing.
+    /// The busy header has to be taken down again, or a picker sits there
+    /// claiming to be refreshing long after it finished. skim's `load` event
+    /// is what says a read is over.
     #[test]
-    fn the_binding_names_the_key_it_is_checked_against() {
-        assert_eq!(refresh_bind(), "ctrl-r:accept(ctrl-r)");
-        let reported = Event::Action(Action::Accept(Some(REFRESH_KEY.to_string())));
-        assert!(accepted_with(&reported, REFRESH_KEY));
+    fn finishing_a_read_restores_the_idle_header() {
+        let restore = refresh_binds()
+            .into_iter()
+            .find(|b| b.starts_with("load:"))
+            .expect("nothing puts the header back");
+        assert!(restore.contains(IDLE_HEADER), "{restore}");
+    }
+
+    /// Neither the parenthesis nor the comma may appear inside a binding's
+    /// argument: skim splits bindings on `,` and ends an argument at `)`, so a
+    /// header containing either would be parsed as something else entirely.
+    #[test]
+    fn header_text_cannot_break_the_binding_syntax() {
+        for header in [IDLE_HEADER, BUSY_HEADER] {
+            assert!(!header.contains(','), "{header:?} would split the binding");
+            assert!(!header.contains(')'), "{header:?} would end the argument");
+        }
+    }
+
+    /// The reload closure runs on a thread of the collector's making, and its
+    /// rows have to come back through the channel skim is reading. Driving the
+    /// collector directly is the only way to see that without a terminal.
+    #[test]
+    fn the_collector_hands_reloaded_rows_to_skim() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let mut collector = ReloadCollector {
+            reload: Arc::new(Mutex::new(Box::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                vec![PickItem::plain("fresh")]
+            }))),
+        };
+
+        let components = Arc::new(AtomicUsize::new(0));
+        let (rx, _interrupt) = collector.invoke("", Arc::clone(&components));
+
+        let batch = rx.recv().expect("the reload sent no rows");
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].text(), "fresh");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // The channel closing is how skim learns the read is over and stops
+        // its spinner; the counter reaching zero is how it learns the
+        // collector has stopped. Both have to happen, or the picker is left
+        // looking like it is still loading.
+        assert!(rx.recv().is_err(), "the source channel was left open");
+        while components.load(Ordering::SeqCst) != 0 {
+            std::thread::yield_now();
+        }
+    }
+
+    /// skim busy-waits on the component count when it kills a reader, so an
+    /// interrupted reload has to give it up promptly rather than after the
+    /// network has answered.
+    #[test]
+    fn an_interrupted_reload_stops_without_waiting_for_the_work() {
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let mut collector = ReloadCollector {
+            reload: Arc::new(Mutex::new(Box::new(move || {
+                // Stands in for a fetch that has not come back yet.
+                let _ = blocked.recv();
+                vec![PickItem::plain("late")]
+            }))),
+        };
+
+        let components = Arc::new(AtomicUsize::new(0));
+        let (_rx, interrupt) = collector.invoke("", Arc::clone(&components));
+        interrupt.send(1).expect("interrupt not delivered");
+
+        // Without the uncounted worker thread this would hang until the
+        // reload finished — exactly the freeze skim's spin would turn into a
+        // pegged core.
+        let start = Instant::now();
+        while components.load(Ordering::SeqCst) != 0 {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "the collector waited for the reload it was told to abandon",
+            );
+            std::thread::yield_now();
+        }
+        drop(release);
     }
 }
