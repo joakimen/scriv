@@ -74,15 +74,19 @@ fn temp_name() -> String {
 
 /// Normalise list entries for persistence: trim each line, drop blanks, remove
 /// duplicates, and sort so the written file is deterministic.
+///
+/// Deduped by sorting rather than through a set: the output is sorted either
+/// way, and a `HashSet` would need its own copy of every entry to hold the keys
+/// it compares against.
 pub fn normalize_entries(lines: &[String]) -> Vec<String> {
-    let mut seen = HashSet::new();
     let mut result: Vec<String> = lines
         .iter()
-        .map(|l| l.trim().to_string())
+        .map(|l| l.trim())
         .filter(|l| !l.is_empty())
-        .filter(|l| seen.insert(l.clone()))
+        .map(str::to_string)
         .collect();
     result.sort();
+    result.dedup();
     result
 }
 

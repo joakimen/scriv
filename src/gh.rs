@@ -182,23 +182,40 @@ impl Check {
 fn result_for(status: &str, conclusion: &str, state: &str) -> CheckResult {
     // A `StatusContext` says everything in one field.
     if !state.is_empty() {
-        return match state.to_ascii_uppercase().as_str() {
-            "SUCCESS" => CheckResult::Pass,
-            "PENDING" | "EXPECTED" => CheckResult::Pending,
-            _ => CheckResult::Fail, // FAILURE, ERROR
+        return if is(state, &["SUCCESS"]) {
+            CheckResult::Pass
+        } else if is(state, &["PENDING", "EXPECTED"]) {
+            CheckResult::Pending
+        } else {
+            CheckResult::Fail // FAILURE, ERROR
         };
     }
     // A `CheckRun` that has not finished is pending whatever else it says.
     if !status.is_empty() && !status.eq_ignore_ascii_case("COMPLETED") {
         return CheckResult::Pending;
     }
-    match conclusion.to_ascii_uppercase().as_str() {
-        "SUCCESS" | "SKIPPED" | "NEUTRAL" => CheckResult::Pass,
-        // Finished with nothing to say: not yet reported, so not yet a verdict.
-        "" => CheckResult::Pending,
-        // FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE.
-        _ => CheckResult::Fail,
+    // Finished with nothing to say: not yet reported, so not yet a verdict.
+    if conclusion.is_empty() {
+        return CheckResult::Pending;
     }
+    if is(conclusion, &["SUCCESS", "SKIPPED", "NEUTRAL"]) {
+        CheckResult::Pass
+    } else {
+        // FAILURE, TIMED_OUT, CANCELLED, ACTION_REQUIRED, STARTUP_FAILURE.
+        CheckResult::Fail
+    }
+}
+
+/// Whether `value` is one of `options`, ignoring case.
+///
+/// `gh`'s enums are conventionally upper case but not guaranteed to be, so
+/// every comparison here is case-insensitive. Matching in place rather than
+/// upper-casing first is what keeps it allocation-free: these run once per
+/// check per pull request, several times over while a listing is built.
+fn is(value: &str, options: &[&str]) -> bool {
+    options
+        .iter()
+        .any(|option| value.eq_ignore_ascii_case(option))
 }
 
 /// How a pull request's checks add up: the counts, and the one-word verdict
@@ -305,10 +322,12 @@ pub enum Mergeable {
 
 impl Mergeable {
     pub fn parse(raw: &str) -> Self {
-        match raw.to_ascii_uppercase().as_str() {
-            "MERGEABLE" => Self::Clean,
-            "CONFLICTING" => Self::Conflicting,
-            _ => Self::Unknown,
+        if is(raw, &["MERGEABLE"]) {
+            Self::Clean
+        } else if is(raw, &["CONFLICTING"]) {
+            Self::Conflicting
+        } else {
+            Self::Unknown
         }
     }
 
@@ -410,14 +429,23 @@ impl PullRequest {
 
     /// The checks that are not passing, failures first — the ones worth naming
     /// in a preview, since a list of thirty green jobs says nothing.
+    ///
+    /// Partitioned in one pass rather than filtered and then sorted: a sort key
+    /// is called once per comparison, so deriving the verdict inside one would
+    /// re-derive it O(n log n) times over. Both halves keep the rollup's own
+    /// order, which is what the sort gave.
     pub fn failing_checks(&self) -> Vec<&Check> {
-        let mut out: Vec<&Check> = self
-            .status_check_rollup
-            .iter()
-            .filter(|c| c.result() != CheckResult::Pass)
-            .collect();
-        out.sort_by_key(|c| c.result() != CheckResult::Fail);
-        out
+        let mut failed = Vec::new();
+        let mut pending = Vec::new();
+        for check in &self.status_check_rollup {
+            match check.result() {
+                CheckResult::Pass => {}
+                CheckResult::Fail => failed.push(check),
+                CheckResult::Pending => pending.push(check),
+            }
+        }
+        failed.append(&mut pending);
+        failed
     }
 
     /// Just the date part of [`Self::updated_at`]; `gh` reports no relative
@@ -439,20 +467,26 @@ impl PullRequest {
 /// Colour a PR by what can be done with it: a draft is not ready to review, a
 /// merged or closed one is history.
 fn color_for(is_draft: bool, state: &str) -> u8 {
-    match state.to_ascii_uppercase().as_str() {
-        "MERGED" => 5,      // magenta
-        "CLOSED" => 1,      // red
-        _ if is_draft => 8, // bright black — open but draft
-        _ => 2,             // green — open and ready
+    if is(state, &["MERGED"]) {
+        5 // magenta
+    } else if is(state, &["CLOSED"]) {
+        1 // red
+    } else if is_draft {
+        8 // bright black — open but draft
+    } else {
+        2 // green — open and ready
     }
 }
 
 fn tag_for(is_draft: bool, state: &str) -> &'static str {
-    match state.to_ascii_uppercase().as_str() {
-        "MERGED" => "merged",
-        "CLOSED" => "closed",
-        _ if is_draft => "draft",
-        _ => "open",
+    if is(state, &["MERGED"]) {
+        "merged"
+    } else if is(state, &["CLOSED"]) {
+        "closed"
+    } else if is_draft {
+        "draft"
+    } else {
+        "open"
     }
 }
 
@@ -670,14 +704,17 @@ pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
 ///
 /// This is the answer to "which owners do you actually clone from" on a machine
 /// with nothing cloned yet, where looking at the filesystem would find nothing.
+///
+/// Failure is returned rather than swallowed. The caller treats these as
+/// suggestions and carries on without them, but "`gh` is not installed" and
+/// "you belong to no organisations" are different facts, and only one of them
+/// is worth telling the user about.
 pub fn owners() -> Result<Vec<String>> {
     let mut out = Vec::new();
-    if let Ok(login) = capture(&["api", "user", "--jq", ".login"]) {
-        out.extend(login.split_whitespace().map(str::to_string));
-    }
-    if let Ok(orgs) = capture(&["api", "user/orgs", "--jq", ".[].login"]) {
-        out.extend(orgs.split_whitespace().map(str::to_string));
-    }
+    let login = capture(&["api", "user", "--jq", ".login"])?;
+    out.extend(login.split_whitespace().map(str::to_string));
+    let orgs = capture(&["api", "user/orgs", "--jq", ".[].login"])?;
+    out.extend(orgs.split_whitespace().map(str::to_string));
     Ok(out)
 }
 
@@ -711,7 +748,18 @@ fn capture(args: &[&str]) -> Result<String> {
             stderr.to_string()
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(into_string(output.stdout))
+}
+
+/// Take ownership of a child's output as a `String`.
+///
+/// `String::from_utf8_lossy(&bytes).into_owned()` would copy the whole buffer
+/// even when it is already valid UTF-8, which it always is here — a `gh repo
+/// list` over a large organisation is megabytes of JSON. This reuses the
+/// buffer, and only pays the copy on the malformed input that would otherwise
+/// have been an error.
+fn into_string(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// A missing `gh` is the one failure worth explaining, since PR support is the
