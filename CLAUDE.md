@@ -109,6 +109,13 @@ reference, so command implementations do no environment lookups of their own.
   and a verb over that set. `edit` acts on the directory the user is standing
   in, so it is a verb at the top level rather than a fifth noun — and it has no
   `ls`. Resist filing ambient-directory work under a noun group.
+- **Anything drawn inline takes a `term::ScratchRow` first.** The picker and the
+  spinner both start on the row the cursor is on, which from a key binding is
+  the last row of the shell's prompt — the picker draws over it, the spinner
+  erases it. A one-line prompt hides that, because the shell redraws the whole
+  thing; a two-line prompt is left cut in half. Take a row, draw on that, and
+  step back up on the way out so the cursor is where the shell's repaint expects
+  it. Never draw on the row scriv was invoked on.
 - **Only `cd` needs the shell.** A child cannot change its parent's directory,
   which is why `repo pick` prints a path for a fish function to consume. Running
   an editor needs no such help: `scriv edit` spawns it directly and skim restores

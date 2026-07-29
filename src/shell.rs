@@ -75,13 +75,14 @@ end
 # alt-e (edit) are left-hand, alt-o and alt-p right-hand. Rebind any of them by
 # calling `bind` yourself after `scriv_key_bindings`.
 #
-# Every binding ends in `commandline -f repaint`, never `execute`. skim renders
-# inline: it asks the terminal for the cursor position and draws its UI starting
-# on that row, which is the row the prompt is on, then clears that region when it
-# exits — leaving the prompt blank until fish redraws it. `repaint` is what
-# redraws it. `execute` looks like it works only because submitting an empty
-# command line prints a fresh prompt further down; with anything typed it runs
-# the line, so pressing ctrl-o mid-command would execute whatever was there.
+# Every binding ends in `commandline -f repaint`, never `execute`. The picker
+# renders inline, and scriv opens it on a row of its own below the prompt so it
+# never draws over one; `repaint` is what puts the command line back after a
+# picker that took the whole screen, and what redraws a prompt whose contents
+# the picked branch or directory has just changed. `execute` looks like it works
+# only because submitting an empty command line prints a fresh prompt further
+# down; with anything typed it runs the line, so pressing ctrl-o mid-command
+# would execute whatever was there.
 function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind ctrl-o "scriv-repo-cd; commandline -f repaint"
     bind alt-o  "scriv-repo-cd; commandline -f repaint"
@@ -152,8 +153,8 @@ mod tests {
 
     /// `commandline -f execute` submits the command line, so a binding pressed
     /// with anything typed would run it — ctrl-o mid-`rm` is not a picker. It
-    /// also never repaints the prompt skim drew over; it just prints a new one
-    /// below the damage. `repaint` is the fish idiom for both.
+    /// also leaves a stale prompt where a picked branch or directory has just
+    /// changed what the prompt says. `repaint` is the fish idiom for both.
     #[test]
     fn bindings_repaint_rather_than_execute() {
         let out = integration(Shell::Fish, &mut dummy());
