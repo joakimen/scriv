@@ -388,30 +388,21 @@ pub fn branches() -> Result<Vec<Branch>> {
 }
 
 /// Refresh remote-tracking refs, dropping ones deleted upstream.
-pub fn fetch() -> Result<()> {
-    passthrough(&["fetch", "--all", "--prune"]).context("fetching from remotes")
-}
-
-/// [`fetch`], with git's stdout swallowed.
 ///
-/// For fetching from inside a picker: `scriv branch pick`'s stdout is very
-/// often a command substitution, and `git fetch --all` writes a `Fetching
-/// origin` line there. That line would be read as part of the branch name.
-/// stderr is left alone, so progress and any error still reach the user.
-pub fn fetch_quiet() -> Result<()> {
-    let status = Command::new("git")
-        .args(["fetch", "--all", "--prune"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .status()
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => anyhow!("`git` was not found on PATH"),
-            _ => anyhow!(e).context("fetching from remotes"),
-        })?;
-    if !status.success() {
-        return Err(Reported(status.code().unwrap_or(1)).into());
-    }
-    Ok(())
+/// Captured rather than passed through, which is the one place scriv silences
+/// git on purpose. `git fetch --all` narrates itself — `Fetching origin`,
+/// per-remote progress — and neither half of that is wanted here. The line goes
+/// to stdout, where `scriv branch pick` is writing a branch name for a shell to
+/// read; the progress goes to stderr, where it would scribble over the spinner
+/// the caller draws and leave the terminal to be redrawn underneath the picker.
+///
+/// A failure still speaks: [`capture`] returns git's stderr as the error, so
+/// "could not read from remote repository" arrives as scriv's error message
+/// rather than as noise nobody asked for.
+pub fn fetch() -> Result<()> {
+    capture(&["fetch", "--all", "--prune"])
+        .context("fetching from remotes")
+        .map(|_| ())
 }
 
 /// Perform a resolved checkout.
