@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::RepoDisplay;
+use crate::config::{Owners, RepoDisplay};
 use crate::gh::{self, Repo};
 use crate::path::{display_path, expand_home_dir, relative_label};
 use crate::pick::{Choice, PickItem, Preview};
@@ -59,20 +59,52 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
 /// follow the terminal theme; cycles if there are more categories than colours.
 const CATEGORY_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
 
-/// Colour for a repository whose owner is in no configured category.
-const UNCATEGORIZED_COLOR: u8 = 8; // bright black
+/// Categories whose colour is fixed by name rather than by config order.
+///
+/// `work` and `personal` are the split nearly every config makes, and reading a
+/// row is faster when the hue means the same thing in every checkout — so they
+/// keep cyan and green wherever they appear in the file. Everything else takes
+/// the next unused hue, in config order.
+const NAMED_CATEGORY_COLORS: &[(&str, u8)] = &[("work", 6), ("personal", 2)];
 
-/// Map each configured category to a colour, in config order.
+/// The fixed colour for `category`, if it is one of the conventional names.
+fn named_color(category: &str) -> Option<u8> {
+    NAMED_CATEGORY_COLORS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(category))
+        .map(|&(_, color)| color)
+}
+
+/// Map each configured category to a colour.
 ///
 /// [`UNCATEGORIZED`](crate::config::UNCATEGORIZED) is deliberately not in the
 /// map: an uncategorised repository is not a category of its own competing for
-/// a hue, it is the absence of one, and greys out.
-fn category_colors(ctx: &Ctx) -> std::collections::HashMap<&str, u8> {
-    ctx.config
-        .owners
+/// a hue, it is the absence of one, and stays the terminal's default foreground.
+/// Dimming it would read as "not this one", when it is an ordinary choice.
+fn category_colors(owners: &Owners) -> std::collections::HashMap<&str, u8> {
+    // Hues spoken for by a named category actually present, so an unnamed
+    // category never collides with `work`'s cyan.
+    let taken: Vec<u8> = owners.keys().filter_map(|c| named_color(c)).collect();
+    let mut free: Vec<u8> = CATEGORY_COLORS
+        .iter()
+        .copied()
+        .filter(|c| !taken.contains(c))
+        .collect();
+    if free.is_empty() {
+        free = CATEGORY_COLORS.to_vec();
+    }
+
+    let mut next = 0;
+    owners
         .keys()
-        .enumerate()
-        .map(|(i, c)| (c.as_str(), CATEGORY_COLORS[i % CATEGORY_COLORS.len()]))
+        .map(|category| {
+            let color = named_color(category).unwrap_or_else(|| {
+                let color = free[next % free.len()];
+                next += 1;
+                color
+            });
+            (category.as_str(), color)
+        })
         .collect()
 }
 
@@ -101,12 +133,12 @@ fn preview(path: &str) -> Preview {
 ///
 /// Each row is prefixed with its category, coloured per category so a `work`
 /// checkout is distinguishable from a personal one at a glance — several owners
-/// can share one category and therefore one colour. Paths render per
-/// `picker.display`. The printed path is always absolute so a shell shim can
-/// `cd` to it directly.
+/// can share one category and therefore one colour, and a repository in no
+/// category is left uncoloured. Paths render per `picker.display`. The printed
+/// path is always absolute so a shell shim can `cd` to it directly.
 pub fn pick(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
-    let colors = category_colors(ctx);
+    let colors = category_colors(&ctx.config.owners);
 
     // Character count, not bytes: `{:<width$}` pads by characters, so a byte
     // length would over-pad a category label containing non-ASCII.
@@ -127,14 +159,11 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
                 RepoDisplay::Full => abs.clone(),
             };
             let label = format!("{category:<width$}  {shown}", category = repo.category);
-            PickItem::new(label, abs.clone())
-                .color(
-                    colors
-                        .get(repo.category.as_str())
-                        .copied()
-                        .unwrap_or(UNCATEGORIZED_COLOR),
-                )
-                .preview(preview(&abs))
+            let item = PickItem::new(label, abs.clone()).preview(preview(&abs));
+            match colors.get(repo.category.as_str()) {
+                Some(&color) => item.color(color),
+                None => item,
+            }
         })
         .collect();
 
@@ -225,7 +254,7 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
     ctx.log
         .info(&format!("{} owner candidates", candidates.len()));
 
-    let colors = category_colors(ctx);
+    let colors = category_colors(&ctx.config.owners);
     let items: Vec<PickItem> = candidates
         .iter()
         .map(|owner| {
@@ -234,11 +263,11 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
                 Some(c) => format!("{owner}  ({c})"),
                 None => owner.clone(),
             };
-            PickItem::new(label, owner.clone()).color(
-                category
-                    .and_then(|c| colors.get(c).copied())
-                    .unwrap_or(UNCATEGORIZED_COLOR),
-            )
+            let item = PickItem::new(label, owner.clone());
+            match category.and_then(|c| colors.get(c).copied()) {
+                Some(color) => item.color(color),
+                None => item,
+            }
         })
         .collect();
 
@@ -467,6 +496,49 @@ mod tests {
         ]"#,
         )
         .unwrap()
+    }
+
+    fn owners(categories: &[&str]) -> Owners {
+        categories
+            .iter()
+            .map(|c| ((*c).to_string(), Vec::new()))
+            .collect()
+    }
+
+    /// `work` and `personal` mean the same colour in every config, so a row's
+    /// hue can be read without remembering what order the file was written in.
+    #[test]
+    fn the_conventional_categories_keep_their_colours() {
+        let (first, last) = (owners(&["work", "personal"]), owners(&["personal", "work"]));
+        let listed_first = category_colors(&first);
+        let listed_last = category_colors(&last);
+        assert_eq!(listed_first.get("work"), Some(&6), "work is cyan");
+        assert_eq!(listed_first.get("personal"), Some(&2), "personal is green");
+        assert_eq!(
+            listed_first, listed_last,
+            "config order changed the colours"
+        );
+        // No entry for the absence of a category: those rows stay uncoloured.
+        assert!(!listed_first.contains_key(crate::config::UNCATEGORIZED));
+    }
+
+    /// Any other category takes a hue, but never one a named category is
+    /// already using — two groups the same colour is the one thing the tint
+    /// exists to avoid.
+    #[test]
+    fn other_categories_avoid_the_reserved_hues() {
+        let configured = owners(&["client", "work", "oss", "personal"]);
+        let colors = category_colors(&configured);
+        assert_eq!(colors.get("work"), Some(&6));
+        assert_eq!(colors.get("personal"), Some(&2));
+        let mut assigned: Vec<u8> = colors.values().copied().collect();
+        assigned.sort_unstable();
+        assigned.dedup();
+        assert_eq!(
+            assigned.len(),
+            4,
+            "two categories share a colour: {colors:?}"
+        );
     }
 
     /// A clone must land exactly where discovery looks for it, or cloning

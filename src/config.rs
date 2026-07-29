@@ -36,7 +36,8 @@ pub const ROOT_DEPTH: usize = 2;
 pub const UNCATEGORIZED: &str = "-";
 
 /// Owner categories, keyed by label. Insertion order is preserved so categories
-/// colour and sort in the order they were written.
+/// sort, and take their leftover colours, in the order they were written —
+/// `work` and `personal` are coloured by name and do not depend on it.
 pub type Owners = IndexMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
