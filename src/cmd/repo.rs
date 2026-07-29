@@ -3,6 +3,8 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 
@@ -297,22 +299,22 @@ fn repo_items(repos: &[Repo], root: &Path) -> Vec<PickItem> {
         .map(|r| r.name().chars().count())
         .max()
         .unwrap_or(0);
-    let tag_width = repos
-        .iter()
-        .map(|r| r.tags().join(" ").chars().count())
-        .max()
-        .unwrap_or(0);
+    // Rendered once and reused for both the column width and the rows; the
+    // widest tag string cannot be known without formatting every one of them,
+    // and formatting them twice is the easy mistake.
+    let tags: Vec<String> = repos.iter().map(|r| r.tags().join(" ")).collect();
+    let tag_width = tags.iter().map(|t| t.chars().count()).max().unwrap_or(0);
 
     repos
         .iter()
-        .map(|repo| {
+        .zip(&tags)
+        .map(|(repo, tags)| {
             let dest = destination(root, repo.owner(), repo.name());
             let present = dest.exists();
             let marker = if present { "✓" } else { " " };
             let label = format!(
                 "{marker} {name:<width$}  {tags:<tag_width$}  {description}",
                 name = repo.name(),
-                tags = repo.tags().join(" "),
                 description = repo.description.trim(),
             );
             let item = PickItem::new(label.trim_end(), repo.name_with_owner.clone())
@@ -326,43 +328,51 @@ fn repo_items(repos: &[Repo], root: &Path) -> Vec<PickItem> {
         .collect()
 }
 
-/// Clone `repos` concurrently into `root`, in batches of [`CLONE_CONCURRENCY`].
+/// Clone `repos` into `root`, [`CLONE_CONCURRENCY`] at a time.
+///
+/// The workers pull from a shared queue rather than working through fixed
+/// batches. Clone times vary by orders of magnitude — one large repository
+/// among thirty small ones is the normal case — and a batch that waits for its
+/// slowest member leaves every other worker idle until it finishes.
 ///
 /// Every clone is reported, in the order it was requested rather than the order
 /// it finished, so the summary is stable and readable. One failure does not
 /// stop the others: a rate-limited or renamed repository should not cost you
 /// the nine that were fine.
 fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
-    let mut failures = 0;
-    for batch in repos.chunks(CLONE_CONCURRENCY) {
-        let results: Vec<(String, Result<PathBuf>)> = std::thread::scope(|scope| {
-            let handles: Vec<_> = batch
-                .iter()
-                .map(|slug| {
-                    scope.spawn(move || {
-                        let (owner, name) = slug.split_once('/').unwrap_or(("", slug.as_str()));
-                        let dest = destination(root, owner, name);
-                        gh::clone(slug, &dest).map(|()| dest)
-                    })
-                })
-                .collect();
-            batch
-                .iter()
-                .cloned()
-                .zip(handles.into_iter().map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(anyhow::anyhow!("clone worker panicked")))
-                }))
-                .collect()
-        });
+    let next = AtomicUsize::new(0);
+    let done: Mutex<Vec<(usize, Result<PathBuf>)>> = Mutex::new(Vec::with_capacity(repos.len()));
 
-        for (slug, result) in results {
-            match result {
-                Ok(dest) => println!("cloned {slug} -> {}", dest.display()),
-                Err(err) => {
-                    failures += 1;
-                    eprintln!("error: {slug}: {err:#}");
+    std::thread::scope(|scope| {
+        for _ in 0..CLONE_CONCURRENCY.min(repos.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(slug) = repos.get(index) else { break };
+                    let (owner, name) = slug.split_once('/').unwrap_or(("", slug.as_str()));
+                    let dest = destination(root, owner, name);
+                    let result = gh::clone(slug, &dest).map(|()| dest);
+                    // A worker that panicked mid-clone poisons this; the
+                    // results already collected are still worth reporting.
+                    done.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push((index, result));
                 }
+            });
+        }
+    });
+
+    let mut results = done.into_inner().unwrap_or_else(|e| e.into_inner());
+    results.sort_by_key(|(index, _)| *index);
+
+    let mut failures = 0;
+    for (index, result) in results {
+        let slug = &repos[index];
+        match result {
+            Ok(dest) => println!("cloned {slug} -> {}", dest.display()),
+            Err(err) => {
+                failures += 1;
+                eprintln!("error: {slug}: {err:#}");
             }
         }
     }

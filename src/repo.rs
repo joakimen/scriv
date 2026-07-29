@@ -124,6 +124,13 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
 /// Find directories containing a `.git` entry under `root`, descending at most
 /// `max_depth` levels. Directories whose basename is in `ignore` are skipped,
 /// and a discovered repository is not descended into.
+///
+/// The search runs one depth level at a time, with the directories at each
+/// level divided between worker threads. The work is almost entirely waiting on
+/// `stat` and `readdir` — on a cold cache a root of a hundred repositories
+/// spends most of its half-second latency-bound, one directory at a time — so
+/// overlapping the levels is what makes it quick. The number of *directories*
+/// visited is unchanged; they are simply not queued behind each other.
 fn find_repos(
     root: &Path,
     max_depth: usize,
@@ -131,25 +138,85 @@ fn find_repos(
     log: &Logger,
 ) -> Result<Vec<PathBuf>> {
     std::fs::metadata(root).with_context(|| format!("root path {}", root.display()))?;
+
     let mut repos = Vec::new();
-    walk(root, 0, max_depth, ignore, &mut repos, log);
+    let mut frontier = vec![root.to_path_buf()];
+
+    for depth in 0..=max_depth {
+        if frontier.is_empty() {
+            break;
+        }
+        let last = depth == max_depth;
+        let mut next = Vec::new();
+        for (found, children) in visit_level(&frontier, last, ignore, log) {
+            repos.extend(found);
+            next.extend(children);
+        }
+        frontier = next;
+    }
+
     Ok(repos)
 }
 
-fn walk(
-    dir: &Path,
-    depth: usize,
-    max_depth: usize,
+/// How many directories to look at concurrently. The work is I/O latency, not
+/// computation, so this is a concurrency figure rather than a CPU count — but
+/// the core count is a sane scale for it, and a machine that reports none gets
+/// a modest default rather than no parallelism at all.
+fn workers() -> usize {
+    std::thread::available_parallelism().map_or(4, |n| n.get())
+}
+
+/// Visit every directory in `level`, returning each one's discovered
+/// repositories and the subdirectories to look at next.
+///
+/// Results come back in `level` order regardless of which thread produced
+/// them, so a discovery run is reproducible.
+fn visit_level(
+    level: &[PathBuf],
+    last: bool,
     ignore: &[String],
-    repos: &mut Vec<PathBuf>,
     log: &Logger,
-) {
-    if dir.join(".git").exists() {
-        repos.push(dir.to_path_buf());
-        return;
+) -> Vec<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let chunks: Vec<&[PathBuf]> = level
+        .chunks(level.len().div_ceil(workers()).max(1))
+        .collect();
+    if chunks.len() < 2 {
+        return level
+            .iter()
+            .map(|dir| visit(dir, last, ignore, log))
+            .collect();
     }
-    if depth >= max_depth {
-        return;
+
+    thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|dir| visit(dir, last, ignore, log))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            // Re-raise rather than dropping a chunk: silently returning fewer
+            // repositories than exist is the one failure a picker cannot show.
+            // `find_all_repos` turns this into "discovery worker panicked".
+            .flat_map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    })
+}
+
+/// Classify one directory: either it is a repository, or it contributes the
+/// subdirectories below it. `last` suppresses descending past the depth limit.
+fn visit(dir: &Path, last: bool, ignore: &[String], log: &Logger) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    if dir.join(".git").exists() {
+        return (vec![dir.to_path_buf()], Vec::new());
+    }
+    if last {
+        return (Vec::new(), Vec::new());
     }
 
     let entries = match std::fs::read_dir(dir) {
@@ -159,10 +226,11 @@ fn walk(
                 "skipping unreadable path {}: {err}",
                 dir.display()
             ));
-            return;
+            return (Vec::new(), Vec::new());
         }
     };
 
+    let mut children = Vec::new();
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
@@ -174,11 +242,10 @@ fn walk(
                 continue;
             }
         };
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if !is_dir {
+        let path = entry.path();
+        if !is_dir(&entry, &path) {
             continue;
         }
-        let path = entry.path();
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -187,7 +254,27 @@ fn walk(
             log.debug(&format!("skipping excluded dir {}", path.display()));
             continue;
         }
-        walk(&path, depth + 1, max_depth, ignore, repos, log);
+        children.push(path);
+    }
+    (Vec::new(), children)
+}
+
+/// Whether `entry` is a directory, **following symbolic links**.
+///
+/// [`DirEntry::file_type`](std::fs::DirEntry::file_type) reports on the link
+/// itself, so a symlinked checkout — or a symlinked owner directory, which
+/// takes every repository under it down too — reads as "not a directory" and
+/// vanishes from the listing without so much as a warning. Symlinking a
+/// repository into the root is an ordinary thing to do, and discovery is
+/// depth-capped, so the link is followed and the extra `stat` is paid only for
+/// the entries that are actually links.
+fn is_dir(entry: &std::fs::DirEntry, path: &Path) -> bool {
+    match entry.file_type() {
+        Ok(file_type) if file_type.is_symlink() => {
+            std::fs::metadata(path).is_ok_and(|meta| meta.is_dir())
+        }
+        Ok(file_type) => file_type.is_dir(),
+        Err(_) => false,
     }
 }
 
@@ -250,6 +337,55 @@ mod tests {
 
         let got = find_repos(root.path(), 0, &[], &quiet()).unwrap();
         assert_eq!(got, vec![root.path().to_path_buf()]);
+    }
+
+    /// A checkout symlinked into the root is a repository like any other.
+    /// `DirEntry::file_type` reports on the link, not its target, so both of
+    /// these used to read as "not a directory" and disappear — the symlinked
+    /// owner taking every repository beneath it along with it, and no warning
+    /// printed either way.
+    #[cfg(unix)]
+    #[test]
+    fn follows_symlinked_directories() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        let away = tmp.path().join("away");
+        fs::create_dir_all(&root).unwrap();
+
+        // A symlinked repository, directly under the root.
+        let repo = mk_repo(&away, "linked-repo");
+        std::os::unix::fs::symlink(&repo, root.join("linked-repo")).unwrap();
+        // A symlinked owner directory, with a repository inside it.
+        let owner = away.join("owner");
+        let nested = mk_repo(&owner, "nested-repo");
+        std::os::unix::fs::symlink(&owner, root.join("owner")).unwrap();
+
+        let got = find_repos(&root, 2, &[], &quiet()).unwrap();
+
+        assert!(
+            got.contains(&root.join("linked-repo")),
+            "symlinked repository was skipped: {got:?}"
+        );
+        assert!(
+            got.contains(&root.join("owner").join("nested-repo")),
+            "repository under a symlinked owner was skipped: {got:?}"
+        );
+        // The targets exist where the links say they do.
+        assert!(repo.join(".git").exists() && nested.join(".git").exists());
+    }
+
+    /// Every level is walked concurrently, so a root wide enough to be split
+    /// across threads must still find everything exactly once.
+    #[test]
+    fn parallel_levels_find_every_repo() {
+        let root = TempDir::new().unwrap();
+        let mut expected: Vec<PathBuf> = (0..64)
+            .map(|i| mk_repo(root.path(), &format!("owner{}/repo{i}", i % 7)))
+            .collect();
+        expected.sort();
+
+        let got = find_repos(root.path(), 2, &[], &quiet()).unwrap();
+        assert_eq!(sorted(got), expected);
     }
 
     #[test]

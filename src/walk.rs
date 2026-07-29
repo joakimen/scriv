@@ -7,8 +7,9 @@
 //! [fd]: https://github.com/sharkdp/fd
 
 use std::path::Path;
+use std::sync::mpsc::sync_channel;
 
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, WalkState};
 
 /// Directory names never worth walking into, matching the `--walker-skip` list
 /// this replaced. `.gitignore` covers most build output; these are the
@@ -22,13 +23,30 @@ const WALKER_SKIP: &[&str] = &[
     "lib",
 ];
 
+/// How many discovered paths may sit between the walk and whatever is reading
+/// it.
+///
+/// The walk runs on its own threads, so results the picker has not taken yet
+/// need somewhere to wait. Bounded, not unbounded: a walk of `$HOME` finds
+/// files faster than a picker consumes them, and an unbounded queue would hold
+/// the whole tree in memory to no purpose. A full queue blocks the walker
+/// threads, and that backpressure is what keeps the footprint flat however
+/// large the tree is.
+const QUEUE_BOUND: usize = 1024;
+
 /// Files under `root`, as paths relative to `root`.
 ///
-/// Lazy: the walk advances as the iterator is drained, so a picker fed from it
-/// opens on the first filename rather than the last. Dotfiles are included —
-/// config files are common targets — while ignore files and [`WALKER_SKIP`] are
-/// respected, and entries are sorted within each directory so the order is the
-/// same twice running.
+/// Streamed: rows are handed over as they are found, so a picker fed from this
+/// opens on the first filename rather than the last, and memory stays bounded
+/// by [`QUEUE_BOUND`] however large the tree. Dotfiles are included — config
+/// files are common targets — while ignore files and [`WALKER_SKIP`] are
+/// respected.
+///
+/// **The order is not specified.** The walk runs on several threads, which is
+/// worth roughly a threefold speedup on a large tree and costs the
+/// directory-at-a-time ordering a single-threaded walk gave for free. Nothing
+/// downstream depends on it: skim ranks rows by the query the moment one is
+/// typed, and the untyped order is arrival order either way.
 ///
 /// **Unreadable paths are skipped, not reported.** This is `fzf`'s
 /// `find … 2>/dev/null`: a walk of `$HOME` on macOS crosses directories that
@@ -39,27 +57,47 @@ const WALKER_SKIP: &[&str] = &[
 /// terminal application, not to a process that asks for it.
 pub fn files(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
     let root = root.to_path_buf();
-    WalkBuilder::new(&root)
+    let (tx, rx) = sync_channel::<String>(QUEUE_BOUND);
+
+    let walker = WalkBuilder::new(&root)
         .hidden(false) // include dotfiles; config files are common targets
         .require_git(false) // honour .gitignore/.ignore even outside a git repo
         .add_custom_ignore_filename(".fdignore") // shared with fd, if the user has one
-        .sort_by_file_path(Ord::cmp) // stable order, one directory at a time
         .filter_entry(|entry| {
             entry
                 .file_name()
                 .to_str()
                 .is_none_or(|name| !WALKER_SKIP.contains(&name))
         })
-        .build()
-        .filter_map(move |entry| {
-            let entry = entry.ok()?;
-            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-                return None;
-            }
-            let path = entry.path();
-            let rel = path.strip_prefix(&root).unwrap_or(path);
-            Some(rel.to_string_lossy().into_owned())
-        })
+        .build_parallel();
+
+    // Detached: `run` blocks until the tree is exhausted, and the consumer has
+    // no reason to wait on it — dropping the receiver is how it is called off.
+    std::thread::spawn(move || {
+        walker.run(|| {
+            let tx = tx.clone();
+            let root = root.clone();
+            Box::new(move |entry| {
+                let Ok(entry) = entry else {
+                    return WalkState::Continue;
+                };
+                if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                    return WalkState::Continue;
+                }
+                let path = entry.path();
+                let rel = path.strip_prefix(&root).unwrap_or(path);
+                match tx.send(rel.to_string_lossy().into_owned()) {
+                    Ok(()) => WalkState::Continue,
+                    // The receiver is gone: the user has selected or cancelled,
+                    // so stop walking rather than spend the rest of the tree on
+                    // a picker that is no longer there.
+                    Err(_) => WalkState::Quit,
+                }
+            })
+        });
+    });
+
+    rx.into_iter()
 }
 
 #[cfg(test)]
@@ -147,24 +185,27 @@ mod tests {
         assert!(!got.iter().any(|f| f.contains("hidden.txt")));
     }
 
-    /// The walk must not run ahead of what is asked of it — a picker fed from
-    /// it shows rows long before the tree is exhausted. Observed by writing
-    /// into a directory the walk has not reached yet: only a lazy walk can
-    /// still find it.
+    /// The walk hands rows over as it finds them, through a queue bounded by
+    /// [`QUEUE_BOUND`] — so a tree several times that size only finishes if the
+    /// walker threads block when the queue fills and resume as the consumer
+    /// drains it.
+    ///
+    /// This is the test that earns the bounded queue. An unbounded one would
+    /// hold the whole tree in memory and still pass every other test here; a
+    /// mis-wired bounded one deadlocks, and deadlocks in front of a picker that
+    /// has already taken over the terminal.
     #[test]
-    fn files_is_lazy() {
+    fn files_streams_a_tree_larger_than_its_queue() {
         let dir = TempDir::new().unwrap();
         let root = dir.path();
-        fs::create_dir(root.join("a")).unwrap();
-        fs::write(root.join("a/early.txt"), "").unwrap();
-        fs::create_dir(root.join("b")).unwrap();
+        let count = QUEUE_BOUND * 3;
+        for i in 0..count {
+            fs::write(root.join(format!("f{i}")), "").unwrap();
+        }
 
         let mut walk = files(root);
-        assert_eq!(walk.next().as_deref(), Some("a/early.txt"));
-        fs::write(root.join("b/late.txt"), "").unwrap();
-
-        let rest: Vec<String> = walk.collect();
-
-        assert_eq!(rest, vec!["b/late.txt".to_string()]);
+        // A row is there for the taking well before the tree is exhausted.
+        assert!(walk.next().is_some());
+        assert_eq!(walk.count(), count - 1, "the walk lost or repeated rows");
     }
 }

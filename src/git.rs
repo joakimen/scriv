@@ -293,7 +293,12 @@ fn capture(args: &[&str]) -> Result<String> {
             stderr.to_string()
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    // Reuse the buffer rather than copying it: `for-each-ref` over a repository
+    // with thousands of refs is not small, and it is always valid UTF-8. The
+    // copy is paid only on the malformed output that would have been lossy
+    // anyway.
+    Ok(String::from_utf8(output.stdout)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
 /// Run git with `args`, letting it write straight to the terminal so its
