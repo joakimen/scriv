@@ -44,6 +44,12 @@ function scriv-repo-cd --description "Pick a repository and cd into it"
     test -n "$dir"; and builtin cd $dir
 end
 
+# Unlike cd, opening a browser needs no shell help — this is a thin wrapper kept
+# only to hang a key binding off.
+function scriv-repo-open --description "Pick a repository and open it on GitHub"
+    command scriv repo open
+end
+
 # `scriv edit` spawns the editor itself — unlike cd, that needs no shell help —
 # so these are thin wrappers kept only to hang key bindings off.
 function scriv-edit --description "Pick a file under \$PWD and open it in \$EDITOR"
@@ -77,6 +83,11 @@ end
 #   ctrl-g  branch checkout, over `cancel` — escape and ctrl-c both do that too
 #   ctrl-p  pr checkout, over `up-line` — up and ctrl-r still search history
 #
+# The two function keys displace nothing: fish binds none of f1-f12 itself, and
+# f1 and f3 are the low end that users' own tools tend to leave alone — f4 and f5
+# upwards are commonly taken already. They carry the two pickers that are reached
+# least often, since a function key is a longer reach than a ctrl chord.
+#
 # Rebind any of them by calling `bind` yourself after `scriv_key_bindings`; the
 # last binding for a key wins. alt-<letter> is left alone on purpose — it looks
 # free but is not, since fish presets alt-b, alt-e, alt-o and alt-p among others.
@@ -92,6 +103,7 @@ end
 function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind ctrl-o "scriv-repo-cd; commandline -f repaint"
     bind ctrl-q "scriv-edit; commandline -f repaint"
+    bind f1     "scriv-repo-open; commandline -f repaint"
     bind f3     "scriv-file-edit; commandline -f repaint"
     bind ctrl-g "scriv-branch-checkout; commandline -f repaint"
     bind ctrl-p "scriv-pr-checkout; commandline -f repaint"
@@ -111,6 +123,7 @@ mod tests {
     fn fish_emits_helper_functions() {
         let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("function scriv-repo-cd"));
+        assert!(out.contains("function scriv-repo-open"));
         assert!(out.contains("function scriv-edit"));
         assert!(out.contains("function scriv-file-edit"));
         assert!(out.contains("function fe"));
@@ -125,6 +138,7 @@ mod tests {
         assert!(out.contains("complete -c scriv"));
         assert!(out.contains("bind ctrl-o"));
         assert!(out.contains("bind ctrl-q"));
+        assert!(out.contains("bind f1"));
         assert!(out.contains("bind f3"));
         assert!(out.contains("bind ctrl-g"));
         assert!(out.contains("bind ctrl-p"));

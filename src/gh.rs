@@ -700,6 +700,20 @@ pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Open the GitHub page of the repository checked out at `dir`.
+///
+/// `gh repo view --web` is what does the opening, for the same reasons as
+/// [`view_web`]: it knows the host, so GitHub Enterprise works, and it defers to
+/// `$BROWSER` and the platform's opener.
+///
+/// Which repository that is comes from `dir`'s git remotes rather than from the
+/// path, because the two disagree often enough to matter — a directory renamed
+/// on clone, or a fork whose `origin` is not the owner it sits under. Asking git
+/// is the answer scriv would otherwise guess at.
+pub fn view_repo_web(dir: &Path) -> Result<()> {
+    run_at(Some(dir), &["repo", "view", "--web"])
+}
+
 /// The authenticated user's login, and the organisations they belong to.
 ///
 /// This is the answer to "which owners do you actually clone from" on a machine
@@ -718,15 +732,27 @@ pub fn owners() -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Run `gh` with the terminal attached, passing its exit status through.
+/// Run `gh` with the terminal attached, in the working directory scriv was
+/// invoked from.
 ///
 /// `gh` writes its own diagnostics, so a failure is [`Reported`] rather than
 /// restated in vaguer words on top.
 fn run(args: &[&str]) -> Result<()> {
-    let status = Command::new("gh")
-        .args(args)
-        .status()
-        .map_err(spawn_error)?;
+    run_at(None, args)
+}
+
+/// [`run`], optionally somewhere else.
+///
+/// Most `gh` subcommands resolve which repository they are about from the git
+/// remotes of the directory they run in, which is the whole reason `dir` exists:
+/// a command about a repository the user picked has to run *there*, not here.
+fn run_at(dir: Option<&Path>, args: &[&str]) -> Result<()> {
+    let mut cmd = Command::new("gh");
+    cmd.args(args);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let status = cmd.status().map_err(spawn_error)?;
     if !status.success() {
         return Err(Reported(status.code().unwrap_or(1)).into());
     }

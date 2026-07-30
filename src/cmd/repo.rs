@@ -129,15 +129,15 @@ fn preview(path: &str) -> Preview {
     ))
 }
 
-/// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
+/// The picker rows for the discovered repositories.
 ///
 /// Each row is prefixed with its label, coloured per label so a `work`
 /// checkout is distinguishable from a personal one at a glance — several owners
 /// can share one label and therefore one colour, and a repository with no label
-/// is left uncoloured. Paths render per `repo.display`. The printed path is
-/// always absolute so a shell shim can `cd` to it directly.
-pub fn pick(ctx: &Ctx) -> Result<()> {
-    let repos = discover(ctx)?;
+/// is left uncoloured. Paths render per `repo.display`. Every row's value is the
+/// absolute path, so a caller can `cd` to it or run a command in it without
+/// re-expanding `~`.
+fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<PickItem> {
     let colors = label_colors(&ctx.config.repo.labels);
 
     // Character count, not bytes: `{:<width$}` pads by characters, so a byte
@@ -149,7 +149,7 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
         .unwrap_or(0);
 
     let mode = ctx.config.repo.display;
-    let items: Vec<PickItem> = repos
+    repos
         .iter()
         .map(|repo| {
             let abs = repo.path.to_string_lossy().into_owned();
@@ -165,11 +165,32 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
                 None => item,
             }
         })
-        .collect();
+        .collect()
+}
 
-    let choice = pick::pick_one(items, "Pick a repository", &ctx.config.picker)?;
+/// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
+///
+/// The path is printed absolute so a shell shim can `cd` to it directly.
+pub fn pick(ctx: &Ctx) -> Result<()> {
+    let repos = discover(ctx)?;
+    let rows = repo_rows(ctx, &repos);
+    let choice = pick::pick_one(rows, "Pick a repository", &ctx.config.picker)?;
     println!("{choice}");
     Ok(())
+}
+
+/// `scriv repo open` — fuzzy-select one repository and open its GitHub page.
+///
+/// A verb over the same set `ls` and `pick` cover, so it picks from every
+/// repository scriv found rather than acting on the one the shell happens to be
+/// standing in. That case is already `gh repo view --web`, which needs no fuzzy
+/// finder to do it; choosing among the hundred you are *not* standing in is the
+/// part worth a command.
+pub fn open(ctx: &Ctx) -> Result<()> {
+    let repos = discover(ctx)?;
+    let rows = repo_rows(ctx, &repos);
+    let choice = pick::pick_one(rows, "Open a repository on GitHub", &ctx.config.picker)?;
+    gh::view_repo_web(Path::new(&choice))
 }
 
 // --- clone ------------------------------------------------------------------

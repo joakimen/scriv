@@ -17,7 +17,7 @@ candidates apart without leaving the picker.
 
 | | |
 | --- | --- |
-| **repos** | pick one of your repositories and `cd` into it, or clone new ones |
+| **repos** | pick one of your repositories and `cd` into it, open it on GitHub, or clone new ones |
 | **files** | keep a list of files you return to, and open one |
 | **editing** | fuzzy-find a file where you are standing and open it in `$EDITOR` |
 | **branches** | switch to a local branch, or check out a remote one |
@@ -77,6 +77,12 @@ scriv repo clone                # pick an owner, then repositories
 scriv repo clone capralifecycle # scope to one owner (any owner, not just yours)
 scriv repo clone tailscale/tailscale   # skip both pickers
 ```
+
+`scriv repo open` picks from that same list and opens the repository's GitHub
+page, via `gh repo view --web` — which reads the page from that checkout's git
+remotes, so a directory renamed on clone and a fork both land where they should.
+It picks over every repository you have rather than acting on the one you are
+standing in; for that one, `gh repo view --web` is already the whole answer.
 
 `scriv file add`/`remove` maintain the tracked list, and `scriv config` /
 `scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
@@ -180,13 +186,15 @@ end
 | `ctrl-o` | pick a repository and `cd` into it |
 | `ctrl-g` | pick a branch and check it out |
 | `ctrl-p` | pick a pull request and check it out |
+| `f1` | pick a repository and open it on GitHub |
 | `f3` | pick a tracked file and open it in `$EDITOR` |
 | `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
 
 Of those, `ctrl-o` and `ctrl-q` are unbound in fish; `ctrl-g` replaces `cancel`,
 which `escape` and `ctrl-c` also do, and `ctrl-p` replaces `up-line`, leaving
-`up` and `ctrl-r` to search history. alt is left untouched, since fish binds
-most of it already.
+`up` and `ctrl-r` to search history. `f1` and `f3` replace nothing — fish binds
+no function key itself, and the low ones are where users' own tools are least
+likely to already be. alt is left untouched, since fish binds most of it already.
 
 It also defines `fe` — find, fuzzy-pick, edit — as a short alias for
 `scriv edit`, forwarding its arguments so `fe -t` and `fe src/main.rs` work
