@@ -1,6 +1,6 @@
 [package]
 name = "scriv"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Pick, don't type: repositories, files, branches, pull requests and shell history from one fuzzy picker."
 license = "MIT"
