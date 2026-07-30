@@ -1,15 +1,16 @@
 # scriv
 
 [![ci](https://github.com/joakimen/scriv/actions/workflows/ci.yml/badge.svg)](https://github.com/joakimen/scriv/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/joakimen/scriv?logo=github&color=blue)](https://github.com/joakimen/scriv/releases/latest)
+[![license](https://img.shields.io/github/license/joakimen/scriv?color=blue)](LICENSE)
 
 ![A candle burning above an open book](docs/art/seal.svg)
 
-**Pick, don't type.** [Scriv](https://kingkiller.fandom.com/wiki/Scriv) puts the
-things you move between — your repositories, the files you keep returning to,
-git branches, GitHub pull requests, the commands you have already run — behind
-one fuzzy picker. Getting somewhere costs a few characters and a keystroke,
-rather than a path you half-remember, a branch name you have to look up, or a
-command you ran last Tuesday.
+[Scriv](https://kingkiller.fandom.com/wiki/Scriv) is one fuzzy picker for your
+Git repositories, the files you keep returning to, git branches, GitHub pull
+requests and shell history, so you pick from a list instead of typing a path you
+half-remember, a branch name you have to look up, or a command you ran last
+Tuesday.
 
 ![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 

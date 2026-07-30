@@ -47,7 +47,7 @@ const STYLES: Styles = Styles::styled()
 #[command(
     name = "scriv",
     version,
-    about = "Pick, don't type: repositories, files, branches, pull requests and shell history from one fuzzy picker.",
+    about = "One fuzzy picker for your Git repositories, files, branches, pull requests and shell history.",
     after_help = EXAMPLES,
     styles = STYLES,
     disable_help_subcommand = true
