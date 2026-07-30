@@ -194,6 +194,14 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
     exit 0
 fi
 
+# `gh repo view --web` opens whatever repository it is run *in*, so the stub
+# reports the directory it was called from — which is exactly the choice
+# `scriv repo open` is making on its behalf.
+if [ "$1" = "repo" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
+    echo "demo stub: would open https://github.com/$(basename "$(dirname "$PWD")")/$(basename "$PWD")"
+    exit 0
+fi
+
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
     echo "demo stub: would merge pull request $3"
     exit 0
