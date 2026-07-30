@@ -141,6 +141,62 @@ pub fn one_line(cmd: &str) -> String {
         .join(&joiner)
 }
 
+/// Width of a [`stamp`], so an entry fish recorded without a `when:` can hold
+/// the column open rather than shunting its command left of every other row.
+pub const STAMP_WIDTH: usize = "2026-07-30 13:57".len();
+
+/// When a command was last run, as a local date and time: `2026-07-30 13:57`.
+///
+/// Blank — but still [`STAMP_WIDTH`] wide — for an entry carrying no timestamp,
+/// so the commands stay in one column whatever fish did or did not record.
+///
+/// `offset` is passed in rather than looked up: the local offset is an
+/// environment fact, read once by [`Ctx`](crate::Ctx), which is also what keeps
+/// this a pure function with an exactly reproducible answer.
+pub fn stamp(when: Option<i64>, offset: time::UtcOffset) -> String {
+    match when.and_then(|w| local(w, offset)) {
+        Some(dt) => render(&dt, false),
+        None => " ".repeat(STAMP_WIDTH),
+    }
+}
+
+/// [`stamp`] down to the second, for the preview — where there is room for the
+/// exact moment, and where "was this the run before or after the one that
+/// worked" is a question minutes alone cannot always answer.
+///
+/// Empty for a timestamp that cannot be rendered, so the caller can leave the
+/// line out rather than print a half-formed date.
+pub fn stamp_precise(when: i64, offset: time::UtcOffset) -> String {
+    local(when, offset).map_or_else(String::new, |dt| render(&dt, true))
+}
+
+/// The one place the layout of a rendered timestamp is written down.
+fn render(dt: &time::OffsetDateTime, seconds: bool) -> String {
+    let date = format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        dt.year(),
+        dt.month() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+    );
+    if seconds {
+        format!("{date}:{:02}", dt.second())
+    } else {
+        date
+    }
+}
+
+/// The stored Unix seconds as a local date and time.
+///
+/// `None` for a timestamp outside the range a date can represent — a corrupt or
+/// absurd `when:` is one unreadable row, not a panic partway through a listing.
+fn local(when: i64, offset: time::UtcOffset) -> Option<time::OffsetDateTime> {
+    time::OffsetDateTime::from_unix_timestamp(when)
+        .ok()
+        .map(|dt| dt.to_offset(offset))
+}
+
 const MINUTE: i64 = 60;
 const HOUR: i64 = 60 * MINUTE;
 const DAY: i64 = 24 * HOUR;
@@ -323,5 +379,51 @@ mod tests {
     #[test]
     fn a_future_timestamp_reads_as_just_now() {
         assert_eq!(relative_time(1000, 9999), "just now");
+    }
+
+    /// Seven hours east of UTC, the reference moment is 1785394626.
+    fn bangkok() -> time::UtcOffset {
+        time::UtcOffset::from_hms(7, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn a_stamp_is_the_local_date_and_time() {
+        assert_eq!(stamp(Some(1785394626), bangkok()), "2026-07-30 13:57");
+    }
+
+    /// The offset is the whole point of passing one: the same instant is a
+    /// different wall clock — here a different *day* — depending on where you
+    /// are, and a history listing that showed UTC would be quietly wrong for
+    /// everyone not on it.
+    #[test]
+    fn the_offset_moves_the_wall_clock() {
+        let instant = Some(1785394626);
+        assert_eq!(stamp(instant, time::UtcOffset::UTC), "2026-07-30 06:57");
+        let west = time::UtcOffset::from_hms(-8, 0, 0).unwrap();
+        assert_eq!(stamp(instant, west), "2026-07-29 22:57");
+    }
+
+    /// Rows line up in one column, so an entry fish recorded without a `when:`
+    /// holds the space open rather than sliding its command left of every
+    /// other row.
+    #[test]
+    fn an_undated_entry_still_fills_the_column() {
+        let blank = stamp(None, bangkok());
+        assert_eq!(blank.len(), STAMP_WIDTH);
+        assert!(blank.trim().is_empty(), "{blank:?}");
+        assert_eq!(stamp(Some(1785394626), bangkok()).len(), STAMP_WIDTH);
+    }
+
+    #[test]
+    fn the_preview_stamp_carries_the_second() {
+        assert_eq!(stamp_precise(1785394626, bangkok()), "2026-07-30 13:57:06");
+    }
+
+    /// A `when:` far outside the range a date can hold is one unreadable row,
+    /// not a panic partway through five thousand of them.
+    #[test]
+    fn an_absurd_timestamp_renders_blank_rather_than_panicking() {
+        assert!(stamp(Some(i64::MAX), bangkok()).trim().is_empty());
+        assert!(stamp_precise(i64::MIN, bangkok()).is_empty());
     }
 }

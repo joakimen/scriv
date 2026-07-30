@@ -89,8 +89,25 @@ command line, to be read before you press enter.
 
 ```fish
 scriv history pick          # fuzzy-pick a past command, print it
-scriv history ls --status   # every command, with how long ago you last ran it
+scriv history ls --status   # every command, dated with when you last ran it
 ```
+
+Every row is dated with when you last ran that command, in local time:
+
+```
+2026-07-30 13:58  gh pr merge --squash --auto
+2026-07-30 13:57  git log --oneline -3
+2026-07-29 09:11  cargo test --lib
+```
+
+The date is shown but never searched — it is digits at the front of every row,
+and matching it would put four thousand timestamps ahead of the command you were
+reaching for. `--status` prints the same column, fixed-width and sortable, so
+`sort` and `cut` work on it. The preview adds the exact second and the age:
+`last run 2026-07-30 13:58:20 (4h ago)`.
+
+fish records *when* a command ran and nothing else — there is no duration or
+exit status in its history file, so scriv cannot show what it was never told.
 
 A command spanning several lines is folded onto its one row with a `⏎` where
 each break was, so it cannot be mistaken for a command you never ran; the
