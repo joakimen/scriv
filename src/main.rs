@@ -136,13 +136,17 @@ enum RepoCmd {
     },
     /// Fuzzy-select a repository and print its absolute path
     Pick,
-    /// Fuzzy-select a repository and open its GitHub page in the browser
+    /// Open a repository's GitHub page in the browser
     ///
-    /// Picks from every repository under your search paths, then hands off to
+    /// Inside a repository, opens that one. Anywhere else, fuzzy-selects from
+    /// every repository under your search paths. Either way it hands off to
     /// `gh repo view --web`, which resolves the page from that checkout's git
-    /// remotes. To open the repository you are already standing in, run
-    /// `gh repo view --web` directly — there is nothing to pick.
-    Open,
+    /// remotes.
+    Open {
+        /// Pick a repository even when standing in one
+        #[arg(short, long)]
+        pick: bool,
+    },
     /// Clone repositories from GitHub into your root
     ///
     /// With no argument, pick an owner — suggested from your config, the owners
@@ -383,7 +387,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Repo { command } => match command {
             RepoCmd::Ls { absolute_paths } => cmd::repo::ls(&ctx, absolute_paths),
             RepoCmd::Pick => cmd::repo::pick(&ctx),
-            RepoCmd::Open => cmd::repo::open(&ctx),
+            RepoCmd::Open { pick } => cmd::repo::open(&ctx, pick),
             RepoCmd::Clone { target, limit } => cmd::repo::clone(&ctx, target.as_deref(), limit),
         },
         Command::File { command } => match command {

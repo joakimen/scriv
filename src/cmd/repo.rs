@@ -13,7 +13,7 @@ use crate::gh::{self, Repo};
 use crate::path::{display_path, expand_home_dir, relative_label};
 use crate::pick::{Choice, PickItem, Preview};
 use crate::repo::FoundRepo;
-use crate::{Ctx, pick, repo, term};
+use crate::{Ctx, git, pick, repo, term};
 
 /// Discover repositories, label-tagged and sorted by path.
 fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
@@ -179,14 +179,39 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// `scriv repo open` — fuzzy-select one repository and open its GitHub page.
+/// Which repository `repo open` acts on.
+#[derive(Debug, PartialEq, Eq)]
+enum Target {
+    /// The repository the shell is standing in.
+    Here(PathBuf),
+    /// Whichever one the user picks.
+    Pick,
+}
+
+/// Decide what `repo open` opens.
 ///
-/// A verb over the same set `ls` and `pick` cover, so it picks from every
-/// repository scriv found rather than acting on the one the shell happens to be
-/// standing in. That case is already `gh repo view --web`, which needs no fuzzy
-/// finder to do it; choosing among the hundred you are *not* standing in is the
-/// part worth a command.
-pub fn open(ctx: &Ctx) -> Result<()> {
+/// Standing in a repository is already a statement of which one you mean, so it
+/// wins over the picker — a key binding pressed in a checkout should not ask a
+/// question it can answer. `--pick` is how you say you meant a different one.
+fn target(root: Option<PathBuf>, force_pick: bool) -> Target {
+    match root {
+        Some(root) if !force_pick => Target::Here(root),
+        _ => Target::Pick,
+    }
+}
+
+/// `scriv repo open` — open a repository's GitHub page in the browser.
+///
+/// Inside a repository that is this one, with nothing to choose. Anywhere else,
+/// or with `--pick`, it is a verb over the same set `ls` and `pick` cover and
+/// fuzzy-selects from every repository scriv found.
+pub fn open(ctx: &Ctx, force_pick: bool) -> Result<()> {
+    if let Target::Here(root) = target(git::repo_root(), force_pick) {
+        ctx.log
+            .info(&format!("opening the repository at {}", root.display()));
+        return gh::view_repo_web(&root);
+    }
+
     let repos = discover(ctx)?;
     let rows = repo_rows(ctx, &repos);
     let choice = pick::pick_one(rows, "Open a repository on GitHub", &ctx.config.picker)?;
@@ -556,6 +581,25 @@ mod tests {
         assigned.sort_unstable();
         assigned.dedup();
         assert_eq!(assigned.len(), 4, "two labels share a colour: {colors:?}");
+    }
+
+    /// The repository you are standing in is the one you mean: `repo open`
+    /// there opens it rather than asking which of a hundred you wanted.
+    #[test]
+    fn open_acts_on_the_repository_you_are_in() {
+        let here = PathBuf::from("/home/u/dev/github.com/acme/billing-api");
+        assert_eq!(target(Some(here.clone()), false), Target::Here(here));
+    }
+
+    /// Outside a repository there is nothing ambient to open, so the picker is
+    /// the only answer — and `--pick` asks for it from inside one, which is how
+    /// you reach a repository other than the one you are working in.
+    #[test]
+    fn open_picks_outside_a_repository_or_on_request() {
+        assert_eq!(target(None, false), Target::Pick);
+        assert_eq!(target(None, true), Target::Pick);
+        let here = PathBuf::from("/home/u/dev/github.com/acme/billing-api");
+        assert_eq!(target(Some(here), true), Target::Pick);
     }
 
     /// A clone must land exactly where discovery looks for it, or cloning

@@ -46,7 +46,7 @@ end
 
 # Unlike cd, opening a browser needs no shell help — this is a thin wrapper kept
 # only to hang a key binding off.
-function scriv-repo-open --description "Pick a repository and open it on GitHub"
+function scriv-repo-open --description "Open this repository on GitHub, or pick one"
     command scriv repo open
 end
 

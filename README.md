@@ -78,11 +78,12 @@ scriv repo clone capralifecycle # scope to one owner (any owner, not just yours)
 scriv repo clone tailscale/tailscale   # skip both pickers
 ```
 
-`scriv repo open` picks from that same list and opens the repository's GitHub
-page, via `gh repo view --web` — which reads the page from that checkout's git
-remotes, so a directory renamed on clone and a fork both land where they should.
-It picks over every repository you have rather than acting on the one you are
-standing in; for that one, `gh repo view --web` is already the whole answer.
+`scriv repo open` opens a repository's GitHub page. Standing in one, that is the
+one it opens — there is nothing to ask. Anywhere else it picks from that same
+list, and `--pick` asks even from inside a repository, for when you want
+somebody else's. Either way it goes through `gh repo view --web`, which reads
+the page from that checkout's git remotes, so a directory renamed on clone and a
+fork both land where they should.
 
 `scriv file add`/`remove` maintain the tracked list, and `scriv config` /
 `scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
@@ -186,7 +187,7 @@ end
 | `ctrl-o` | pick a repository and `cd` into it |
 | `ctrl-g` | pick a branch and check it out |
 | `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
-| `f1` | pick a repository and open it on GitHub |
+| `f1` | open this repository on GitHub, or pick one when you are not in one |
 | `f3` | pick a tracked file and open it in `$EDITOR` |
 | `f7` | pick a pull request and check it out |
 
