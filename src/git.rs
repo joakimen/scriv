@@ -12,6 +12,7 @@
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -367,6 +368,25 @@ pub fn ensure_repo() -> Result<()> {
         bail!("not inside a git repository");
     }
     Ok(())
+}
+
+/// The root of the repository the working directory is in, if it is in one.
+///
+/// Absence is an answer here rather than an error: a command that adapts to
+/// where you are standing needs to know whether you are standing anywhere, and
+/// "not in a repository" is an ordinary case with its own behaviour.
+pub fn repo_root() -> Option<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!root.is_empty()).then(|| PathBuf::from(root))
 }
 
 /// Every branch in the repository, ordered by [`by_relevance`]: the current

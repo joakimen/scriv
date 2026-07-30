@@ -46,7 +46,7 @@ end
 
 # Unlike cd, opening a browser needs no shell help — this is a thin wrapper kept
 # only to hang a key binding off.
-function scriv-repo-open --description "Pick a repository and open it on GitHub"
+function scriv-repo-open --description "Open this repository on GitHub, or pick one"
     command scriv repo open
 end
 
@@ -119,7 +119,7 @@ end
 # purpose: branch checkout, over `cancel` — escape and ctrl-c both do that too.
 #
 # ctrl-r and up displace fish's own history keys — `history-pager` and
-# `up-or-search` — and are the two bindings here that replace something people
+# `up-line` — and are the two bindings here that replace something people
 # press constantly. That is the point of them rather than a cost: both land on
 # the same history, searched fuzzily instead of by prefix, and both put the
 # command back on the line to be read before it runs. `up` keeps fish's

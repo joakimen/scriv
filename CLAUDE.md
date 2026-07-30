@@ -154,6 +154,10 @@ reference, so command implementations do no environment lookups of their own.
   `ls`/`pick` and a verb over that set. `edit` acts on the directory the user is
   standing in, so it is a verb at the top level rather than one more noun — and
   it has no `ls`. Resist filing ambient-directory work under a noun group.
+  `repo open` is the one place a registry verb reads the ambient directory, and
+  only to skip a question it can already answer: in a repository it opens that
+  one, `--pick` asks anyway, and outside one it is the ordinary picker. The set
+  it picks over is unchanged.
 - **Anything drawn inline takes a `term::ScratchRow` first.** The picker and the
   spinner both start on the row the cursor is on, which from a key binding is
   the last row of the shell's prompt — the picker draws over it, the spinner
