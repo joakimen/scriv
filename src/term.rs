@@ -22,6 +22,57 @@ pub fn no_color() -> bool {
     std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
 }
 
+/// Stdout for a listing, which ends quietly when the reader stops reading.
+///
+/// `println!` panics on a closed pipe, so `scriv history ls | head` — five
+/// thousand rows produced for a reader that wanted three — ends in a Rust
+/// stack trace where every other command-line tool would simply stop. Listings
+/// write through here instead.
+///
+/// Only the long ones ever noticed: a few hundred rows fit in the pipe buffer,
+/// so the write that fails never happens and the panic stayed hidden until a
+/// listing got big enough to outrun `head`.
+pub struct Listing<W: Write> {
+    out: W,
+    /// Cleared once the far end has gone, so the caller is told once and no
+    /// further write is attempted.
+    open: bool,
+}
+
+impl Listing<std::io::Stdout> {
+    /// The listing every `ls` command writes: stdout.
+    pub fn stdout() -> Self {
+        Self::new(std::io::stdout())
+    }
+}
+
+impl<W: Write> Listing<W> {
+    /// Wrap a writer. Taking one rather than reaching for stdout is what lets
+    /// the closed-pipe behaviour be tested against a writer that really fails.
+    pub fn new(out: W) -> Self {
+        Self { out, open: true }
+    }
+
+    /// Write one line, reporting whether there is still anyone reading.
+    ///
+    /// `Ok(false)` means the reader has closed the pipe: stop producing rows
+    /// that have nowhere to go. Any other write failure is a real error and is
+    /// returned as one — a full disk must not look like a `head`.
+    pub fn line(&mut self, text: &str) -> std::io::Result<bool> {
+        if !self.open {
+            return Ok(false);
+        }
+        match writeln!(self.out, "{text}") {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                self.open = false;
+                Ok(false)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
 /// Wrap `text` in an ANSI 256-colour sequence when `on`, so the same colour
 /// indices the picker uses also drive plain listings.
 pub fn paint(text: &str, color: u8, on: bool) -> String {
@@ -215,6 +266,83 @@ impl Drop for Spinner {
 
 #[cfg(test)]
 mod tests {
+    /// A writer that takes `ok` complete lines and then fails with `kind`,
+    /// standing in for a `head` that has read its rows and gone.
+    ///
+    /// Counting newlines rather than calls is what makes it a stand-in at all:
+    /// `writeln!` reaches the writer more than once per line, so a stub that
+    /// counted calls would fail partway through a row instead of between them.
+    struct FailsAfter {
+        ok: usize,
+        kind: std::io::ErrorKind,
+        buf: String,
+    }
+
+    impl FailsAfter {
+        fn new(ok: usize, kind: std::io::ErrorKind) -> Self {
+            Self {
+                ok,
+                kind,
+                buf: String::new(),
+            }
+        }
+
+        fn lines(&self) -> Vec<&str> {
+            self.buf.lines().collect()
+        }
+    }
+
+    impl std::io::Write for FailsAfter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.buf.matches('\n').count() >= self.ok {
+                return Err(std::io::Error::from(self.kind));
+            }
+            self.buf.push_str(&String::from_utf8_lossy(buf));
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// `scriv history ls | head` produces five thousand rows for a reader that
+    /// wants three, and `println!` answers the closed pipe with a panic. Short
+    /// listings hid it — a few hundred rows fit in the pipe buffer, so the
+    /// failing write never happened — which is why it only surfaced once a
+    /// listing got long enough to outrun `head`.
+    #[test]
+    fn a_reader_that_stops_reading_ends_the_listing_rather_than_failing_it() {
+        let mut listing = super::Listing::new(FailsAfter::new(2, std::io::ErrorKind::BrokenPipe));
+        assert!(listing.line("one").unwrap());
+        assert!(listing.line("two").unwrap());
+        assert!(
+            !listing.line("three").unwrap(),
+            "kept writing past the reader"
+        );
+        // Told once, then silent: no further write is even attempted.
+        assert!(!listing.line("four").unwrap());
+        assert_eq!(listing.out.lines(), vec!["one", "two"]);
+    }
+
+    /// A full disk must not be mistaken for a `head`. Everything other than the
+    /// reader leaving is a real failure, and a listing that swallowed it would
+    /// report success having printed half of what was asked for.
+    #[test]
+    fn other_write_failures_still_fail_the_listing() {
+        for kind in [
+            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            let mut listing = super::Listing::new(FailsAfter::new(1, kind));
+            assert!(listing.line("one").unwrap());
+            assert_eq!(
+                listing.line("two").unwrap_err().kind(),
+                kind,
+                "{kind:?} was treated as the reader going away"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

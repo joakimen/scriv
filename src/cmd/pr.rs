@@ -118,6 +118,7 @@ pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
     let color = term::stdout_color();
     let width = number_width(&prs);
     let columns = StatusColumns::of(&prs);
+    let mut out = term::Listing::stdout();
 
     for pr in &prs {
         let cells = columns.cells(pr, color.then(|| pr.color()));
@@ -139,7 +140,9 @@ pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
                 author = pr.author_login(),
             )
         };
-        println!("{}", term::paint(&row, pr.color(), color));
+        if !out.line(&term::paint(&row, pr.color(), color))? {
+            break;
+        }
     }
     Ok(())
 }

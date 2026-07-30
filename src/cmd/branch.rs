@@ -84,9 +84,12 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
     let branches = collect(ctx, filter, fetch)?;
     let color = term::stdout_color();
 
+    let mut out = term::Listing::stdout();
     if !status {
         for branch in &branches {
-            println!("{}", term::paint(&branch.name, branch.kind.color(), color));
+            if !out.line(&term::paint(&branch.name, branch.kind.color(), color))? {
+                break;
+            }
         }
         return Ok(());
     }
@@ -102,10 +105,9 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
             date = branch.date,
             subject = branch.subject,
         );
-        println!(
-            "{}",
-            term::paint(row.trim_end(), branch.kind.color(), color)
-        );
+        if !out.line(&term::paint(row.trim_end(), branch.kind.color(), color))? {
+            break;
+        }
     }
     Ok(())
 }

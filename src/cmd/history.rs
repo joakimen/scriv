@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 
 use crate::history::{self, Entry};
 use crate::pick::{PickItem, Preview};
+use crate::term;
 use crate::{Ctx, pick};
 
 /// The clock, read once per command so every row is dated against the same
@@ -96,9 +97,12 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     let entries = load(ctx)?;
     let now = now();
 
+    let mut out = term::Listing::stdout();
     if !status {
         for entry in &entries {
-            println!("{}", history::one_line(&entry.cmd));
+            if !out.line(&history::one_line(&entry.cmd))? {
+                break;
+            }
         }
         return Ok(());
     }
@@ -114,7 +118,10 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
         .collect();
     let width = age_width(&ages);
     for (entry, age) in entries.iter().zip(&ages) {
-        println!("{age:<width$}  {}", history::one_line(&entry.cmd));
+        let row = format!("{age:<width$}  {}", history::one_line(&entry.cmd));
+        if !out.line(&row)? {
+            break;
+        }
     }
     Ok(())
 }

@@ -14,10 +14,14 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
 
+    let mut out = term::Listing::stdout();
+
     // Plain listing: expand `~` and print, nothing else.
     if !status && !missing && !exists {
         for line in &lines {
-            println!("{}", expand_tilde(line, ctx.home_str()));
+            if !out.line(&expand_tilde(line, ctx.home_str()))? {
+                break;
+            }
         }
         return Ok(());
     }
@@ -35,16 +39,15 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
             continue;
         }
 
-        if !status {
-            println!("{expanded}");
-            continue;
-        }
-
-        match (use_color, present) {
-            (true, true) => println!("\x1b[32m✓ {expanded}\x1b[0m"),
-            (true, false) => println!("\x1b[31m✗ {expanded}\x1b[0m"),
-            (false, true) => println!("✓ {expanded}"),
-            (false, false) => println!("✗ {expanded}"),
+        let row = match (status, use_color, present) {
+            (false, _, _) => expanded,
+            (true, true, true) => format!("\x1b[32m✓ {expanded}\x1b[0m"),
+            (true, true, false) => format!("\x1b[31m✗ {expanded}\x1b[0m"),
+            (true, false, true) => format!("✓ {expanded}"),
+            (true, false, false) => format!("✗ {expanded}"),
+        };
+        if !out.line(&row)? {
+            break;
         }
     }
     Ok(())
