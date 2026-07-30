@@ -7,9 +7,13 @@ use anyhow::{Context, Result, bail};
 
 use crate::Ctx;
 
-/// A commented starter config covering the common layout: search roots grouped
-/// by label and the default picker. Users edit it to taste.
-const TEMPLATE: &str = r#"# scriv configuration.
+/// A commented starter config. Settings are grouped by the command that reads
+/// them; users edit it to taste.
+const TEMPLATE: &str = r#"# scriv configuration. Settings are grouped by the command that reads them,
+# with `[picker]` — shared by every picker — at the end.
+
+# `scriv repo`: where your repositories are, and how they are labelled.
+[repo]
 
 # Every repository lives under one root, laid out as <owner>/<repo> — the same
 # shape as GitHub itself. `repo clone` writes here, so a clone always lands
@@ -23,20 +27,20 @@ root = "~/dev/github.com"
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
-# Editor launched by `scriv edit`. Defaults to $VISUAL, then $EDITOR.
-# editor = "nvim"
+# How repository paths are rendered: relative | tilde | full
+# display = "relative"
 
-# Categories label owners, one category to many owners, so everything you touch
-# for work colours as one group in the picker however many orgs it spans. An
-# owner in no category still shows up — just uncoloured.
-[owners]
-# personal = ["your-github-user"]
-# work = ["acme", "acme-labs"]
+# Labels name owners, one label to many owners, so everything you touch for work
+# colours as one group in the picker however many orgs it spans. An owner with
+# no label still shows up — just uncoloured.
+#
+# Written inline, on one line, so it stays an ordinary `[repo]` key: a
+# `[repo.labels]` header would swallow every `[repo]` key written after it.
+# labels = { personal = ["your-github-user"], work = ["acme", "acme-labs"] }
 
-# Built-in fuzzy picker.
+# The built-in fuzzy picker, shared by every command that opens one.
 [picker]
 height = "50%"        # finder height, e.g. "50%" or "20"
-# display = "relative" # repo path rendering: relative | tilde | full
 # preview = true       # show a preview pane for the highlighted row
 # preview_window = "right:50%" # preview layout: [up|down|left|right][:SIZE][:hidden]
 "#;
@@ -87,22 +91,26 @@ pub fn print(ctx: &Ctx) -> Result<()> {
         ctx.config_path.display()
     ));
 
-    println!("root: {}", ctx.config.root.as_deref().unwrap_or("(unset)"));
-    if !ctx.config.extra.is_empty() {
-        println!("extra: {}", ctx.config.extra.join(", "));
+    let repo = &ctx.config.repo;
+    println!("[repo]");
+    println!("root: {}", repo.root.as_deref().unwrap_or("(unset)"));
+    if !repo.extra.is_empty() {
+        println!("extra: {}", repo.extra.join(", "));
     }
-    if !ctx.config.owners.is_empty() {
-        println!("owners:");
-        for (category, owners) in &ctx.config.owners {
-            println!("  {category}: {}", owners.join(", "));
+    println!("ignore: {}", repo.ignore.join(", "));
+    println!("display: {}", repo.display.as_str());
+    if !repo.labels.is_empty() {
+        println!("labels:");
+        for (label, owners) in &repo.labels {
+            println!("  {label}: {}", owners.join(", "));
         }
     }
+
     println!();
-    println!("ignore: {}", ctx.config.ignore.join(", "));
     println!(
         "editor: {}",
         ctx.editor_setting()
-            .unwrap_or("(unset — set $EDITOR or $VISUAL)")
+            .unwrap_or("(unset — set $VISUAL or $EDITOR)")
     );
     Ok(())
 }
@@ -111,4 +119,65 @@ pub fn print(ctx: &Ctx) -> Result<()> {
 pub fn path(ctx: &Ctx) -> Result<()> {
     println!("{}", ctx.config_path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{RepoDisplay, load_config};
+
+    /// The starter config is the main thing teaching the current layout, so it
+    /// has to be a config scriv actually accepts — a template still written in
+    /// a superseded shape would hand every new user the migration error on
+    /// their first run.
+    #[test]
+    fn the_starter_template_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, TEMPLATE).unwrap();
+
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg.repo.root.as_deref(), Some("~/dev/github.com"));
+        assert_eq!(
+            cfg.repo.ignore,
+            vec!["node_modules".to_string(), "target".to_string()]
+        );
+        assert_eq!(cfg.repo.display, RepoDisplay::Relative);
+        assert_eq!(cfg.picker.height, "50%");
+    }
+
+    /// Every commented-out key is advice, and advice that does not parse is
+    /// worse than none — uncommenting them all has to still yield a valid
+    /// config, including the inline `labels` table.
+    ///
+    /// A commented key is `# <name> = ...`; prose comments are left alone, so
+    /// this stays a test of the suggestions rather than of the heuristic.
+    #[test]
+    fn the_templates_commented_keys_parse_when_uncommented() {
+        let is_key = |line: &str| {
+            line.split_once(" = ").is_some_and(|(name, _)| {
+                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            })
+        };
+        let uncommented: String = TEMPLATE
+            .lines()
+            .map(|line| match line.strip_prefix("# ") {
+                Some(rest) if is_key(rest) => rest,
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(uncommented.contains("labels = {"), "{uncommented}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, &uncommented).unwrap();
+
+        let cfg = load_config(&path)
+            .unwrap_or_else(|e| panic!("uncommented template rejected: {e:#}\n\n{uncommented}"));
+        assert_eq!(cfg.repo.extra, vec!["~/bin".to_string()]);
+        assert_eq!(cfg.repo.display, RepoDisplay::Relative);
+        assert_eq!(cfg.repo.label_of("acme"), Some("work"));
+        assert!(!cfg.picker.preview_window.is_empty());
+    }
 }
