@@ -2,7 +2,7 @@
 name = "scriv"
 version = "0.2.1"
 edition = "2024"
-description = "Pick, don't type: repositories, files, branches, pull requests and shell history from one fuzzy picker."
+description = "One fuzzy picker for your Git repositories, files, branches, pull requests and shell history."
 license = "MIT"
 repository = "https://github.com/joakimen/scriv"
 # Artwork, the demo recording and CI config belong to the repository, not the
