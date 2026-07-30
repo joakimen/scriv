@@ -102,17 +102,16 @@ done
 
 # --- configuration -----------------------------------------------------------
 cat > "$FIX/.config/scriv/config.toml" <<EOF
+[repo]
 root = "~/dev/github.com"
 ignore = ["node_modules", "target"]
+display = "relative"
 
-# Categories label owners, so the picker colours acme's repos as work.
-[owners]
-work = ["acme"]
-personal = ["personal"]
+# Labels name owners, so the picker colours acme's repos as work.
+labels = { work = ["acme"], personal = ["personal"] }
 
 [picker]
 height = "100%"
-display = "relative"
 preview = true
 preview_window = "right:38%"
 EOF

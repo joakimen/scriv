@@ -8,16 +8,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Owners, RepoDisplay};
+use crate::config::{Labels, RepoDisplay};
 use crate::gh::{self, Repo};
 use crate::path::{display_path, expand_home_dir, relative_label};
 use crate::pick::{Choice, PickItem, Preview};
 use crate::repo::FoundRepo;
 use crate::{Ctx, pick, repo, term};
 
-/// Discover repositories, category-tagged and sorted by path.
+/// Discover repositories, label-tagged and sorted by path.
 fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
-    if ctx.config.root.is_none() && ctx.config.extra.is_empty() {
+    if ctx.config.repo.root.is_none() && ctx.config.repo.extra.is_empty() {
         anyhow::bail!(
             "no `root` configured in {}; run `scriv config init` to create a starter config",
             ctx.config_path.display()
@@ -25,7 +25,7 @@ fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
     }
     ctx.log.info(&format!(
         "settings: ignore = {}",
-        ctx.config.ignore.join(", ")
+        ctx.config.repo.ignore.join(", ")
     ));
 
     let mut repos = repo::find_all_repos(&ctx.config, ctx.home(), &ctx.log)
@@ -54,56 +54,56 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
     Ok(())
 }
 
-/// ANSI 256-colour indices used to tint categories, in assignment order.
+/// ANSI 256-colour indices used to tint labels, in assignment order.
 /// Standard hues (cyan, green, yellow, magenta, blue, red) so they read well and
-/// follow the terminal theme; cycles if there are more categories than colours.
-const CATEGORY_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
+/// follow the terminal theme; cycles if there are more labels than colours.
+const LABEL_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
 
-/// Categories whose colour is fixed by name rather than by config order.
+/// Labels whose colour is fixed by name rather than by config order.
 ///
 /// `work` and `personal` are the split nearly every config makes, and reading a
 /// row is faster when the hue means the same thing in every checkout — so they
 /// keep cyan and green wherever they appear in the file. Everything else takes
 /// the next unused hue, in config order.
-const NAMED_CATEGORY_COLORS: &[(&str, u8)] = &[("work", 6), ("personal", 2)];
+const NAMED_LABEL_COLORS: &[(&str, u8)] = &[("work", 6), ("personal", 2)];
 
-/// The fixed colour for `category`, if it is one of the conventional names.
-fn named_color(category: &str) -> Option<u8> {
-    NAMED_CATEGORY_COLORS
+/// The fixed colour for `label`, if it is one of the conventional names.
+fn named_color(label: &str) -> Option<u8> {
+    NAMED_LABEL_COLORS
         .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(category))
+        .find(|(name, _)| name.eq_ignore_ascii_case(label))
         .map(|&(_, color)| color)
 }
 
-/// Map each configured category to a colour.
+/// Map each configured label to a colour.
 ///
-/// [`UNCATEGORIZED`](crate::config::UNCATEGORIZED) is deliberately not in the
-/// map: an uncategorised repository is not a category of its own competing for
-/// a hue, it is the absence of one, and stays the terminal's default foreground.
-/// Dimming it would read as "not this one", when it is an ordinary choice.
-fn category_colors(owners: &Owners) -> std::collections::HashMap<&str, u8> {
-    // Hues spoken for by a named category actually present, so an unnamed
-    // category never collides with `work`'s cyan.
-    let taken: Vec<u8> = owners.keys().filter_map(|c| named_color(c)).collect();
-    let mut free: Vec<u8> = CATEGORY_COLORS
+/// [`UNLABELLED`](crate::config::UNLABELLED) is deliberately not in the map: an
+/// unlabelled repository is not a label of its own competing for a hue, it is
+/// the absence of one, and stays the terminal's default foreground. Dimming it
+/// would read as "not this one", when it is an ordinary choice.
+fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
+    // Hues spoken for by a named label actually present, so an unnamed label
+    // never collides with `work`'s cyan.
+    let taken: Vec<u8> = labels.keys().filter_map(|l| named_color(l)).collect();
+    let mut free: Vec<u8> = LABEL_COLORS
         .iter()
         .copied()
         .filter(|c| !taken.contains(c))
         .collect();
     if free.is_empty() {
-        free = CATEGORY_COLORS.to_vec();
+        free = LABEL_COLORS.to_vec();
     }
 
     let mut next = 0;
-    owners
+    labels
         .keys()
-        .map(|category| {
-            let color = named_color(category).unwrap_or_else(|| {
+        .map(|label| {
+            let color = named_color(label).unwrap_or_else(|| {
                 let color = free[next % free.len()];
                 next += 1;
                 color
             });
-            (category.as_str(), color)
+            (label.as_str(), color)
         })
         .collect()
 }
@@ -131,24 +131,24 @@ fn preview(path: &str) -> Preview {
 
 /// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
 ///
-/// Each row is prefixed with its category, coloured per category so a `work`
+/// Each row is prefixed with its label, coloured per label so a `work`
 /// checkout is distinguishable from a personal one at a glance — several owners
-/// can share one category and therefore one colour, and a repository in no
-/// category is left uncoloured. Paths render per `picker.display`. The printed
-/// path is always absolute so a shell shim can `cd` to it directly.
+/// can share one label and therefore one colour, and a repository with no label
+/// is left uncoloured. Paths render per `repo.display`. The printed path is
+/// always absolute so a shell shim can `cd` to it directly.
 pub fn pick(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
-    let colors = category_colors(&ctx.config.owners);
+    let colors = label_colors(&ctx.config.repo.labels);
 
     // Character count, not bytes: `{:<width$}` pads by characters, so a byte
-    // length would over-pad a category label containing non-ASCII.
+    // length would over-pad a label containing non-ASCII.
     let width = repos
         .iter()
-        .map(|r| r.category.chars().count())
+        .map(|r| r.label.chars().count())
         .max()
         .unwrap_or(0);
 
-    let mode = ctx.config.picker.display;
+    let mode = ctx.config.repo.display;
     let items: Vec<PickItem> = repos
         .iter()
         .map(|repo| {
@@ -158,9 +158,9 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
                 RepoDisplay::Tilde => display_path(&abs, ctx.home_str(), false),
                 RepoDisplay::Full => abs.clone(),
             };
-            let label = format!("{category:<width$}  {shown}", category = repo.category);
-            let item = PickItem::new(label, abs.clone()).preview(preview(&abs));
-            match colors.get(repo.category.as_str()) {
+            let row = format!("{label:<width$}  {shown}", label = repo.label);
+            let item = PickItem::new(row, abs.clone()).preview(preview(&abs));
+            match colors.get(repo.label.as_str()) {
                 Some(&color) => item.color(color),
                 None => item,
             }
@@ -187,7 +187,7 @@ const PRESENT_COLOR: u8 = 8;
 
 /// The configured root, expanded — the one directory clones are written to.
 fn clone_root(ctx: &Ctx) -> Result<PathBuf> {
-    let root = ctx.config.root.as_deref().ok_or_else(|| {
+    let root = ctx.config.repo.root.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
             "no `root` configured in {}; `repo clone` writes to <root>/<owner>/<repo>",
             ctx.config_path.display()
@@ -222,7 +222,7 @@ fn owner_candidates(ctx: &Ctx, root: &Path) -> Vec<String> {
         }
     };
 
-    for owner in ctx.config.known_owners() {
+    for owner in ctx.config.repo.known_owners() {
         push(owner, &mut out);
     }
     if let Ok(entries) = std::fs::read_dir(root) {
@@ -254,17 +254,17 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
     ctx.log
         .info(&format!("{} owner candidates", candidates.len()));
 
-    let colors = category_colors(&ctx.config.owners);
+    let colors = label_colors(&ctx.config.repo.labels);
     let items: Vec<PickItem> = candidates
         .iter()
         .map(|owner| {
-            let category = ctx.config.category_of(owner);
-            let label = match category {
-                Some(c) => format!("{owner}  ({c})"),
+            let label = ctx.config.repo.label_of(owner);
+            let row = match label {
+                Some(l) => format!("{owner}  ({l})"),
                 None => owner.clone(),
             };
-            let item = PickItem::new(label, owner.clone());
-            match category.and_then(|c| colors.get(c).copied()) {
+            let item = PickItem::new(row, owner.clone());
+            match label.and_then(|l| colors.get(l).copied()) {
                 Some(color) => item.color(color),
                 None => item,
             }
@@ -498,47 +498,43 @@ mod tests {
         .unwrap()
     }
 
-    fn owners(categories: &[&str]) -> Owners {
-        categories
+    fn labels(names: &[&str]) -> Labels {
+        names
             .iter()
-            .map(|c| ((*c).to_string(), Vec::new()))
+            .map(|n| ((*n).to_string(), Vec::new()))
             .collect()
     }
 
     /// `work` and `personal` mean the same colour in every config, so a row's
     /// hue can be read without remembering what order the file was written in.
     #[test]
-    fn the_conventional_categories_keep_their_colours() {
-        let (first, last) = (owners(&["work", "personal"]), owners(&["personal", "work"]));
-        let listed_first = category_colors(&first);
-        let listed_last = category_colors(&last);
+    fn the_conventional_labels_keep_their_colours() {
+        let (first, last) = (labels(&["work", "personal"]), labels(&["personal", "work"]));
+        let listed_first = label_colors(&first);
+        let listed_last = label_colors(&last);
         assert_eq!(listed_first.get("work"), Some(&6), "work is cyan");
         assert_eq!(listed_first.get("personal"), Some(&2), "personal is green");
         assert_eq!(
             listed_first, listed_last,
             "config order changed the colours"
         );
-        // No entry for the absence of a category: those rows stay uncoloured.
-        assert!(!listed_first.contains_key(crate::config::UNCATEGORIZED));
+        // No entry for the absence of a label: those rows stay uncoloured.
+        assert!(!listed_first.contains_key(crate::config::UNLABELLED));
     }
 
-    /// Any other category takes a hue, but never one a named category is
-    /// already using — two groups the same colour is the one thing the tint
-    /// exists to avoid.
+    /// Any other label takes a hue, but never one a named label is already
+    /// using — two groups the same colour is the one thing the tint exists to
+    /// avoid.
     #[test]
-    fn other_categories_avoid_the_reserved_hues() {
-        let configured = owners(&["client", "work", "oss", "personal"]);
-        let colors = category_colors(&configured);
+    fn other_labels_avoid_the_reserved_hues() {
+        let configured = labels(&["client", "work", "oss", "personal"]);
+        let colors = label_colors(&configured);
         assert_eq!(colors.get("work"), Some(&6));
         assert_eq!(colors.get("personal"), Some(&2));
         let mut assigned: Vec<u8> = colors.values().copied().collect();
         assigned.sort_unstable();
         assigned.dedup();
-        assert_eq!(
-            assigned.len(),
-            4,
-            "two categories share a colour: {colors:?}"
-        );
+        assert_eq!(assigned.len(), 4, "two labels share a colour: {colors:?}");
     }
 
     /// A clone must land exactly where discovery looks for it, or cloning

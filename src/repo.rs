@@ -6,14 +6,14 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use crate::config::{Config, ROOT_DEPTH, UNCATEGORIZED};
+use crate::config::{Config, ROOT_DEPTH, UNLABELLED};
 use crate::logger::Logger;
 use crate::path::expand_home_dir;
 
 /// A discovered repository, together with where it was found and who owns it.
 pub struct FoundRepo {
-    /// The category its owner falls in, or [`UNCATEGORIZED`].
-    pub category: String,
+    /// The label its owner carries, or [`UNLABELLED`].
+    pub label: String,
     /// The GitHub owner, taken from the directory under the root. `None` for a
     /// repository from `extra`, which sits outside the `<owner>/<repo>` layout.
     pub owner: Option<String>,
@@ -53,23 +53,24 @@ pub fn owner_of(root: &Path, path: &Path) -> Option<String> {
 }
 
 /// Discover repositories under the configured root and any `extra` paths,
-/// expanding `~` against `home` and tagging each with its owner and category.
+/// expanding `~` against `home` and tagging each with its owner and label.
 ///
 /// Each search runs on its own thread. A missing path is a hard error — a typo
 /// in the root should say so rather than quietly finding nothing; unreadable
 /// subdirectories are logged and skipped.
 pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<FoundRepo>> {
-    if cfg.root.is_none() && cfg.extra.is_empty() {
+    if cfg.repo.root.is_none() && cfg.repo.extra.is_empty() {
         anyhow::bail!("no `root` set in config file");
     }
 
     // The root is searched at the owner/repo depth; each `extra` path is a
     // repository in its own right, so it is searched at depth 0.
     let jobs: Vec<(&str, usize, bool)> = cfg
+        .repo
         .root
         .iter()
         .map(|r| (r.as_str(), ROOT_DEPTH, true))
-        .chain(cfg.extra.iter().map(|p| (p.as_str(), 0, false)))
+        .chain(cfg.repo.extra.iter().map(|p| (p.as_str(), 0, false)))
         .collect();
 
     let results: Vec<Result<Vec<FoundRepo>>> = thread::scope(|scope| {
@@ -79,7 +80,7 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
                 scope.spawn(move || {
                     let root = expand_home_dir(path, home);
                     log.info(&format!("searching {path} (depth {depth})"));
-                    let repos = find_repos(&root, depth, &cfg.ignore, log)?;
+                    let repos = find_repos(&root, depth, &cfg.repo.ignore, log)?;
                     Ok(repos
                         .into_iter()
                         .map(|path| {
@@ -88,13 +89,13 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
                             } else {
                                 None
                             };
-                            let category = owner
+                            let label = owner
                                 .as_deref()
-                                .and_then(|o| cfg.category_of(o))
-                                .unwrap_or(UNCATEGORIZED)
+                                .and_then(|o| cfg.repo.label_of(o))
+                                .unwrap_or(UNLABELLED)
                                 .to_string();
                             FoundRepo {
-                                category,
+                                label,
                                 owner,
                                 root: root.clone(),
                                 path,

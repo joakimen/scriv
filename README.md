@@ -138,8 +138,7 @@ Select several with `tab` and they open together. The walk honours
 `.gitignore`, `.ignore` and `.fdignore`, streams into the picker as it goes —
 so a directory of a million files is typeable in milliseconds, not once the
 last one is found — and quietly skips paths it is not allowed to read. The
-editor is `$VISUAL`, then `$EDITOR`, unless the config sets `editor`. `edit`
-abbreviates to `e`.
+editor is `$VISUAL`, then `$EDITOR`. `edit` abbreviates to `e`.
 
 Every `pick` prints one line and nothing else, so it composes:
 
@@ -202,7 +201,14 @@ emit completions.
 
 `scriv config init` writes `~/.config/scriv/config.toml`:
 
+Settings are grouped by the command that reads them. A key lives in a command's
+table when exactly one command reads it; anything genuinely shared — the picker
+— stays at the top level.
+
 ```toml
+# `scriv repo`: where your repositories are, and how they are labelled.
+[repo]
+
 # Every repository lives under one root, laid out as <owner>/<repo> — the same
 # shape as GitHub itself. `repo clone` writes here, so a clone always lands
 # somewhere `repo pick` will find it.
@@ -215,34 +221,40 @@ extra = ["~/bin"]
 # Directory names to skip while searching.
 ignore = ["node_modules", "target"]
 
-# Editor launched by `scriv edit`. Defaults to $VISUAL, then $EDITOR.
-editor = "nvim"
+# Repo path rendering: relative | tilde | full
+display = "relative"
 
-# Categories label owners, one category to many owners, so everything you touch
-# for work colours as one group however many orgs it spans. `work` is cyan and
-# `personal` green wherever they appear; any other category takes one of the
-# remaining hues. An owner in no category still shows up, in the terminal's
-# ordinary foreground.
-[owners]
-personal = ["joakimen"]
-work = ["capralifecycle", "nsbno"]
+# Labels name owners, one label to many owners, so everything you touch for work
+# colours as one group however many orgs it spans. `work` is cyan and `personal`
+# green wherever they appear; any other label takes one of the remaining hues. An
+# owner with no label still shows up, in the terminal's ordinary foreground.
+labels = { personal = ["joakimen"], work = ["capralifecycle", "nsbno"] }
 
+# The built-in fuzzy picker, shared by every command that opens one.
 [picker]
-height = "50%"                # built-in finder height
-display = "relative"          # repo path rendering: relative | tilde | full
+height = "50%"                # finder height
 preview = true                # show a preview pane for the highlighted row
 preview_window = "right:50%"  # preview layout
 ```
 
+`labels` is written inline, on one line, rather than as a `[repo.labels]`
+header. Both parse the same, but a header captures every bare key written after
+it — add `ignore` below a `[repo.labels]` header and it silently becomes a label
+named "ignore" instead of an error. The inline table has no such ordering rule.
+
 One root, always two levels deep. The depth is not a setting because it is not a
 preference: the root mirrors GitHub's own namespace, and fixing it is what lets
-`repo clone` work out where a repository belongs without being told. Categories
-label *owners* rather than directories, so moving an org between `work` and
-`personal` is a one-word edit instead of a reshuffle on disk.
+`repo clone` work out where a repository belongs without being told. Labels name
+*owners* rather than directories, so moving an org between `work` and `personal`
+is a one-word edit instead of a reshuffle on disk.
 
-A config still using the older `[[paths.*]]` format is refused with the
-replacement written out for you, derived from what was there — including which
-of your paths become `extra`.
+The editor is `$VISUAL`, then `$EDITOR`. There is no config key for it: it is
+already stated once where every other terminal tool reads it, and a third place
+to set it is a third place to forget it is set.
+
+A config still using an older layout — top-level `root`/`owners`, or the
+`[[paths.*]]` format before that — is refused with the replacement written out
+for you, derived from what was there.
 
 The tracked-files list sits beside the config in `~/.config/scriv/files`, one
 path per line, managed by `scriv file add`/`remove`.

@@ -58,7 +58,7 @@ pub struct Ctx {
     pub files_path: PathBuf,
     /// The standalone `kf` tool's config, read once to migrate its list.
     pub legacy_kf_path: PathBuf,
-    /// The editor `scriv edit` launches, from config or the environment.
+    /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
     pub config: Config,
     pub log: Logger,
@@ -88,7 +88,6 @@ impl Ctx {
         let config = config::load_config(&config_path)?;
 
         let editor = config::resolve_editor(
-            config.editor.as_deref(),
             std::env::var("VISUAL").ok().as_deref(),
             std::env::var("EDITOR").ok().as_deref(),
         );
@@ -114,13 +113,13 @@ impl Ctx {
 
     /// The editor command to launch, split into program and arguments.
     ///
-    /// Errors when nothing is configured, naming every place the user can set
-    /// one rather than failing on an empty program name deeper in.
+    /// Errors when nothing is set, naming both variables the user can set
+    /// rather than failing on an empty program name deeper in.
     pub fn editor(&self) -> Result<Vec<String>> {
-        let command = self.editor.as_deref().context(
-            "no editor set — set $EDITOR or $VISUAL, \
-             or add `editor = \"nvim\"` to the config file",
-        )?;
+        let command = self
+            .editor
+            .as_deref()
+            .context("no editor set — set $VISUAL or $EDITOR")?;
         let parts = config::split_editor(command);
         if parts.is_empty() {
             anyhow::bail!("the configured editor is empty");

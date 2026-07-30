@@ -81,8 +81,7 @@ enum Command {
     ///
     /// Selection comes from the current directory tree, honouring `.gitignore`,
     /// or from your tracked files with `--tracked`. Selecting several opens them
-    /// all. The editor is `$VISUAL`, then `$EDITOR`, unless the config file sets
-    /// `editor`.
+    /// all. The editor is `$VISUAL`, then `$EDITOR`.
     #[command(alias = "e")]
     Edit {
         /// Files to open; omit to pick interactively
