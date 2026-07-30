@@ -9,6 +9,16 @@ permissions:
   contents: read
 
 jobs:
+  # Each target names the runner it is built on. Linux builds natively on both
+  # architectures, because a cross-linker would have to be installed first.
+  # Both macOS targets build on the arm64 runner: Apple's linker produces
+  # x86_64 binaries without help, and `rust-toolchain.toml` already installs the
+  # std for every target here, so nothing is needed beyond `--target`.
+  #
+  # Do not add a `macos-13` runner back. GitHub keeps only the latest two macOS
+  # versions and retired that label, so a job asking for it does not fail — it
+  # queues until it expires, which held the v0.2.1 release for hours without
+  # ever reporting an error.
   build:
     strategy:
       matrix:
@@ -20,7 +30,7 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-latest
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -28,9 +38,19 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # `rustup show` installs the pinned toolchain; the target is added
+      # explicitly rather than trusted to rust-toolchain.toml's `targets`, which
+      # is honoured only when the toolchain is first installed from that file.
+      # `target add` is idempotent, so saying it twice costs nothing.
       - name: Install toolchain (pinned by rust-toolchain.toml)
-        run: rustup show
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+      # Keyed by target: two of these jobs share a runner, and a cache entry
+      # holding another architecture's artifacts is worse than a cold cache.
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
       - name: Package
         run: |
