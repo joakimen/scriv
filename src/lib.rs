@@ -62,6 +62,9 @@ pub struct Ctx {
     pub legacy_kf_path: PathBuf,
     /// fish's history file, which `scriv history` reads.
     pub history_path: PathBuf,
+    /// This machine's offset from UTC, for dating history entries. See
+    /// [`Ctx::load`] for why it is read here and not where it is used.
+    utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
     pub config: Config,
@@ -99,6 +102,17 @@ impl Ctx {
             &home,
         );
 
+        // Read here, at the top of the process, because it cannot be read
+        // later: determining the local offset reads the environment, which is
+        // unsound once another thread might be changing it, so `time` refuses
+        // to answer at all in a multi-threaded process on Unix. By the time a
+        // history row wants dating, skim has threads running. Resolving it once
+        // and carrying it is also simply what `Ctx` is for.
+        //
+        // UTC is the fallback if it cannot be determined — a listing an hour
+        // out beats a listing that refuses to open.
+        let utc_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+
         let editor = config::resolve_editor(
             std::env::var("VISUAL").ok().as_deref(),
             std::env::var("EDITOR").ok().as_deref(),
@@ -112,6 +126,7 @@ impl Ctx {
             files_path,
             legacy_kf_path,
             history_path,
+            utc_offset,
             editor,
             config,
             log: Logger::new(verbose),
@@ -138,6 +153,11 @@ impl Ctx {
             anyhow::bail!("the configured editor is empty");
         }
         Ok(parts)
+    }
+
+    /// This machine's offset from UTC, resolved once at startup.
+    pub fn utc_offset(&self) -> time::UtcOffset {
+        self.utc_offset
     }
 
     pub fn home(&self) -> &Path {

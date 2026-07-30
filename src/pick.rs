@@ -17,8 +17,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use ratatui::style::Color;
-use ratatui::text::Line;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use skim::prelude::*;
 
 use crate::config::PickerConfig;
@@ -89,6 +89,14 @@ fn file_preview_cmd(path: &str) -> String {
 /// theme), and `preview` fills the preview pane while the row is highlighted.
 pub struct PickItem {
     pub label: String,
+    /// Drawn dim, ahead of the label, and *not* matched against.
+    ///
+    /// For a column that identifies a row without being what you search for —
+    /// the date on a history entry. Putting it in the label instead would make
+    /// it searchable, and since a date is digits at the start of every row,
+    /// typing a `3` would rank four thousand timestamps above the command you
+    /// were reaching for.
+    pub prefix: Option<String>,
     /// `None` when the value is the label itself, which is the common case for
     /// path rows — worth not storing twice when a walk streams in a million of
     /// them. Read it through [`PickItem::value`].
@@ -102,6 +110,7 @@ impl PickItem {
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
             label: text.into(),
+            prefix: None,
             value: None,
             color: None,
             preview: None,
@@ -112,10 +121,17 @@ impl PickItem {
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             label: label.into(),
+            prefix: None,
             value: Some(value.into()),
             color: None,
             preview: None,
         }
+    }
+
+    /// Draw `prefix` dim, ahead of the label, outside what the query matches.
+    pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = Some(prefix.into());
+        self
     }
 
     /// What selecting this row yields — the label unless one was set apart.
@@ -135,6 +151,10 @@ impl PickItem {
         self
     }
 }
+
+/// Colour of a [`PickItem::prefix`]: ANSI 8, the terminal's own grey, so the
+/// column reads as context beside the command rather than competing with it.
+const PREFIX_COLOR: u8 = 8;
 
 /// Bridges a [`PickItem`] to skim: `text()` drives display and matching,
 /// `output()` is what a selection yields, `display()` tints the row, and
@@ -158,7 +178,22 @@ impl SkimItem for SkItem {
         if let Some(idx) = self.item.color {
             context.base_style = context.base_style.fg(Color::Indexed(idx));
         }
-        context.to_line(self.text())
+
+        let Some(prefix) = &self.item.prefix else {
+            return context.to_line(self.text());
+        };
+
+        // The prefix is drawn here rather than folded into the label because
+        // `to_line`'s highlight positions are indices into the matched text.
+        // Prepending a span leaves those indices — and so the highlighting —
+        // exactly where they belong, over the label alone.
+        let mut line = Line::default();
+        line.push_span(Span::styled(
+            prefix.clone(),
+            Style::default().fg(Color::Indexed(PREFIX_COLOR)),
+        ));
+        line.spans.extend(context.to_line(self.text()).spans);
+        line
     }
 
     fn preview(&self, _context: PreviewContext) -> ItemPreview {
@@ -654,6 +689,69 @@ fn refresh_binds() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Render an item the way skim would, with `matches` standing in for a
+    /// query that hit the given characters of the *label*.
+    fn rendered(item: PickItem, matches: Vec<usize>) -> Line<'static> {
+        let sk = SkItem { item };
+        let context = DisplayContext {
+            score: 0,
+            matches: Matches::CharIndices(matches),
+            container_width: 80,
+            base_style: Style::default(),
+            matched_style: Style::default().fg(Color::Indexed(1)),
+        };
+        let line = sk.display(context);
+        Line::from(
+            line.spans
+                .into_iter()
+                .map(|s| Span::styled(s.content.into_owned(), s.style))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn text_of(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// The prefix is drawn ahead of the label in the terminal's grey, so a date
+    /// reads as context beside the command rather than competing with it.
+    #[test]
+    fn a_prefix_is_drawn_dim_before_the_label() {
+        let item = PickItem::plain("git status").prefix("2026-07-30 13:57  ");
+        let line = rendered(item, vec![]);
+        assert_eq!(text_of(&line), "2026-07-30 13:57  git status");
+        assert_eq!(line.spans[0].content, "2026-07-30 13:57  ");
+        assert_eq!(line.spans[0].style.fg, Some(Color::Indexed(PREFIX_COLOR)));
+    }
+
+    /// Match highlighting has to land on the label. skim reports match
+    /// positions as indices into the text it matched — the label — so folding
+    /// the prefix into that text instead would shift every highlight right by
+    /// the width of the date.
+    #[test]
+    fn highlighting_lands_on_the_label_not_the_prefix() {
+        // Character 0 of the label: the `g` of `git`.
+        let matched = Style::default().fg(Color::Indexed(1));
+        let with = rendered(
+            PickItem::plain("git status").prefix("2026-07-30 13:57  "),
+            vec![0],
+        );
+        let hit: String = with
+            .spans
+            .iter()
+            .filter(|s| s.style.fg == matched.fg)
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(hit, "g", "highlight slid off the label: {with:?}");
+    }
+
+    /// A row with no prefix renders exactly as it did before there was one.
+    #[test]
+    fn an_item_without_a_prefix_is_unchanged() {
+        let line = rendered(PickItem::plain("git status"), vec![]);
+        assert_eq!(text_of(&line), "git status");
+    }
 
     #[test]
     fn quotes_plain_values() {

@@ -114,9 +114,13 @@ enum Command {
     /// Search the commands you have already run (fish)
     ///
     /// Reads fish's history file directly — newest first, with repeats of a
-    /// command collapsed onto the one row. `history pick` prints the command
-    /// rather than running it; the fish integration puts it back on the command
-    /// line, bound to ctrl-r and to `up` on the first line of a prompt.
+    /// command collapsed onto the one row and dated with when it was last run.
+    /// `history pick` prints the command rather than running it; the fish
+    /// integration puts it back on the command line, bound to ctrl-r and to
+    /// `up` on the first line of a prompt.
+    ///
+    /// The date is shown but never searched: it is digits at the front of every
+    /// row, and matching it would rank timestamps above commands.
     #[command(alias = "hist")]
     History {
         #[command(subcommand)]
@@ -357,7 +361,9 @@ enum HistoryCmd {
     /// List past commands, most recent first
     #[command(alias = "list")]
     Ls {
-        /// Show how long ago each command was last run
+        /// Prefix each command with the local date and time it was last run
+        ///
+        /// Fixed width and `YYYY-MM-DD HH:MM`, so the column sorts and cuts.
         #[arg(long)]
         status: bool,
     },

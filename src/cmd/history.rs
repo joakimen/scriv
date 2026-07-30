@@ -56,69 +56,60 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
 /// The row only has one line, so this is where a command longer than the
 /// terminal is wide — or one that spans several lines — is actually readable.
 /// Built from the entry already in hand, so scrolling the list spawns nothing.
-fn preview(entry: &Entry, now: i64) -> String {
-    match entry.when {
-        Some(when) => format!(
-            "last run {}\n\n{}",
-            history::relative_time(now, when),
-            entry.cmd
-        ),
-        None => entry.cmd.clone(),
+fn preview(entry: &Entry, now: i64, offset: time::UtcOffset) -> String {
+    let Some(when) = entry.when else {
+        return entry.cmd.clone();
+    };
+    let exact = history::stamp_precise(when, offset);
+    if exact.is_empty() {
+        return entry.cmd.clone();
     }
+    // Both readings, because they answer different questions: the date says
+    // which run this was, the age says whether it is still how you do it.
+    format!(
+        "last run {exact} ({})\n\n{}",
+        history::relative_time(now, when),
+        entry.cmd
+    )
 }
 
-/// Build picker rows: the command folded onto one line, returning the command
-/// as it was really typed.
-fn items(entries: &[Entry], now: i64) -> Vec<PickItem> {
+/// Build picker rows: the local date it was last run, then the command folded
+/// onto one line, returning the command as it was really typed.
+///
+/// The date is a [`PickItem::prefix`] rather than part of the label, so it is
+/// shown without being searched. A date is digits at the front of every row;
+/// matched, a query of `3` would rank thousands of timestamps above the command
+/// being reached for.
+fn items(entries: &[Entry], now: i64, offset: time::UtcOffset) -> Vec<PickItem> {
     entries
         .iter()
         .map(|entry| {
             PickItem::new(history::one_line(&entry.cmd), entry.cmd.clone())
-                .preview(Preview::Text(preview(entry, now)))
+                .prefix(format!("{}  ", history::stamp(entry.when, offset)))
+                .preview(Preview::Text(preview(entry, now, offset)))
         })
         .collect()
-}
-
-/// Width of the widest age, for column alignment in `--status` output.
-fn age_width(ages: &[String]) -> usize {
-    ages.iter()
-        .map(|age| age.chars().count())
-        .max()
-        .unwrap_or(0)
 }
 
 /// `scriv history ls` — print past commands, newest first, one per line.
 ///
 /// A multi-line command is folded onto its one line like everywhere else, so
 /// the output stays one entry per line and pipes into `wc -l` or `grep`
-/// meaning what it looks like it means. `--status` prefixes how long ago each
-/// was last run.
+/// meaning what it looks like it means. `--status` prefixes the local date and
+/// time each was last run — the same column the picker shows, in a fixed-width
+/// sortable form, so `awk` and `grep` can both work on it.
 pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     let entries = load(ctx)?;
-    let now = now();
+    let offset = ctx.utc_offset();
 
     let mut out = term::Listing::stdout();
-    if !status {
-        for entry in &entries {
-            if !out.line(&history::one_line(&entry.cmd))? {
-                break;
-            }
-        }
-        return Ok(());
-    }
-
-    let ages: Vec<String> = entries
-        .iter()
-        .map(|entry| {
-            entry
-                .when
-                .map(|when| history::relative_time(now, when))
-                .unwrap_or_default()
-        })
-        .collect();
-    let width = age_width(&ages);
-    for (entry, age) in entries.iter().zip(&ages) {
-        let row = format!("{age:<width$}  {}", history::one_line(&entry.cmd));
+    for entry in &entries {
+        let command = history::one_line(&entry.cmd);
+        let row = if status {
+            format!("{}  {command}", history::stamp(entry.when, offset))
+        } else {
+            command
+        };
         if !out.line(&row)? {
             break;
         }
@@ -135,9 +126,8 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
 /// this where one command ends.
 pub fn pick(ctx: &Ctx, query: Option<&str>, print0: bool) -> Result<()> {
     let entries = load(ctx)?;
-    let now = now();
     let chosen = pick::pick_one_queried(
-        items(&entries, now),
+        items(&entries, now(), ctx.utc_offset()),
         "Pick a command",
         query.unwrap_or_default(),
         &ctx.config.picker,
@@ -171,21 +161,50 @@ mod tests {
         ]
     }
 
+    fn utc() -> time::UtcOffset {
+        time::UtcOffset::UTC
+    }
+
     /// The row is folded onto one line; selecting it has to yield the command
     /// as it was actually typed, newlines and all, or a multi-line command
     /// comes back as something the user never ran.
     #[test]
     fn rows_fold_onto_one_line_but_return_the_real_command() {
-        let items = items(&entries(), 1000);
+        let items = items(&entries(), 1000, utc());
         assert_eq!(items[1].label, "git commit -m 'a ⏎ b'");
         assert_eq!(items[1].value(), "git commit -m 'a\nb'");
+    }
+
+    /// The date is shown but never searched. It lives in the prefix, so the
+    /// label — which is what skim matches the query against — is the command
+    /// and nothing else. Fold the date into the label instead and a query of
+    /// `3` ranks four thousand timestamps above the command being reached for.
+    #[test]
+    fn the_date_is_shown_beside_the_command_but_not_matched() {
+        let items = items(&entries(), 1000, utc());
+        assert_eq!(items[0].prefix.as_deref(), Some("1970-01-01 00:15  "));
+        assert_eq!(items[0].label, "git status");
+        assert!(!items[0].label.contains("1970"), "the date is searchable");
+    }
+
+    /// Undated rows keep the column open, so every command starts in the same
+    /// place whatever fish recorded.
+    #[test]
+    fn an_undated_row_holds_the_date_column_open() {
+        let items = items(&entries(), 1000, utc());
+        let (dated, undated) = (
+            items[0].prefix.as_deref().unwrap(),
+            items[1].prefix.as_deref().unwrap(),
+        );
+        assert_eq!(dated.len(), undated.len());
+        assert!(undated.trim().is_empty(), "{undated:?}");
     }
 
     /// Previews are built from data already in hand — a command preview would
     /// be spawned again on every keypress that moves the cursor.
     #[test]
     fn previews_are_text_rather_than_commands() {
-        for item in items(&entries(), 1000) {
+        for item in items(&entries(), 1000, utc()) {
             assert!(
                 matches!(item.preview, Some(Preview::Text(_))),
                 "a history row spawns a process to preview itself"
@@ -193,10 +212,13 @@ mod tests {
         }
     }
 
+    /// The preview carries both readings: the exact moment says which run this
+    /// was, the age says whether it is still how you do things.
     #[test]
     fn the_preview_dates_the_command_and_shows_it_in_full() {
-        let text = preview(&entries()[0], 1000);
-        assert!(text.starts_with("last run 1m ago"), "{text}");
+        let text = preview(&entries()[0], 1000, utc());
+        assert!(text.starts_with("last run 1970-01-01 00:15:00 ("), "{text}");
+        assert!(text.contains("1m ago"), "{text}");
         assert!(text.ends_with("git status"), "{text}");
     }
 
@@ -204,14 +226,6 @@ mod tests {
     /// no date to put above it.
     #[test]
     fn an_undated_command_previews_without_a_date() {
-        assert_eq!(preview(&entries()[1], 1000), "git commit -m 'a\nb'");
-    }
-
-    /// `{:<width$}` pads by character count, so a byte width would ragged the
-    /// column the moment an age is rendered in a non-ASCII locale.
-    #[test]
-    fn the_age_column_is_as_wide_as_its_widest_entry() {
-        assert_eq!(age_width(&["3d ago".into(), "just now".into()]), 8);
-        assert_eq!(age_width(&[]), 0);
+        assert_eq!(preview(&entries()[1], 1000, utc()), "git commit -m 'a\nb'");
     }
 }
