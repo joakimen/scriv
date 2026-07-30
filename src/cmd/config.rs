@@ -38,6 +38,15 @@ ignore = ["node_modules", "target"]
 # `[repo.labels]` header would swallow every `[repo]` key written after it.
 # labels = { personal = ["your-github-user"], work = ["acme", "acme-labs"] }
 
+# `scriv history`: which shell history to search.
+[history]
+
+# fish's history file. The default is $XDG_DATA_HOME/fish/fish_history, falling
+# back to ~/.local/share/fish/fish_history. Set this only if you have named your
+# session — `set -U fish_history work` reads `work_history` instead — since fish
+# does not export that variable for scriv to find.
+# file = "~/.local/share/fish/work_history"
+
 # The built-in fuzzy picker, shared by every command that opens one.
 [picker]
 height = "50%"        # finder height, e.g. "50%" or "20"
@@ -105,6 +114,10 @@ pub fn print(ctx: &Ctx) -> Result<()> {
             println!("  {label}: {}", owners.join(", "));
         }
     }
+
+    println!();
+    println!("[history]");
+    println!("file: {}", ctx.history_path.display());
 
     println!();
     println!(

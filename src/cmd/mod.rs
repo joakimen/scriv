@@ -8,5 +8,6 @@ pub mod branch;
 pub mod config;
 pub mod edit;
 pub mod file;
+pub mod history;
 pub mod pr;
 pub mod repo;

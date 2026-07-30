@@ -180,6 +180,31 @@ pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Resul
     one(Feed::batch(items), prompt, cfg)
 }
 
+/// [`pick_one`], opened with `query` already in the search box.
+///
+/// For a picker reached part-way through typing — ctrl-r after half a command —
+/// where retyping what is already on the line to narrow the list is precisely
+/// the work the picker was opened to save. An empty `query` is the ordinary
+/// case and starts the picker on everything.
+pub fn pick_one_queried(
+    items: Vec<PickItem>,
+    prompt: &str,
+    query: &str,
+    cfg: &PickerConfig,
+) -> Result<String> {
+    let run = Run {
+        prompt,
+        multi: false,
+        query,
+        reload: None,
+    };
+    run_picker(Feed::batch(items), run, cfg)?
+        .values
+        .into_iter()
+        .next()
+        .ok_or_else(|| Cancelled.into())
+}
+
 /// The key that asks a reloadable picker to go and get fresher rows.
 ///
 /// This displaces skim's own `ctrl-r` (rotate between matching modes), which is

@@ -1,8 +1,8 @@
 # Working on scriv
 
 scriv scans the paths you configure for Git repositories, tracks files you
-return to, opens files in your editor, and switches branches and pull
-requests — all through one built-in fuzzy picker (skim).
+return to, opens files in your editor, switches branches and pull requests, and
+searches your shell history — all through one built-in fuzzy picker (skim).
 
 ## Before opening a pull request
 
@@ -100,6 +100,7 @@ is expected to follow it:
 | --- | --- |
 | `config.rs`, `path.rs`, `files.rs` | parsing and path rules, no I/O |
 | `git.rs`, `gh.rs` | ref classification, checkout resolution, JSON parsing — pure functions, plus the process helpers |
+| `history.rs` | fish history file location, parsing and row rendering, no I/O |
 | `repo.rs` | discovery traversal rules |
 | `walk.rs` | the `ignore`-crate file walk shared by `edit` and `file add` |
 | `pick.rs` | the skim wrapper: rows, colours, previews |
@@ -129,10 +130,10 @@ reference, so command implementations do no environment lookups of their own.
   child fails, return `Reported(code)` so the process exits with the child's
   status instead of printing a second, vaguer error line on top of git's.
 - **The top-level commands are registries; `edit` is the exception.**
-  `repo`/`file`/`branch`/`pr` are each a set scriv knows about, with `ls`/`pick`
-  and a verb over that set. `edit` acts on the directory the user is standing
-  in, so it is a verb at the top level rather than a fifth noun — and it has no
-  `ls`. Resist filing ambient-directory work under a noun group.
+  `repo`/`file`/`branch`/`pr`/`history` are each a set scriv knows about, with
+  `ls`/`pick` and a verb over that set. `edit` acts on the directory the user is
+  standing in, so it is a verb at the top level rather than one more noun — and
+  it has no `ls`. Resist filing ambient-directory work under a noun group.
 - **Anything drawn inline takes a `term::ScratchRow` first.** The picker and the
   spinner both start on the row the cursor is on, which from a key binding is
   the last row of the shell's prompt — the picker draws over it, the spinner
@@ -152,8 +153,15 @@ reference, so command implementations do no environment lookups of their own.
   belongs. fish leaves only `ctrl-o` and `ctrl-q` unbound, so anything further
   has to displace a preset binding deliberately and say which one in the comment
   above `scriv_key_bindings` — and some presets are not worth displacing:
-  `ctrl-p`/`ctrl-n` are `up-line`/`down-line`, which is how history gets walked
-  on a one-line prompt. alt is not the escape hatch it looks like: fish binds
+  `ctrl-p`/`ctrl-n` are `up-line`/`down-line`, the last way left to walk history
+  one entry at a time now that `ctrl-r` and `up` open a picker instead. Taking a
+  key people press all day is only justified when the picker does that key's own
+  job better, on the same data, and hands control back everywhere it would not —
+  which is what `scriv-history-up` is: it checks for the completion pager and
+  for a cursor past line 1, and calls fish's `up-line` there. Hand back with
+  `commandline -f <input function>`; a plain shell function of fish's such as
+  `up-or-search` is rejected, and from inside a binding nobody sees the error.
+  alt is not the escape hatch it looks like: fish binds
   most of `alt-<letter>` (`alt-b`, `alt-e`, `alt-o`, `alt-p` among them).
   `ctrl-i`/`ctrl-j`/`ctrl-m` are tab/newline/enter and are never bindable. Once
   the worthwhile ctrl chords are gone, function keys are the fallback: fish binds

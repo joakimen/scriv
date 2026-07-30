@@ -6,12 +6,14 @@
 
 [Scriv](https://kingkiller.fandom.com/wiki/Scriv) puts the things you work with
 behind one fuzzy picker: your repositories, the files you keep returning to, git
-branches, and GitHub pull requests. You pick from a list rather than recalling a
-path or a branch name and typing it out.
+branches, GitHub pull requests, and the commands you have already run. You pick
+from a list rather than recalling a path, a branch name or a command and typing
+it out.
 
 You tell scriv where your repositories live; branches and pull requests it reads
-from `git` and `gh`. Every list previews the highlighted row, so you can tell
-candidates apart without leaving the picker.
+from `git` and `gh`, and shell history from fish's own history file. Every list
+previews the highlighted row, so you can tell candidates apart without leaving
+the picker.
 
 ![scriv: pick a repository, check out a remote branch, list pull requests](docs/demo.gif)
 
@@ -22,6 +24,7 @@ candidates apart without leaving the picker.
 | **editing** | fuzzy-find a file where you are standing and open it in `$EDITOR` |
 | **branches** | switch to a local branch, or check out a remote one |
 | **pull requests** | see what is green, then check one out, open it, or merge it |
+| **shell history** | fuzzy-search what you have run before, on `ctrl-r` and `up` |
 
 It is self-contained: the fuzzy finder ([skim](https://github.com/skim-rs/skim))
 and the file walker (the [`ignore`](https://docs.rs/ignore) crate behind
@@ -55,7 +58,7 @@ scriv init fish | source   # helpers, key bindings, completions
 
 ## Commands
 
-Four nouns, the same few verbs:
+Five nouns, the same few verbs:
 
 | | `ls` lists | `pick` prints | `checkout` |
 | --- | --- | --- | --- |
@@ -63,6 +66,7 @@ Four nouns, the same few verbs:
 | `scriv file` | your tracked files | an absolute path | — |
 | `scriv branch` | local and remote branches | a branch name | switches, tracking the remote |
 | `scriv pr` | pull requests | a PR number | hands off to `gh pr checkout` |
+| `scriv history` | commands you have run | a past command | — |
 
 `scriv repo clone` adds to that first list: pick a GitHub owner — suggested from
 your config, the owners already under your root, and your own account, with
@@ -85,8 +89,8 @@ It picks over every repository you have rather than acting on the one you are
 standing in; for that one, `gh repo view --web` is already the whole answer.
 
 `scriv file add`/`remove` maintain the tracked list, and `scriv config` /
-`scriv init` handle setup. `branch` abbreviates to `br`, `checkout` to `co`,
-`ls` to `list`. Any command takes `--help` for its flags.
+`scriv init` handle setup. `branch` abbreviates to `br`, `history` to `hist`,
+`checkout` to `co`, `ls` to `list`. Any command takes `--help` for its flags.
 
 Branch listings lead with the branch you are on, then the branches in this
 clone, then the ones that only exist on a remote — each block most recently
@@ -130,6 +134,22 @@ actually go in — green ready, yellow waiting on checks, red blocked by a failu
 or a conflict, grey for a draft or something already closed. Colouring by state
 there would paint a list of open pull requests one uniform green, exactly where
 the colour is worth the most.
+
+`scriv history` searches the commands you have already run, reading fish's own
+history file — newest first, with repeats of a command collapsed onto one row.
+`pick` prints the command rather than running it; the fish integration puts it
+back on the command line, where you can look at it before pressing enter.
+
+```fish
+scriv history pick          # fuzzy-pick a past command, print it
+scriv history ls --status   # every command, with how long ago you last ran it
+```
+
+A command that spans several lines is folded onto its one row with a `⏎` where
+each break was, so it cannot be mistaken for a command you never ran, and the
+preview shows it in full. Selecting it still yields the real multi-line text.
+This is fish-only: it is fish's history format, and only a shell can write to
+its own command line.
 
 `scriv edit` is the one verb rather than a noun: it searches the directory
 you are in — not a list scriv keeps — and opens what you choose.
@@ -183,6 +203,8 @@ end
 
 | Key | Does |
 | --- | --- |
+| `ctrl-r` | search shell history, onto the command line |
+| `up` | the same, on the first line of a prompt |
 | `ctrl-o` | pick a repository and `cd` into it |
 | `ctrl-g` | pick a branch and check it out |
 | `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
@@ -190,13 +212,19 @@ end
 | `f3` | pick a tracked file and open it in `$EDITOR` |
 | `f7` | pick a pull request and check it out |
 
-Of those, `ctrl-o` and `ctrl-q` are unbound in fish, and `ctrl-g` replaces
+`ctrl-r` and `up` replace fish's own history keys — `history-pager` and
+`up-line` — with a fuzzy search over the same history, and whatever you have
+typed so far becomes the starting query rather than being thrown away. `up`
+keeps fish's behaviour wherever a picker would be wrong: inside the completion
+pager, and on any line of a multi-line command but the first, where up still
+moves the cursor. `ctrl-p`/`ctrl-n` are left alone as `up-line`/`down-line`, so
+stepping back through history one entry at a time is still there.
+
+Of the rest, `ctrl-o` and `ctrl-q` are unbound in fish, and `ctrl-g` replaces
 `cancel`, which `escape` and `ctrl-c` also do. The function keys replace nothing
 — fish binds none of them itself. `f1` and `f3` sit at the low end that users'
 own tools tend to leave alone, and `f7` steps over `f4`/`f5`, where those tools
-cluster. `ctrl-p` is left alone on purpose: it is fish's `up-line`, which is how
-history gets walked on a one-line prompt. alt is left untouched too, since fish
-binds most of it already.
+cluster. alt is left untouched, since fish binds most of it already.
 
 It also defines `fe` — find, fuzzy-pick, edit — as a short alias for
 `scriv edit`, forwarding its arguments so `fe -t` and `fe src/main.rs` work
@@ -239,6 +267,15 @@ display = "relative"
 # green wherever they appear; any other label takes one of the remaining hues. An
 # owner with no label still shows up, in the terminal's ordinary foreground.
 labels = { personal = ["joakimen"], work = ["capralifecycle", "nsbno"] }
+
+# `scriv history`: which shell history to search.
+[history]
+
+# fish's history file. Defaults to $XDG_DATA_HOME/fish/fish_history, falling
+# back to ~/.local/share/fish/fish_history. Only worth setting if you have named
+# your session — `set -U fish_history work` reads `work_history` instead — since
+# fish does not export that variable for scriv to find.
+file = "~/.local/share/fish/work_history"
 
 # The built-in fuzzy picker, shared by every command that opens one.
 [picker]
