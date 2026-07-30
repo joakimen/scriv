@@ -91,6 +91,26 @@ Stop and say so rather than merging when the work does not clear that bar:
 
 Those are worth a sentence and a pause. Everything else — ship it.
 
+## Feature work happens in a worktree
+
+Anything larger than a one-line fix gets its own `git worktree`, not a branch
+switched in place. The point is not tidiness: a worktree is a separate directory
+with its own checkout, so two pieces of work can be built and tested at the same
+time without one's `target/` or half-finished edits leaking into the other. Work
+in place and the repository can only hold one idea at a time, which is what
+rules out running them in parallel at all.
+
+Add it under `.claude/worktrees/`, and remove it once its pull request has
+merged — the branch is gone by then, and a worktree left behind is a stale
+checkout that `git worktree list` will keep offering:
+
+```
+git worktree add .claude/worktrees/<name> -b <name>
+git worktree remove .claude/worktrees/<name>
+```
+
+Trivial fixes can stay in the main checkout. Say which you chose.
+
 ## Layout
 
 The crate is split into an I/O-free core and an imperative shell, and new code
