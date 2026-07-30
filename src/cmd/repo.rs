@@ -47,9 +47,12 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
     let repos = discover(ctx)?;
     ctx.log
         .info(&format!("returning {} repositories", repos.len()));
+    let mut out = term::Listing::stdout();
     for repo in &repos {
         let path = repo.path.to_string_lossy();
-        println!("{}", display_path(&path, ctx.home_str(), absolute));
+        if !out.line(&display_path(&path, ctx.home_str(), absolute))? {
+            break;
+        }
     }
     Ok(())
 }
