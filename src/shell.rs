@@ -76,17 +76,21 @@ function scriv-pr-checkout --description "Pick a GitHub pull request and check i
     command scriv pr checkout
 end
 
-# Bindings are ctrl-<letter>, reachable without leaving the home row on a layout
-# where ctrl sits under the left pinky. Only ctrl-o and ctrl-q are unbound in
-# fish, so the other two displace a preset binding on purpose:
+# Bindings are ctrl-<letter> where a ctrl chord is free, reachable without
+# leaving the home row on a layout where ctrl sits under the left pinky. Only
+# ctrl-o and ctrl-q are unbound in fish, so ctrl-g displaces a preset binding on
+# purpose: branch checkout, over `cancel` — escape and ctrl-c both do that too.
 #
-#   ctrl-g  branch checkout, over `cancel` — escape and ctrl-c both do that too
-#   ctrl-p  pr checkout, over `up-line` — up and ctrl-r still search history
+# ctrl-p is deliberately *not* taken. It is fish's `up-line`, and on a one-line
+# prompt that is how people walk back through history: `up` falls through to
+# history search, ctrl-p does not, so replacing it costs a key that gets pressed
+# all day for a picker that gets pressed a few times an hour.
 #
-# The two function keys displace nothing: fish binds none of f1-f12 itself, and
-# f1 and f3 are the low end that users' own tools tend to leave alone — f4 and f5
-# upwards are commonly taken already. They carry the two pickers that are reached
-# least often, since a function key is a longer reach than a ctrl chord.
+# The function keys displace nothing: fish binds none of f1-f12 itself. f1 and f3
+# sit at the low end that users' own tools tend to leave alone; f4 and f5 are
+# where those tools cluster (awsvault, editors), so the third one skips past them
+# to f7. They carry the pickers reached least often, since a function key is a
+# longer reach than a ctrl chord.
 #
 # Rebind any of them by calling `bind` yourself after `scriv_key_bindings`; the
 # last binding for a key wins. alt-<letter> is left alone on purpose — it looks
@@ -106,7 +110,7 @@ function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind f1     "scriv-repo-open; commandline -f repaint"
     bind f3     "scriv-file-edit; commandline -f repaint"
     bind ctrl-g "scriv-branch-checkout; commandline -f repaint"
-    bind ctrl-p "scriv-pr-checkout; commandline -f repaint"
+    bind f7     "scriv-pr-checkout; commandline -f repaint"
 end
 "#;
 
@@ -140,8 +144,8 @@ mod tests {
         assert!(out.contains("bind ctrl-q"));
         assert!(out.contains("bind f1"));
         assert!(out.contains("bind f3"));
+        assert!(out.contains("bind f7"));
         assert!(out.contains("bind ctrl-g"));
-        assert!(out.contains("bind ctrl-p"));
     }
 
     /// fish binds most of alt-<letter> itself — alt-b is backward-word, alt-e
@@ -218,13 +222,23 @@ mod tests {
         }
     }
 
-    /// f4 and f5 are common in user configs (awsvault, editors), so f3 is as far
-    /// up the function keys as scriv reaches.
+    /// f4 and f5 are where users' own tools cluster (awsvault, editors), so scriv
+    /// steps over them rather than reaching for the next free key upwards.
     #[test]
-    fn fish_avoids_function_keys_beyond_f3() {
+    fn fish_avoids_the_crowded_function_keys() {
         let out = integration(Shell::Fish, &mut dummy());
         assert!(!out.contains("bind f4"));
         assert!(!out.contains("bind f5"));
+    }
+
+    /// ctrl-p is fish's `up-line`, and unlike `up` it does not fall through to
+    /// history search — so a shell where scriv took it loses the way people walk
+    /// back through history on a one-line prompt.
+    #[test]
+    fn fish_leaves_history_navigation_alone() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(!out.contains("bind ctrl-p"), "ctrl-p is up-line");
+        assert!(!out.contains("bind ctrl-n"), "ctrl-n is down-line");
     }
 
     #[test]
