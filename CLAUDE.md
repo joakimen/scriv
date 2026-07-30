@@ -51,7 +51,27 @@ work worth doing.
 The gate is confidence that the change is sound, and that has a definition
 here already: `make` green, each commit building and testing green on its own,
 and the three docs above walked and accounted for in the PR body. Meet it and
-merge. Squash-merge and delete the branch, matching the existing history.
+merge.
+
+Merging means handing the PR to GitHub rather than sitting and watching CI:
+
+```
+gh pr merge --squash --auto --delete-branch
+```
+
+`--auto` lands the PR itself once the checks pass, which keeps the squash and
+the branch deletion matching the existing history without a poll loop. It is
+load-bearing that `build` and `demo` are *required* status checks on `main`
+(the `default` ruleset): auto-merge only queues behind checks that are
+required, so if that rule is ever removed, `--auto` stops waiting and merges
+on the spot. Repo settings already delete the remote branch on merge, so
+`--delete-branch` is there for the local one.
+
+Enabling auto-merge is not the same as walking away. Something still has to
+observe the result, because a red check leaves the PR sitting open forever
+rather than reporting a failure to anyone. Say in the reply that auto-merge is
+armed, and check back — with a backgrounded `gh pr checks <n> --watch`, or on
+the next turn — so a failure gets fixed rather than silently parked.
 
 Never commit straight to `main`. The pull request is what leaves a reviewable
 record of work nobody watched happen — which matters more when there is no
