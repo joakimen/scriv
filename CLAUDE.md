@@ -56,22 +56,26 @@ merge.
 Merging means handing the PR to GitHub rather than sitting and watching CI:
 
 ```
-gh pr merge --squash --auto --delete-branch
+gh pr merge --squash --auto
 ```
 
-`--auto` lands the PR itself once the checks pass, which keeps the squash and
-the branch deletion matching the existing history without a poll loop. It is
-load-bearing that `build` and `demo` are *required* status checks on `main`
-(the `default` ruleset): auto-merge only queues behind checks that are
-required, so if that rule is ever removed, `--auto` stops waiting and merges
-on the spot. Repo settings already delete the remote branch on merge, so
-`--delete-branch` is there for the local one.
+`--auto` lands the PR itself once the checks pass, squash-merging to match the
+existing history, with no poll loop in between. It is load-bearing that `build`
+and `demo` are *required* status checks on `main` (the `default` ruleset):
+auto-merge only queues behind checks that are required, so if that rule is ever
+removed, `--auto` stops waiting and merges on the spot.
 
-Enabling auto-merge is not the same as walking away. Something still has to
-observe the result, because a red check leaves the PR sitting open forever
-rather than reporting a failure to anyone. Say in the reply that auto-merge is
-armed, and check back — with a backgrounded `gh pr checks <n> --watch`, or on
-the next turn — so a failure gets fixed rather than silently parked.
+Two things auto-merge does not do for you:
+
+- **The local branch survives.** `gh` exits the moment auto-merge is armed, so
+  `--delete-branch` never gets to run — and the squash rewrites the commit, so
+  even afterwards `git branch -d` calls the branch unmerged. Clean up with
+  `git checkout main && git pull && git branch -D <branch>` once it lands. The
+  remote branch is handled by the repo's `delete_branch_on_merge`.
+- **A failure tells nobody.** A red check leaves the PR sitting open
+  indefinitely. Say in the reply that auto-merge is armed, and check back —
+  with a backgrounded wait on `gh pr view <n> --json state`, or on the next
+  turn — so a failure gets fixed rather than silently parked.
 
 Never commit straight to `main`. The pull request is what leaves a reviewable
 record of work nobody watched happen — which matters more when there is no
