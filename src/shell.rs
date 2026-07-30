@@ -76,15 +76,57 @@ function scriv-pr-checkout --description "Pick a GitHub pull request and check i
     command scriv pr checkout
 end
 
+# History is the one picker whose result belongs on the command line rather than
+# run outright, and only the shell can write there — so unlike the editor
+# wrappers above, this one is doing real work.
+#
+# NUL on both sides of the pipe: a history entry can be a multi-line command,
+# and a newline-terminated one read back through `(...)` would be split into
+# separate arguments and rejoined with spaces, quietly turning it into a command
+# that was never run.
+#
+# The query is quoted for the same reason in the other direction. Bare
+# `(commandline)` is a list, and on an empty command line it is a list of *two*
+# empty strings — one argument too many, which `scriv history pick` rejects
+# outright. `"$(...)"` is fish's one-argument form: the whole command line,
+# newlines and all, or one empty string when there is nothing typed yet.
+function scriv-history-pick --description "Fuzzy-pick a past command onto the command line"
+    command scriv history pick --print0 --query "$(commandline)" | read --local --null picked
+    and commandline --replace -- $picked
+end
+
+# `up` reaches the picker only where fish would have gone to history anyway.
+# Inside the completion pager, and on any line of a multi-line command but the
+# first, up still means "move up" — taking that away would make a multi-line
+# command impossible to edit and the pager impossible to walk.
+#
+# `up-line` is what fish binds `up` to, so handing control back to it is exactly
+# "do what would have happened". It is not `up-or-search`: that is a shell
+# function rather than an input function in fish 4, and `commandline -f` refuses
+# it — quietly, from inside a key binding, where nobody sees the error until
+# they are three lines into editing a command.
+function scriv-history-up --description "Search history, or move up within a multi-line command"
+    if commandline --paging-mode; or test (commandline --line) -gt 1
+        commandline -f up-line
+        return
+    end
+    scriv-history-pick
+end
+
 # Bindings are ctrl-<letter> where a ctrl chord is free, reachable without
 # leaving the home row on a layout where ctrl sits under the left pinky. Only
 # ctrl-o and ctrl-q are unbound in fish, so ctrl-g displaces a preset binding on
 # purpose: branch checkout, over `cancel` — escape and ctrl-c both do that too.
 #
-# ctrl-p is deliberately *not* taken. It is fish's `up-line`, and on a one-line
-# prompt that is how people walk back through history: `up` falls through to
-# history search, ctrl-p does not, so replacing it costs a key that gets pressed
-# all day for a picker that gets pressed a few times an hour.
+# ctrl-r and up displace fish's own history keys — `history-pager` and
+# `up-line` — and are the two bindings here that replace something people
+# press constantly. That is the point of them rather than a cost: both land on
+# the same history, searched fuzzily instead of by prefix, and both put the
+# command back on the line to be read before it runs. `up` keeps fish's
+# behaviour wherever the picker would be wrong (see scriv-history-up), and
+# ctrl-p/ctrl-n are left alone as `up-line`/`down-line`, so walking a one-line
+# prompt back through history one entry at a time is still there for anyone who
+# wants it.
 #
 # The function keys displace nothing: fish binds none of f1-f12 itself. f1 and f3
 # sit at the low end that users' own tools tend to leave alone; f4 and f5 are
@@ -111,6 +153,8 @@ function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind f3     "scriv-file-edit; commandline -f repaint"
     bind ctrl-g "scriv-branch-checkout; commandline -f repaint"
     bind f7     "scriv-pr-checkout; commandline -f repaint"
+    bind ctrl-r "scriv-history-pick; commandline -f repaint"
+    bind up     "scriv-history-up; commandline -f repaint"
 end
 "#;
 
@@ -133,6 +177,8 @@ mod tests {
         assert!(out.contains("function fe"));
         assert!(out.contains("function scriv-branch-checkout"));
         assert!(out.contains("function scriv-pr-checkout"));
+        assert!(out.contains("function scriv-history-pick"));
+        assert!(out.contains("function scriv-history-up"));
         assert!(out.contains("function scriv_key_bindings"));
     }
 
@@ -146,6 +192,56 @@ mod tests {
         assert!(out.contains("bind f3"));
         assert!(out.contains("bind f7"));
         assert!(out.contains("bind ctrl-g"));
+        assert!(out.contains("bind ctrl-r"));
+        assert!(out.contains("bind up"));
+    }
+
+    /// A history entry can be a multi-line command. Read back through fish's
+    /// ordinary `(...)` substitution it would be split on those newlines and
+    /// rejoined with spaces — a command the user never ran, handed to them
+    /// looking like one they did. NUL on both sides is what prevents it.
+    #[test]
+    fn history_travels_nul_terminated() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(out.contains("history pick --print0"), "{out}");
+        assert!(out.contains("read --local --null picked"), "{out}");
+    }
+
+    /// The query must reach scriv as exactly one argument. Bare `(commandline)`
+    /// is a *list*, and on an empty command line — by far the common way to
+    /// reach this picker — fish expands it to two empty strings, one argument
+    /// more than `history pick` accepts, so ctrl-r fails before the picker
+    /// opens. Only fish's quoted `"$(...)"` form is one argument every time.
+    #[test]
+    fn the_query_reaches_scriv_as_one_argument() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(out.contains(r#"--query "$(commandline)""#), "{out}");
+    }
+
+    /// `up` is fish's own key, and the picker is only an improvement where fish
+    /// would have gone to history anyway. On the second line of a multi-line
+    /// command, up has to still move the cursor up — a picker there would make
+    /// such a command uneditable.
+    #[test]
+    fn up_falls_through_to_fish_where_the_picker_would_be_wrong() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(out.contains("commandline --paging-mode"), "{out}");
+        assert!(out.contains("commandline --line) -gt 1"), "{out}");
+    }
+
+    /// The fallthrough has to name an *input* function. `up-or-search` reads
+    /// like the right answer and is a shell function in fish 4, which
+    /// `commandline -f` rejects — from inside a key binding, so the failure
+    /// only shows up once someone is editing a multi-line command. `up-line` is
+    /// what fish binds `up` to itself.
+    #[test]
+    fn up_hands_back_to_fishs_own_input_function() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(out.contains("commandline -f up-line"), "{out}");
+        assert!(
+            !out.contains("-f up-or-search"),
+            "up-or-search is not an input function in fish 4",
+        );
     }
 
     /// fish binds most of alt-<letter> itself — alt-b is backward-word, alt-e
@@ -231,9 +327,10 @@ mod tests {
         assert!(!out.contains("bind f5"));
     }
 
-    /// ctrl-p is fish's `up-line`, and unlike `up` it does not fall through to
-    /// history search — so a shell where scriv took it loses the way people walk
-    /// back through history on a one-line prompt.
+    /// ctrl-p/ctrl-n are fish's `up-line`/`down-line`. scriv takes `up` for the
+    /// history picker, so these are what is left of walking history one entry at
+    /// a time on a one-line prompt — taking them too would remove the fallback
+    /// as well as the default.
     #[test]
     fn fish_leaves_history_navigation_alone() {
         let out = integration(Shell::Fish, &mut dummy());

@@ -2,8 +2,9 @@
 //! from one fuzzy finder.
 //!
 //! The crate is split into an I/O-free core ([`config`], [`path`], [`files`]'s
-//! pure helpers, [`repo`]'s traversal rules, [`git`] and [`gh`]'s parsing and
-//! classification) and an imperative shell: the [`cmd`] modules that read the
+//! pure helpers, [`repo`]'s traversal rules, [`history`]'s fish-history
+//! parsing, [`git`] and [`gh`]'s parsing and classification) and an imperative
+//! shell: the [`cmd`] modules that read the
 //! environment, touch the filesystem, shell out to `git`/`gh`, and drive
 //! interactive selection. [`Ctx`] resolves the environment once and hands it to
 //! every command.
@@ -13,6 +14,7 @@ pub mod config;
 pub mod files;
 pub mod gh;
 pub mod git;
+pub mod history;
 pub mod logger;
 pub mod path;
 pub mod pick;
@@ -58,6 +60,8 @@ pub struct Ctx {
     pub files_path: PathBuf,
     /// The standalone `kf` tool's config, read once to migrate its list.
     pub legacy_kf_path: PathBuf,
+    /// fish's history file, which `scriv history` reads.
+    pub history_path: PathBuf,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
     pub config: Config,
@@ -87,6 +91,14 @@ impl Ctx {
         let legacy_kf_path = config::legacy_kf_path(xdg_env.as_deref(), &home);
         let config = config::load_config(&config_path)?;
 
+        // fish's data directory, not its config directory — a different XDG
+        // variable from the one above.
+        let history_path = history::history_path(
+            config.history.file.as_deref(),
+            std::env::var(history::XDG_DATA_ENV_VAR).ok().as_deref(),
+            &home,
+        );
+
         let editor = config::resolve_editor(
             std::env::var("VISUAL").ok().as_deref(),
             std::env::var("EDITOR").ok().as_deref(),
@@ -99,6 +111,7 @@ impl Ctx {
             config_path,
             files_path,
             legacy_kf_path,
+            history_path,
             editor,
             config,
             log: Logger::new(verbose),

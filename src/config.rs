@@ -5,9 +5,9 @@
 //! Two files live side by side under the config directory:
 //!
 //! - `config.toml` — hand-edited settings, grouped by the command that reads
-//!   them: `[repo]` for discovery and labelling, `[picker]` for the finder
-//!   every command shares. A legacy `config.json` is still read when no TOML
-//!   file is present.
+//!   them: `[repo]` for discovery and labelling, `[history]` for the shell
+//!   history to search, `[picker]` for the finder every command shares. A
+//!   legacy `config.json` is still read when no TOML file is present.
 //! - `files` — the known-files list, rewritten programmatically by
 //!   `scriv file add`/`forget`/`prune`. Kept separate so machine writes never
 //!   clobber hand-written settings or comments.
@@ -50,6 +50,7 @@ pub type Labels = IndexMap<String, Vec<String>>;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
     pub repo: RepoConfig,
+    pub history: HistoryConfig,
     pub picker: PickerConfig,
 }
 
@@ -118,6 +119,19 @@ impl RepoConfig {
     pub fn known_owners(&self) -> Vec<&str> {
         self.labels.values().flatten().map(String::as_str).collect()
     }
+}
+
+/// `[history]` — which shell history `scriv history` searches.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
+pub struct HistoryConfig {
+    /// fish's history file, when it is not the default
+    /// `$XDG_DATA_HOME/fish/fish_history`.
+    ///
+    /// The only reason to set this is a named session: `set -U fish_history
+    /// work` makes fish read `work_history` instead, and it does not export
+    /// that variable, so scriv has no way to find out on its own.
+    pub file: Option<String>,
 }
 
 /// Pick the editor `scriv edit` launches: `$VISUAL`, then `$EDITOR` — the order
@@ -216,6 +230,8 @@ impl Default for PickerConfig {
 struct RawToml {
     #[serde(default)]
     repo: RepoConfig,
+    #[serde(default)]
+    history: HistoryConfig,
     #[serde(default)]
     picker: RawPicker,
 
@@ -457,6 +473,7 @@ fn parse_toml(data: &str) -> Result<Config> {
     }
     Ok(Config {
         repo: raw.repo,
+        history: raw.history,
         picker: raw.picker.into(),
     })
 }

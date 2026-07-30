@@ -2,10 +2,10 @@
 //! dispatch to the [`cmd`] implementations. All decision logic lives in the
 //! library crate.
 //!
-//! Top-level commands: `repo`, `file`, `branch`, and `pr` work with the things
-//! scriv finds; `edit` opens a file from the directory you are in; `config`
-//! manages its configuration; `init` prints shell integration. The help layout
-//! follows clap's default (description, usage, commands, options).
+//! Top-level commands: `repo`, `file`, `branch`, `pr`, and `history` work with
+//! the things scriv finds; `edit` opens a file from the directory you are in;
+//! `config` manages its configuration; `init` prints shell integration. The
+//! help layout follows clap's default (description, usage, commands, options).
 
 use std::process::ExitCode;
 
@@ -29,6 +29,7 @@ const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv edit --tracked         Pick one of your tracked files and edit it
   scriv branch checkout        Pick a local or remote branch and switch to it
   scriv pr checkout            Pick a GitHub pull request and check it out
+  scriv history pick           Fuzzy-search your fish history for a command
   scriv init fish | source     Load shell integration + completions";
 
 /// Help styling matching cargo: bright-green bold headers and usage,
@@ -46,7 +47,7 @@ const STYLES: Styles = Styles::styled()
 #[command(
     name = "scriv",
     version,
-    about = "Pick, don't type: repositories, files, branches and pull requests from one fuzzy picker.",
+    about = "Pick, don't type: repositories, files, branches, pull requests and shell history from one fuzzy picker.",
     after_help = EXAMPLES,
     styles = STYLES,
     disable_help_subcommand = true
@@ -109,6 +110,17 @@ enum Command {
     Pr {
         #[command(subcommand)]
         command: PrCmd,
+    },
+    /// Search the commands you have already run (fish)
+    ///
+    /// Reads fish's history file directly — newest first, with repeats of a
+    /// command collapsed onto the one row. `history pick` prints the command
+    /// rather than running it; the fish integration puts it back on the command
+    /// line, bound to ctrl-r and to `up` on the first line of a prompt.
+    #[command(alias = "hist")]
+    History {
+        #[command(subcommand)]
+        command: HistoryCmd,
     },
     /// Manage the configuration
     Config {
@@ -341,6 +353,30 @@ enum PrCmd {
 }
 
 #[derive(Subcommand)]
+enum HistoryCmd {
+    /// List past commands, most recent first
+    #[command(alias = "list")]
+    Ls {
+        /// Show how long ago each command was last run
+        #[arg(long)]
+        status: bool,
+    },
+    /// Fuzzy-select a past command and print it
+    Pick {
+        /// Text to open the search box with
+        #[arg(short, long, value_name = "TEXT")]
+        query: Option<String>,
+        /// End the printed command with a NUL rather than a newline
+        ///
+        /// A command may contain newlines of its own, so only a NUL tells the
+        /// shell reading this where one ends. This is what the fish integration
+        /// uses; `read --null` is the other half of it.
+        #[arg(short = '0', long)]
+        print0: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ConfigCmd {
     /// Generate a starter configuration file
     Init {
@@ -432,6 +468,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 delete_branch,
                 auto,
             ),
+        },
+        Command::History { command } => match command {
+            HistoryCmd::Ls { status } => cmd::history::ls(&ctx, status),
+            HistoryCmd::Pick { query, print0 } => {
+                cmd::history::pick(&ctx, query.as_deref(), print0)
+            }
         },
         Command::Config { command } => match command {
             ConfigCmd::Init { force } => cmd::config::init(&ctx, force),

@@ -6,9 +6,10 @@
 
 **Pick, don't type.** [Scriv](https://kingkiller.fandom.com/wiki/Scriv) puts the
 things you move between — your repositories, the files you keep returning to,
-git branches, GitHub pull requests — behind one fuzzy picker. Getting somewhere
-costs a few characters and a keystroke, rather than a path you half-remember and
-a branch name you have to look up.
+git branches, GitHub pull requests, the commands you have already run — behind
+one fuzzy picker. Getting somewhere costs a few characters and a keystroke,
+rather than a path you half-remember, a branch name you have to look up, or a
+command you ran last Tuesday.
 
 ![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 
@@ -19,6 +20,7 @@ a branch name you have to look up.
 | **editing** | fuzzy-find a file where you are standing and open it in `$EDITOR` |
 | **branches** | switch to a local branch, or check out a remote one |
 | **pull requests** | see what is green, then check one out, open it, or merge it |
+| **shell history** | fuzzy-search what you have run before, on `ctrl-r` and `up` |
 
 It is one binary and nothing else: the fuzzy finder
 ([skim](https://github.com/skim-rs/skim)) and the file walker (the
@@ -52,7 +54,7 @@ scriv init fish | source   # helpers, key bindings, completions
 
 ## Commands
 
-Four nouns, the same few verbs:
+Five nouns, the same few verbs:
 
 | | `ls` lists | `pick` prints | `checkout` |
 | --- | --- | --- | --- |
@@ -60,6 +62,7 @@ Four nouns, the same few verbs:
 | `scriv file` | your tracked files | an absolute path | — |
 | `scriv branch` | local and remote branches | a branch name | switches, tracking the remote |
 | `scriv pr` | pull requests | a PR number | hands off to `gh pr checkout` |
+| `scriv history` | commands you have run | a past command | — |
 
 Some verbs belong to one noun only:
 
@@ -75,8 +78,24 @@ Some verbs belong to one noun only:
 - **`scriv file add` / `remove`** — maintain the tracked list.
 
 `scriv config` and `scriv init` handle setup. `branch` abbreviates to `br`,
-`edit` to `e`, `checkout` to `co`, and `ls` to `list`. Any command takes
+`history` to `hist`, `edit` to `e`, `checkout` to `co`, and `ls` to `list`. Any command takes
 `--help` for its flags.
+
+`scriv history` searches what you have already run, reading fish's own history
+file — newest first, repeats of a command collapsed onto one row. `pick` prints
+the command rather than running it; the fish integration puts it back on the
+command line, to be read before you press enter.
+
+```fish
+scriv history pick          # fuzzy-pick a past command, print it
+scriv history ls --status   # every command, with how long ago you last ran it
+```
+
+A command spanning several lines is folded onto its one row with a `⏎` where
+each break was, so it cannot be mistaken for a command you never ran; the
+preview shows it in full and selecting it yields the real multi-line text. This
+one is fish-only: it is fish's history format, and only a shell can write to its
+own command line.
 
 `scriv edit` is the one verb rather than a noun: it searches the directory you
 are standing in — not a list scriv keeps — and opens what you choose in
@@ -130,6 +149,8 @@ end
 
 | Key | Does |
 | --- | --- |
+| `ctrl-r` | search shell history, onto the command line |
+| `up` | the same, on the first line of a prompt |
 | `ctrl-o` | pick a repository and `cd` into it |
 | `ctrl-g` | pick a branch and check it out |
 | `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
@@ -137,9 +158,15 @@ end
 | `f3` | pick a tracked file and open it in `$EDITOR` |
 | `f7` | pick a pull request and check it out |
 
-Only `ctrl-g` displaces anything fish had bound (`cancel`, which `escape` and
-`ctrl-c` also do); the function keys and the rest were free. To use your own
-keys, bind them after `scriv_key_bindings` — the last binding for a key wins.
+`ctrl-r` and `up` take over fish's history keys, searching the same history
+fuzzily instead of by prefix and starting from whatever you have already typed.
+`up` hands back to fish wherever a picker would be wrong — in the completion
+pager, and on any line of a multi-line command but the first, where it still
+moves the cursor — and `ctrl-p`/`ctrl-n` are untouched, so stepping through
+history one entry at a time is still there. Of the rest only `ctrl-g` displaces
+anything fish had bound (`cancel`, which `escape` and `ctrl-c` also do); the
+function keys and the others were free. To use your own keys, bind them after
+`scriv_key_bindings` — the last binding for a key wins.
 
 The integration also defines `fe` — find, fuzzy-pick, edit — as a short alias
 for `scriv edit`, arguments and all. That is the only unprefixed name scriv
@@ -171,6 +198,15 @@ display = "relative"
 # Labels name owners, one label to many, so everything you touch for work
 # colours as one group however many orgs it spans.
 labels = { personal = ["joakimen"], work = ["capralifecycle", "nsbno"] }
+
+# `scriv history`: which shell history to search.
+[history]
+
+# fish's history file. Defaults to $XDG_DATA_HOME/fish/fish_history, falling
+# back to ~/.local/share/fish/fish_history. Only worth setting if you have named
+# your session — `set -U fish_history work` reads `work_history` instead — since
+# fish does not export that variable for scriv to find.
+file = "~/.local/share/fish/work_history"
 
 # The built-in fuzzy picker, shared by every command that opens one.
 [picker]
