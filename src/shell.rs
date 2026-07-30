@@ -70,10 +70,16 @@ function scriv-pr-checkout --description "Pick a GitHub pull request and check i
     command scriv pr checkout
 end
 
-# Bindings use alt-<letter>, which fish leaves entirely unbound by default, and
-# are chosen so the chord falls under one hand: alt-b (branch), alt-g (git) and
-# alt-e (edit) are left-hand, alt-o and alt-p right-hand. Rebind any of them by
-# calling `bind` yourself after `scriv_key_bindings`.
+# Bindings are ctrl-<letter>, reachable without leaving the home row on a layout
+# where ctrl sits under the left pinky. Only ctrl-o and ctrl-q are unbound in
+# fish, so the other two displace a preset binding on purpose:
+#
+#   ctrl-g  branch checkout, over `cancel` — escape and ctrl-c both do that too
+#   ctrl-p  pr checkout, over `up-line` — up and ctrl-r still search history
+#
+# Rebind any of them by calling `bind` yourself after `scriv_key_bindings`; the
+# last binding for a key wins. alt-<letter> is left alone on purpose — it looks
+# free but is not, since fish presets alt-b, alt-e, alt-o and alt-p among others.
 #
 # Every binding ends in `commandline -f repaint`, never `execute`. The picker
 # renders inline, and scriv opens it on a row of its own below the prompt so it
@@ -85,12 +91,10 @@ end
 # would execute whatever was there.
 function scriv_key_bindings --description "Bind scriv pickers to keys"
     bind ctrl-o "scriv-repo-cd; commandline -f repaint"
-    bind alt-o  "scriv-repo-cd; commandline -f repaint"
-    bind alt-e  "scriv-edit; commandline -f repaint"
+    bind ctrl-q "scriv-edit; commandline -f repaint"
     bind f3     "scriv-file-edit; commandline -f repaint"
-    bind alt-b  "scriv-branch-checkout; commandline -f repaint"
-    bind alt-g  "scriv-branch-checkout; commandline -f repaint"
-    bind alt-p  "scriv-pr-checkout; commandline -f repaint"
+    bind ctrl-g "scriv-branch-checkout; commandline -f repaint"
+    bind ctrl-p "scriv-pr-checkout; commandline -f repaint"
 end
 "#;
 
@@ -120,12 +124,36 @@ mod tests {
         let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("complete -c scriv"));
         assert!(out.contains("bind ctrl-o"));
-        assert!(out.contains("bind alt-o"));
-        assert!(out.contains("bind alt-e"));
+        assert!(out.contains("bind ctrl-q"));
         assert!(out.contains("bind f3"));
-        assert!(out.contains("bind alt-b"));
-        assert!(out.contains("bind alt-g"));
-        assert!(out.contains("bind alt-p"));
+        assert!(out.contains("bind ctrl-g"));
+        assert!(out.contains("bind ctrl-p"));
+    }
+
+    /// fish binds most of alt-<letter> itself — alt-b is backward-word, alt-e
+    /// opens the command line in `$EDITOR`, alt-o pages the file at the cursor,
+    /// alt-p pipes the job through the pager — so scriv taking any of it would
+    /// quietly replace a binding the user did not ask it to touch.
+    #[test]
+    fn fish_leaves_alt_alone() {
+        let out = integration(Shell::Fish, &mut dummy());
+        let alt: Vec<&str> = out
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("bind alt-"))
+            .collect();
+        assert!(alt.is_empty(), "scriv binds alt keys: {alt:?}");
+    }
+
+    /// Historic control codes: ctrl-i *is* tab, ctrl-j newline and ctrl-m enter.
+    /// Terminals that speak a modern key encoding can tell them apart, but on
+    /// the ones that cannot, binding these breaks completion or the enter key.
+    #[test]
+    fn fish_avoids_keys_that_collide_with_tab_and_enter() {
+        let out = integration(Shell::Fish, &mut dummy());
+        for key in ["bind ctrl-i", "bind ctrl-j", "bind ctrl-m"] {
+            assert!(!out.contains(key), "{key} collides with tab or enter");
+        }
     }
 
     /// `fe` takes arguments, so it stands in for `scriv edit` completely rather
@@ -176,8 +204,8 @@ mod tests {
         }
     }
 
-    /// f4 and f5 are common in user configs (awsvault, editors); fish leaves
-    /// the whole alt-<letter> space free, so scriv stays out of the way.
+    /// f4 and f5 are common in user configs (awsvault, editors), so f3 is as far
+    /// up the function keys as scriv reaches.
     #[test]
     fn fish_avoids_function_keys_beyond_f3() {
         let out = integration(Shell::Fish, &mut dummy());

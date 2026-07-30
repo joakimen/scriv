@@ -123,8 +123,14 @@ reference, so command implementations do no environment lookups of their own.
   work from a child process.
 - **Colour is dropped when stdout is not a terminal**, and `NO_COLOR` is
   honoured — `ls` output has to stay pipe-safe. Use `term::stdout_color()`.
-- **Key bindings use `alt-<letter>`.** fish leaves that space entirely unbound,
-  while function keys past `f3` are commonly taken by users' own tools.
+- **Key bindings use `ctrl-<letter>`, and never `alt-`.** ctrl is the modifier
+  people put under a pinky, so it is where a picker worth a keystroke belongs.
+  fish leaves only `ctrl-o` and `ctrl-q` unbound, so anything further has to
+  displace a preset binding deliberately and say which one in the comment above
+  `scriv_key_bindings`. alt is not the escape hatch it looks like: fish binds
+  most of `alt-<letter>` (`alt-b`, `alt-e`, `alt-o`, `alt-p` among them).
+  `ctrl-i`/`ctrl-j`/`ctrl-m` are tab/newline/enter and are never bindable;
+  function keys past `f3` are commonly taken by users' own tools.
 
 ## The demo
 

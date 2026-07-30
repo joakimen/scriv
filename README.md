@@ -178,11 +178,16 @@ end
 
 | Key | Does |
 | --- | --- |
-| `ctrl-o`, `alt-o` | pick a repository and `cd` into it |
-| `alt-e` | pick a file below `$PWD` and open it in `$EDITOR` |
+| `ctrl-o` | pick a repository and `cd` into it |
+| `ctrl-g` | pick a branch and check it out |
+| `ctrl-p` | pick a pull request and check it out |
 | `f3` | pick a tracked file and open it in `$EDITOR` |
-| `alt-b`, `alt-g` | pick a branch and check it out |
-| `alt-p` | pick a pull request and check it out |
+| `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
+
+Of those, `ctrl-o` and `ctrl-q` are unbound in fish; `ctrl-g` replaces `cancel`,
+which `escape` and `ctrl-c` also do, and `ctrl-p` replaces `up-line`, leaving
+`up` and `ctrl-r` to search history. alt is left untouched, since fish binds
+most of it already.
 
 It also defines `fe` — find, fuzzy-pick, edit — as a short alias for
 `scriv edit`, forwarding its arguments so `fe -t` and `fe src/main.rs` work
