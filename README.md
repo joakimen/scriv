@@ -185,16 +185,18 @@ end
 | --- | --- |
 | `ctrl-o` | pick a repository and `cd` into it |
 | `ctrl-g` | pick a branch and check it out |
-| `ctrl-p` | pick a pull request and check it out |
+| `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
 | `f1` | pick a repository and open it on GitHub |
 | `f3` | pick a tracked file and open it in `$EDITOR` |
-| `ctrl-q` | pick a file below `$PWD` and open it in `$EDITOR` |
+| `f7` | pick a pull request and check it out |
 
-Of those, `ctrl-o` and `ctrl-q` are unbound in fish; `ctrl-g` replaces `cancel`,
-which `escape` and `ctrl-c` also do, and `ctrl-p` replaces `up-line`, leaving
-`up` and `ctrl-r` to search history. `f1` and `f3` replace nothing — fish binds
-no function key itself, and the low ones are where users' own tools are least
-likely to already be. alt is left untouched, since fish binds most of it already.
+Of those, `ctrl-o` and `ctrl-q` are unbound in fish, and `ctrl-g` replaces
+`cancel`, which `escape` and `ctrl-c` also do. The function keys replace nothing
+— fish binds none of them itself. `f1` and `f3` sit at the low end that users'
+own tools tend to leave alone, and `f7` steps over `f4`/`f5`, where those tools
+cluster. `ctrl-p` is left alone on purpose: it is fish's `up-line`, which is how
+history gets walked on a one-line prompt. alt is left untouched too, since fish
+binds most of it already.
 
 It also defines `fe` — find, fuzzy-pick, edit — as a short alias for
 `scriv edit`, forwarding its arguments so `fe -t` and `fe src/main.rs` work
