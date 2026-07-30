@@ -13,7 +13,7 @@ You tell scriv where your repositories live; branches and pull requests it reads
 from `git` and `gh`. Every list previews the highlighted row, so you can tell
 candidates apart without leaving the picker.
 
-![scriv: pick a repository, check out a remote branch, list pull requests](docs/demo.gif)
+![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 
 | | |
 | --- | --- |

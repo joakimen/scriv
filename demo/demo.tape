@@ -3,6 +3,11 @@
 # fictional, and `gh` is a stub, so nothing here touches a real account.
 #
 # Keep this under ~25 seconds: it is a GIF that autoplays on the project page.
+#
+# It opens on branch switching rather than on `cd "$(scriv repo pick)"`. That
+# composition is worth knowing, but a subshell in the first frame asks the
+# viewer to read shell syntax before they have seen what scriv does; the
+# README's "Every `pick` prints one line" section is where it belongs.
 
 Output "docs/demo.gif"
 
@@ -14,7 +19,7 @@ Set Width 1200
 Set Height 280
 Set Padding 20
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 55ms
+Set TypingSpeed 45ms
 Set Framerate 24
 
 # Enter the sandbox off-camera: fake HOME, stub gh, freshly built scriv.
@@ -24,23 +29,11 @@ Enter
 Sleep 1s
 Show
 
-# --- 1. Find a repository among many, without knowing where it lives ---------
-Type 'cd "$(scriv repo pick)"'
-Sleep 400ms
-Enter
-Sleep 1200ms
-
-# Groups are colour-tagged; the preview shows what is going on in each repo.
-Type "bill"
-Sleep 2s
-Enter
-Sleep 1200ms
-
-# --- 2. Check out a branch that only exists on the remote --------------------
+# --- 1. Check out a branch that only exists on the remote --------------------
 Type "scriv branch checkout"
-Sleep 400ms
+Sleep 350ms
 Enter
-Sleep 1500ms
+Sleep 1200ms
 
 # The current branch leads, then local branches, then remote-only ones, each
 # newest first. Green is local+remote, yellow local-only, cyan remote-only. The
@@ -48,18 +41,31 @@ Sleep 1500ms
 #
 # Three rows down is the remote-only branch, at the bottom of the list.
 Down
-Sleep 600ms
+Sleep 500ms
 Down
-Sleep 600ms
+Sleep 500ms
 Down
-Sleep 1500ms
+Sleep 1200ms
 
 # Picking the cyan one creates the local branch and sets its upstream.
 Enter
-Sleep 2500ms
+Sleep 2s
 
-# --- 3. Pull requests, coloured by state ------------------------------------
+# --- 2. Find a file where you are standing and open it -----------------------
+# The walk honours .gitignore and streams into the picker; the preview is the
+# file itself. $EDITOR is cat in the sandbox, so the file lands on screen.
+Type "scriv edit"
+Sleep 350ms
+Enter
+Sleep 1200ms
+
+Type "quota"
+Sleep 1500ms
+Enter
+Sleep 2s
+
+# --- 3. Pull requests, with their checks -------------------------------------
 Type "scriv pr ls --status"
-Sleep 400ms
+Sleep 350ms
 Enter
 Sleep 3s

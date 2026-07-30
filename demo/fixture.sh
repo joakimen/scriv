@@ -63,6 +63,46 @@ DAY=86400
 # Carries one branch of each kind, so the picker shows all three colours.
 API=$FIX/dev/github.com/acme/billing-api
 new_repo "$API"
+
+# A few real files, because `scriv edit` walks the working tree and previews
+# what it finds — an empty repository would show an empty picker. Small enough
+# that a preview pane holds the whole file.
+mkdir -p "$API/src"
+cat > "$API/Cargo.toml" <<'EOF'
+[package]
+name = "billing-api"
+version = "0.4.0"
+edition = "2024"
+EOF
+cat > "$API/src/meter.rs" <<'EOF'
+//! Counts what each API key spends, so the invoice has something to bill.
+
+/// Usage recorded for one key over one window.
+pub struct Usage {
+    pub key: String,
+    pub units: f64,
+}
+
+/// Partial units round up: a request that cost 0.4 is still a request.
+pub fn billable(usage: &Usage) -> u64 {
+    usage.units.ceil() as u64
+}
+EOF
+cat > "$API/src/quota.rs" <<'EOF'
+//! The limit a key is held to, and what is left of it.
+
+pub struct Quota {
+    pub limit: u64,
+    pub spent: u64,
+}
+
+impl Quota {
+    pub fn remaining(&self) -> u64 {
+        self.limit.saturating_sub(self.spent)
+    }
+}
+EOF
+git -C "$API" add -A
 commit "$API" $((3 * DAY)) 'feat: meter requests'
 commit "$API" $((2 * DAY)) 'fix: round usage up'
 git -C "$API" push -q -u origin main
@@ -219,6 +259,11 @@ export HOME='$FIX'
 export XDG_CONFIG_HOME='$FIX/.config'
 export PATH='$FIX/bin':'$SCRIV_BIN_DIR':"\$PATH"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# scriv runs \$EDITOR and hands it the terminal. A recording cannot drive a real
+# editor deterministically — and does not need to, since what is being shown is
+# the picking, not the editing — so the sandbox points it at cat: the file lands
+# on screen and the prompt comes straight back.
+export EDITOR=cat
 export PS1='❯ '
 cd '$API'
 clear
