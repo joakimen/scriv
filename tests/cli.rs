@@ -349,6 +349,26 @@ fn config_check_fails_on_a_missing_root() {
     assert!(!run.stdout.contains('\x1b'), "colour through a pipe");
 }
 
+/// The report goes through the same colour plumbing as every other listing.
+///
+/// This is the case that was missed: `config check` and `--color` were written
+/// in parallel, each green on its own branch, and the merge did not compile
+/// because the report was still calling the function the flag had replaced.
+/// Nothing tied the two together, so nothing noticed.
+#[test]
+fn config_check_honours_the_color_flag() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[repo]\nroot = \"~/not/here\"\n");
+
+    let forced = sandbox.run(&["--color", "always", "config", "check"]);
+    forced.code(1);
+    assert!(
+        forced.stdout.contains('\x1b'),
+        "the report ignored --color always: {:?}",
+        forced.stdout
+    );
+}
+
 /// One problem, one line. Discovery treats a missing search path as a hard
 /// error, so running it anyway would report the same thing twice in vaguer
 /// words and inflate the failure count.
