@@ -31,7 +31,7 @@ scriv config check         # confirm it all resolves
 | | |
 | --- | --- |
 | `scriv repo` | `ls` `pick` `open` `clone` |
-| `scriv file` | `ls` `pick` `add` `remove` |
+| `scriv file` | `ls` `pick` `add` `remove` `prune` |
 | `scriv branch` | `ls` `pick` `checkout` |
 | `scriv pr` | `ls` `pick` `checkout` `open` `merge` |
 | `scriv proc` | `ls` `pick` `kill` |

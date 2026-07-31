@@ -107,6 +107,29 @@ pub fn partition_remove(lines: &[String], to_remove: &[String]) -> (Vec<String>,
     (kept, removed)
 }
 
+/// Split `lines` into the entries whose file is still there and the entries
+/// whose file has gone, preserving the original order of both.
+///
+/// `present` is passed in rather than reaching for the filesystem, which is
+/// what keeps this a decision with a test rather than something only observable
+/// against a real directory. It is given the raw stored line — expanding `~` is
+/// the caller's job, since only the caller knows the home directory.
+pub fn partition_missing(
+    lines: &[String],
+    present: impl Fn(&str) -> bool,
+) -> (Vec<String>, Vec<String>) {
+    let mut kept = Vec::new();
+    let mut missing = Vec::new();
+    for line in lines {
+        if present(line) {
+            kept.push(line.clone());
+        } else {
+            missing.push(line.clone());
+        }
+    }
+    (kept, missing)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +185,26 @@ mod tests {
         let (kept, removed) = partition_remove(&lines, &owned(&["x"]));
         assert_eq!(kept, owned(&["a", "b"]));
         assert!(removed.is_empty());
+    }
+
+    /// Both halves keep the order the list was in, so what `prune` prints
+    /// reads in the same order as `file ls` — the list the user knows.
+    #[test]
+    fn partition_missing_splits_on_what_is_still_there() {
+        let lines = owned(&["a", "b", "c", "d"]);
+        let (kept, missing) = partition_missing(&lines, |line| line == "a" || line == "c");
+        assert_eq!(kept, owned(&["a", "c"]));
+        assert_eq!(missing, owned(&["b", "d"]));
+    }
+
+    /// A list where nothing is missing must come back untouched, so `prune` can
+    /// tell there is nothing to ask about.
+    #[test]
+    fn partition_missing_finds_nothing_when_every_file_is_there() {
+        let lines = owned(&["a", "b"]);
+        let (kept, missing) = partition_missing(&lines, |_| true);
+        assert_eq!(kept, lines);
+        assert!(missing.is_empty());
     }
 
     #[test]

@@ -554,6 +554,87 @@ fn file_ls_separates_present_from_missing() {
     assert!(status.stdout.contains("✗ "), "{}", status.stdout);
 }
 
+/// The point of `prune`: the entries pointing at nothing go, and only those.
+#[test]
+fn file_prune_drops_the_entries_whose_files_are_gone() {
+    let sandbox = Sandbox::new();
+    let here = sandbox.home().join("here.md");
+    std::fs::write(&here, "").unwrap();
+    let gone = sandbox.home().join("gone.md");
+    std::fs::write(&gone, "").unwrap();
+
+    sandbox.run(&["file", "add", here.to_str().unwrap()]).ok();
+    sandbox.run(&["file", "add", gone.to_str().unwrap()]).ok();
+    std::fs::remove_file(&gone).unwrap();
+
+    let run = sandbox.run(&["file", "prune", "--yes"]);
+    run.ok();
+    // What went is named, not counted: "removed 1 entry" is not something a
+    // user can check afterwards.
+    assert!(run.stdout.contains("Removed"), "{}", run.stdout);
+    assert!(run.stdout.contains("gone.md"), "{}", run.stdout);
+
+    let left = sandbox.run(&["file", "ls"]);
+    left.ok();
+    assert_eq!(left.lines(), vec![here.to_str().unwrap()]);
+}
+
+/// Deleting on an assumed yes is the failure mode worth guarding: a run with
+/// nothing on stdin cannot ask, so it says so and names the flag instead of
+/// picking an answer.
+#[test]
+fn file_prune_refuses_to_assume_an_answer_it_could_not_ask_for() {
+    let sandbox = Sandbox::new();
+    let gone = sandbox.home().join("gone.md");
+    std::fs::write(&gone, "").unwrap();
+    sandbox.run(&["file", "add", gone.to_str().unwrap()]).ok();
+    std::fs::remove_file(&gone).unwrap();
+
+    // The test harness gives the child no terminal, which is exactly the case.
+    let run = sandbox.run(&["file", "prune"]);
+    run.code(1);
+    assert!(run.stderr.contains("--yes"), "{}", run.stderr);
+
+    // And the list is untouched.
+    assert_eq!(sandbox.run(&["file", "ls"]).ok().lines().len(), 1);
+}
+
+/// A list with nothing missing must not ask a question at all — a prompt with
+/// no entries under it is one the user cannot answer meaningfully.
+#[test]
+fn file_prune_says_so_when_there_is_nothing_to_do() {
+    let sandbox = Sandbox::new();
+    let here = sandbox.home().join("here.md");
+    std::fs::write(&here, "").unwrap();
+    sandbox.run(&["file", "add", here.to_str().unwrap()]).ok();
+
+    // No `--yes`, and no terminal: reaching the confirmation at all would fail.
+    let run = sandbox.run(&["file", "prune"]);
+    run.ok();
+    assert!(run.stdout.contains("Nothing to prune"), "{}", run.stdout);
+    assert_eq!(sandbox.run(&["file", "ls"]).ok().lines().len(), 1);
+}
+
+/// What is about to be dropped is printed before anything happens, so the
+/// answer to the question is an informed one.
+#[test]
+fn file_prune_shows_the_entries_before_removing_them() {
+    let sandbox = Sandbox::new();
+    let gone = sandbox.home().join("gone.md");
+    std::fs::write(&gone, "").unwrap();
+    sandbox.run(&["file", "add", gone.to_str().unwrap()]).ok();
+    std::fs::remove_file(&gone).unwrap();
+
+    let run = sandbox.run(&["file", "prune", "--yes"]);
+    run.ok();
+    let shown = run.stdout.find("✗ ").expect("no listing of what would go");
+    let removed = run
+        .stdout
+        .find("Removed")
+        .expect("nothing reported removed");
+    assert!(shown < removed, "listed the entries after removing them");
+}
+
 /// A relative path is resolved against where the user is standing, not against
 /// wherever scriv happens to run.
 #[test]

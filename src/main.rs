@@ -235,6 +235,17 @@ enum FileCmd {
         /// File path to remove
         file: Option<String>,
     },
+    /// Remove tracked files that no longer exist
+    ///
+    /// Prints the entries pointing at nothing and asks before dropping them —
+    /// the files themselves are already gone, so this only edits the list.
+    /// `--yes` skips the question, which is also what a run with no terminal on
+    /// stdin needs.
+    Prune {
+        /// Prune without asking
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 /// Which branches a `branch` subcommand considers, shared by all three.
@@ -506,6 +517,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             FileCmd::Pick => cmd::file::pick(&ctx),
             FileCmd::Add { file } => cmd::file::add(&ctx, file.as_deref()),
             FileCmd::Remove { file } => cmd::file::remove(&ctx, file.as_deref()),
+            FileCmd::Prune { yes } => cmd::file::prune(&ctx, yes),
         },
         Command::Edit { files, tracked } => cmd::edit::run(&ctx, &files, tracked),
         Command::Branch { command } => match command {
