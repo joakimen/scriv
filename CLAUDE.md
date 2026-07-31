@@ -188,8 +188,12 @@ test that allocated a pty would be testing skim.
   an editor needs no such help: `scriv edit` spawns it directly and skim restores
   the terminal on its way out. Add a fish wrapper only for what genuinely cannot
   work from a child process.
-- **Colour is dropped when stdout is not a terminal**, and `NO_COLOR` is
-  honoured — `ls` output has to stay pipe-safe. Use `term::stdout_color()`.
+- **Colour is decided once, on `Ctx`.** `--color auto|always|never` wins, then
+  `NO_COLOR`, then whether stdout is a terminal — so `ls` output stays pipe-safe
+  by default and `--color always` can still feed `less -R`. Printing code reads
+  `ctx.color()` and never asks the terminal itself; one run must not colour one
+  command's output and not another's. The picker is out of scope: it is a
+  terminal UI that only ever draws on a terminal.
 - **Key bindings prefer `ctrl-<letter>`, and never use `alt-`.** ctrl is the
   modifier people put under a pinky, so it is where a picker worth a keystroke
   belongs. fish leaves only `ctrl-o` and `ctrl-q` unbound, so anything further

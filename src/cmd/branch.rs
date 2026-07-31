@@ -26,7 +26,7 @@ use crate::{Ctx, pick};
 fn load(ctx: &Ctx, fetch: bool) -> Result<Vec<Branch>> {
     git::ensure_repo()?;
     if fetch {
-        let _spinner = term::spinner("fetching");
+        let _spinner = term::spinner("fetching", ctx.color());
         git::fetch()?;
     }
     let branches = git::branches()?;
@@ -82,7 +82,7 @@ fn date_width(branches: &[Branch]) -> usize {
 /// stdout is not a terminal.
 pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
     let branches = collect(ctx, filter, fetch)?;
-    let color = term::stdout_color();
+    let color = ctx.color();
 
     let mut out = term::Listing::stdout();
     if !status {

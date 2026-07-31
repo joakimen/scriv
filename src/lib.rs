@@ -67,13 +67,20 @@ pub struct Ctx {
     utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
+    /// Whether printed output carries colour, resolved once from `--color`,
+    /// `NO_COLOR` and whether stdout is a terminal.
+    color: bool,
     pub config: Config,
     pub log: Logger,
 }
 
 impl Ctx {
     /// Resolve the environment and load configuration.
-    pub fn load(config_flag: Option<&str>, verbose: bool) -> Result<Self> {
+    pub fn load(
+        config_flag: Option<&str>,
+        verbose: bool,
+        color: term::ColorChoice,
+    ) -> Result<Self> {
         let home = dirs::home_dir().context("determining home directory")?;
         let cwd = std::env::current_dir().context("determining working directory")?;
         // `$PWD` keeps the symlinks the user walked through, which `getcwd`
@@ -136,9 +143,21 @@ impl Ctx {
             history_path,
             utc_offset,
             editor,
+            // Resolved here rather than at each listing, so one run cannot
+            // colour one command's output and not another's.
+            color: color.for_stdout(),
             config,
             log: Logger::new(verbose),
         })
+    }
+
+    /// Whether printed output should carry ANSI colour.
+    ///
+    /// The picker is not governed by this: it is a full terminal UI that only
+    /// ever draws on a terminal, and `--color` is about what scriv *prints* —
+    /// the same scope ripgrep and fd give it.
+    pub fn color(&self) -> bool {
+        self.color
     }
 
     /// The resolved editor command, or `None` when nothing is set. For

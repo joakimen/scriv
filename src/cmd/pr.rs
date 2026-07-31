@@ -21,7 +21,7 @@ use crate::term;
 /// `gh pr view (scriv pr pick)` are untouched by it.
 fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
     let prs = {
-        let _spinner = term::spinner("loading pull requests");
+        let _spinner = term::spinner("loading pull requests", ctx.color());
         gh::list(state, limit)?
     };
     ctx.log.info(&format!("found {} pull requests", prs.len()));
@@ -115,7 +115,7 @@ impl StatusColumns {
 /// still says everything a coloured one does.
 pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
     let prs = collect(ctx, state, limit)?;
-    let color = term::stdout_color();
+    let color = ctx.color();
     let width = number_width(&prs);
     let columns = StatusColumns::of(&prs);
     let mut out = term::Listing::stdout();
