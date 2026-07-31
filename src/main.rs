@@ -21,6 +21,7 @@ use scriv::{Ctx, Reported, cmd, shell};
 /// Usage examples appended to the top-level help.
 const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv config init            Write a starter configuration
+  scriv config check           Check your setup and report what is wrong
   scriv repo pick              Fuzzy-pick a repository, print its path
   cd (scriv repo pick)         Jump to a repository (fish)
   scriv repo clone             Pick an owner, then repositories to clone
@@ -394,6 +395,14 @@ enum ConfigCmd {
     Print,
     /// Print the configuration file path
     Path,
+    /// Check everything scriv depends on and report what is wrong
+    ///
+    /// Looks at the config file, the paths it names, the repositories
+    /// discovery actually finds, your editor, `git`, `gh`, fish's history file
+    /// and the tracked-file list — all in one pass, each with what to do about
+    /// it. Exits non-zero only when something is genuinely broken, so it is
+    /// worth putting in a setup script; a warning still leaves scriv working.
+    Check,
 }
 
 fn main() -> ExitCode {
@@ -485,6 +494,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             ConfigCmd::Init { force } => cmd::config::init(&ctx, force),
             ConfigCmd::Print => cmd::config::print(&ctx),
             ConfigCmd::Path => cmd::config::path(&ctx),
+            ConfigCmd::Check => cmd::config::check(&ctx),
         },
         Command::Init { .. } => unreachable!("init handled before Ctx"),
     }
