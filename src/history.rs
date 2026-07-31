@@ -108,7 +108,7 @@ fn unescape(text: &str) -> String {
 /// wants: the command from a moment ago is the first row offered. Dropping
 /// repeats is what keeps a command run twenty times a day to one row instead of
 /// a screenful of identical ones, and keeping the *newest* of each is what lets
-/// the preview say when it was last used.
+/// the row say when it was last used.
 pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
     let mut seen: HashSet<String> = HashSet::with_capacity(entries.len());
     let mut out = Vec::with_capacity(entries.len());
@@ -155,36 +155,21 @@ pub const STAMP_WIDTH: usize = "2026-07-30 13:57".len();
 /// this a pure function with an exactly reproducible answer.
 pub fn stamp(when: Option<i64>, offset: time::UtcOffset) -> String {
     match when.and_then(|w| local(w, offset)) {
-        Some(dt) => render(&dt, false),
+        Some(dt) => render(&dt),
         None => " ".repeat(STAMP_WIDTH),
     }
 }
 
-/// [`stamp`] down to the second, for the preview — where there is room for the
-/// exact moment, and where "was this the run before or after the one that
-/// worked" is a question minutes alone cannot always answer.
-///
-/// Empty for a timestamp that cannot be rendered, so the caller can leave the
-/// line out rather than print a half-formed date.
-pub fn stamp_precise(when: i64, offset: time::UtcOffset) -> String {
-    local(when, offset).map_or_else(String::new, |dt| render(&dt, true))
-}
-
 /// The one place the layout of a rendered timestamp is written down.
-fn render(dt: &time::OffsetDateTime, seconds: bool) -> String {
-    let date = format!(
+fn render(dt: &time::OffsetDateTime) -> String {
+    format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
         dt.year(),
         dt.month() as u8,
         dt.day(),
         dt.hour(),
         dt.minute(),
-    );
-    if seconds {
-        format!("{date}:{:02}", dt.second())
-    } else {
-        date
-    }
+    )
 }
 
 /// The stored Unix seconds as a local date and time.
@@ -195,30 +180,6 @@ fn local(when: i64, offset: time::UtcOffset) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::from_unix_timestamp(when)
         .ok()
         .map(|dt| dt.to_offset(offset))
-}
-
-const MINUTE: i64 = 60;
-const HOUR: i64 = 60 * MINUTE;
-const DAY: i64 = 24 * HOUR;
-const MONTH: i64 = 30 * DAY;
-const YEAR: i64 = 365 * DAY;
-
-/// How long ago `then` was, seen from `now` — both Unix seconds.
-///
-/// Coarse on purpose: a history entry answers "was this today or last spring",
-/// and the second it happened is never the question. A `then` in the future is
-/// a clock that has been put back, not a command from tomorrow, so it reads as
-/// having just happened rather than as a negative age.
-pub fn relative_time(now: i64, then: i64) -> String {
-    let secs = now.saturating_sub(then).max(0);
-    match secs {
-        s if s < MINUTE => "just now".to_string(),
-        s if s < HOUR => format!("{}m ago", s / MINUTE),
-        s if s < DAY => format!("{}h ago", s / HOUR),
-        s if s < MONTH => format!("{}d ago", s / DAY),
-        s if s < YEAR => format!("{}mo ago", s / MONTH),
-        s => format!("{}y ago", s / YEAR),
-    }
 }
 
 #[cfg(test)]
@@ -337,8 +298,8 @@ mod tests {
             recent.iter().map(|e| e.cmd.as_str()).collect::<Vec<_>>(),
             vec!["ls", "git status"]
         );
-        // The surviving `ls` is the one from the most recent run, so the
-        // preview dates it by when it was last used rather than first.
+        // The surviving `ls` is the one from the most recent run, so its row
+        // is dated by when it was last used rather than first.
         assert_eq!(recent[0].when, Some(3));
     }
 
@@ -361,24 +322,6 @@ mod tests {
     fn control_characters_never_reach_a_row() {
         assert_eq!(one_line("echo \x1b[31mred\x07"), "echo [31mred");
         assert_eq!(one_line("a\tb"), "a b");
-    }
-
-    #[test]
-    fn ages_read_from_seconds_to_years() {
-        let now = 10 * YEAR;
-        assert_eq!(relative_time(now, now - 5), "just now");
-        assert_eq!(relative_time(now, now - 5 * MINUTE), "5m ago");
-        assert_eq!(relative_time(now, now - 3 * HOUR), "3h ago");
-        assert_eq!(relative_time(now, now - 2 * DAY), "2d ago");
-        assert_eq!(relative_time(now, now - 4 * MONTH), "4mo ago");
-        assert_eq!(relative_time(now, now - 3 * YEAR), "3y ago");
-    }
-
-    /// A history file written before the clock was corrected has entries dated
-    /// in the future; "in -3h" is not a thing a listing should ever say.
-    #[test]
-    fn a_future_timestamp_reads_as_just_now() {
-        assert_eq!(relative_time(1000, 9999), "just now");
     }
 
     /// Seven hours east of UTC, the reference moment is 1785394626.
@@ -414,16 +357,11 @@ mod tests {
         assert_eq!(stamp(Some(1785394626), bangkok()).len(), STAMP_WIDTH);
     }
 
-    #[test]
-    fn the_preview_stamp_carries_the_second() {
-        assert_eq!(stamp_precise(1785394626, bangkok()), "2026-07-30 13:57:06");
-    }
-
     /// A `when:` far outside the range a date can hold is one unreadable row,
     /// not a panic partway through five thousand of them.
     #[test]
     fn an_absurd_timestamp_renders_blank_rather_than_panicking() {
         assert!(stamp(Some(i64::MAX), bangkok()).trim().is_empty());
-        assert!(stamp_precise(i64::MIN, bangkok()).is_empty());
+        assert!(stamp(Some(i64::MIN), bangkok()).trim().is_empty());
     }
 }

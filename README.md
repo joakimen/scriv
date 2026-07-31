@@ -99,17 +99,17 @@ Every row is dated with when you last ran that command, in local time:
 The date is shown but never searched — it is digits at the front of every row,
 and matching it would put four thousand timestamps ahead of the command you were
 reaching for. `--status` prints the same column, fixed-width and sortable, so
-`sort` and `cut` work on it. The preview adds the exact second and the age:
-`last run 2026-07-30 13:58:20 (4h ago)`.
+`sort` and `cut` work on it.
 
 fish records *when* a command ran and nothing else — there is no duration or
 exit status in its history file, so scriv cannot show what it was never told.
 
 A command spanning several lines is folded onto its one row with a `⏎` where
-each break was, so it cannot be mistaken for a command you never ran; the
-preview shows it in full and selecting it yields the real multi-line text. This
-one is fish-only: it is fish's history format, and only a shell can write to its
-own command line.
+each break was, so it cannot be mistaken for a command you never ran; selecting
+it yields the real multi-line text. The history picker has no preview pane —
+the pane would only repeat the row beside it, and the command lands back on the
+command line to be read before it runs. This one is fish-only: it is fish's
+history format, and only a shell can write to its own command line.
 
 `scriv edit` is the one verb rather than a noun: it searches the directory you
 are standing in — not a list scriv keeps — and opens what you choose in
@@ -125,9 +125,10 @@ The walk honours `.gitignore`, `.ignore` and `.fdignore`, and streams into the
 picker as it goes, so a huge tree is typeable immediately rather than once the
 last file is found. `tab` selects several and they open together.
 
-Every list previews the highlighted row, so you can tell candidates apart
-without leaving the picker: commits and working-tree state for repositories and
-branches, description and failing checks for pull requests, contents for files.
+Every list bar history previews the highlighted row, so you can tell candidates
+apart without leaving the picker: commits and working-tree state for
+repositories and branches, description and failing checks for pull requests,
+contents for files.
 
 Pull request listings carry their CI, so what is green is visible before you
 pick anything:
