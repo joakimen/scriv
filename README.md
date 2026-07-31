@@ -6,9 +6,7 @@
 
 ![A candle burning above an open book](docs/art/seal.svg)
 
-One fuzzy picker for your Git repositories, files, branches, pull requests and
-shell history. The finder is compiled in; there is nothing to install alongside
-it.
+Provides fuzzy-completion for various local and remote resources.
 
 ![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 
