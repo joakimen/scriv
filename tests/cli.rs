@@ -311,6 +311,67 @@ fn a_broken_config_names_the_file() {
     );
 }
 
+/// The exit status is the whole reason `config check` is worth putting in a
+/// setup script, so a sound setup has to come back 0 — even one with things
+/// worth knowing about, since the sandbox has no fish history and no tracked
+/// files and neither leaves scriv broken.
+#[test]
+fn config_check_passes_on_a_sound_setup() {
+    let sandbox = Sandbox::new();
+    mk_repo(&sandbox.home().join("dev/github.com"), "acme", "billing");
+    sandbox.write_config("[repo]\nroot = \"~/dev/github.com\"\n");
+
+    let run = sandbox.run(&["config", "check"]);
+    run.ok();
+    assert!(run.stdout.contains("repo root"), "{}", run.stdout);
+    // Discovery is really run: the count is what answers "is my root right".
+    assert!(run.stdout.contains("1 found"), "{}", run.stdout);
+    assert!(!run.stdout.contains('✗'), "{}", run.stdout);
+}
+
+/// A broken setup exits non-zero and says which line was the problem, and the
+/// report is still readable without colour — the statuses are shapes.
+#[test]
+fn config_check_fails_on_a_missing_root() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[repo]\nroot = \"~/not/here\"\n");
+
+    let run = sandbox.run(&["config", "check"]);
+    run.code(1);
+    assert!(
+        run.stdout
+            .lines()
+            .any(|l| l.starts_with('✗') && l.contains("repo root")),
+        "{}",
+        run.stdout
+    );
+    assert!(run.stderr.contains("checks failed"), "{}", run.stderr);
+    assert!(!run.stdout.contains('\x1b'), "colour through a pipe");
+}
+
+/// One problem, one line. Discovery treats a missing search path as a hard
+/// error, so running it anyway would report the same thing twice in vaguer
+/// words and inflate the failure count.
+#[test]
+fn config_check_does_not_report_one_problem_twice() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[repo]\nroot = \"~/not/here\"\n");
+
+    let run = sandbox.run(&["config", "check"]);
+    run.code(1);
+    assert_eq!(
+        run.stdout.lines().filter(|l| l.starts_with('✗')).count(),
+        1,
+        "{}",
+        run.stdout
+    );
+    assert!(
+        !run.stdout.contains("repositories"),
+        "the repository count repeated the root failure: {}",
+        run.stdout
+    );
+}
+
 // --- repo discovery ---------------------------------------------------------
 
 /// The core of `repo ls`: what is under the root, one per line, sorted, with

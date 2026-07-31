@@ -48,10 +48,25 @@ macOS and Linux, with `git`. `gh` is needed only for pull requests and
 
 ```sh
 scriv config init          # write ~/.config/scriv/config.toml
-scriv config print         # set your root, then check it
+scriv config check         # set your root, then check the whole setup
 scriv repo ls              # see what scriv finds under it
 scriv init fish | source   # helpers, key bindings, completions
 ```
+
+`scriv config check` looks at everything scriv depends on in one pass — the
+config file, the paths it names, how many repositories discovery actually
+finds, your editor, `git`, `gh`, fish's history file and the tracked list — and
+reports each with what to do about it:
+
+```
+✓ config         ~/.config/scriv/config.toml
+✗ repo root      ~/dev/github.com is not a directory
+✓ editor         nvim (/opt/homebrew/bin/nvim)
+! gh             not on PATH — only `pr` and `repo clone`/`open` need it
+```
+
+It exits non-zero only when something is genuinely broken, so it works in a
+setup script; a `!` is worth knowing about but still leaves scriv working.
 
 ## Commands
 
@@ -89,9 +104,11 @@ scriv edit --tracked    # pick from your tracked files instead
 scriv edit src/main.rs  # skip the picker
 ```
 
-`scriv config` and `scriv init` handle setup. `branch` abbreviates to `br`,
-`history` to `hist`, `edit` to `e`, `checkout` to `co`, and `ls` to `list`. Any
-command takes `--help` for its flags.
+`scriv config` and `scriv init` handle setup — `config init` writes a starter
+file, `config print` shows what was resolved, `config path` names it, and
+`config check` tests the lot. `branch` abbreviates to `br`, `history` to `hist`,
+`edit` to `e`, `checkout` to `co`, and `ls` to `list`. Any command takes
+`--help` for its flags.
 
 Every list bar history previews the highlighted row: commits and working-tree
 state for repositories and branches, description and failing checks for pull

@@ -176,6 +176,14 @@ test that allocated a pty would be testing skim.
   the user was never standing in. `Ctx::load` takes it only when it resolves to
   the same directory scriv is actually in. Anything else reading the environment
   for a location it will then write down owes the same check.
+- **A new dependency on the outside world gets a `config check` row.** Every
+  path scriv reads, tool it spawns, or environment variable it needs is
+  something a user can have wrong, and `scriv config check` is the one place
+  that says so without them having to trip over it one command at a time. Add
+  the row in `cmd/config.rs`, and pick the status honestly: `Fail` only when
+  scriv is genuinely broken without it, since the exit status is what makes the
+  command usable in a setup script. A check that repeats what an earlier one
+  already said is not a second problem — skip it, as `discovery_check` does.
 - **Anything drawn inline takes a `term::ScratchRow` first.** The picker and the
   spinner both start on the row the cursor is on, which from a key binding is
   the last row of the shell's prompt — the picker draws over it, the spinner
