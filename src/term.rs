@@ -1,10 +1,10 @@
 //! Terminal capability checks shared by the printing commands.
 //!
 //! Colour is decided once, at startup, by [`ColorChoice::resolve`] and carried
-//! on [`Ctx`](crate::Ctx) — `--color` if the user said, else the `NO_COLOR`
-//! convention, else whether stdout is a terminal, so `scriv … ls` stays
-//! pipe-safe by default. [`Spinner`] and [`ScratchRow`] follow the same rule
-//! from the other side: they touch the display only when there is one to touch.
+//! on [`Ctx`](crate::Ctx) — `--color` if the user said, else `SCRIV_NO_COLOR`,
+//! else whether stdout is a terminal, so `scriv … ls` stays pipe-safe by
+//! default. [`Spinner`] and [`ScratchRow`] follow the same rule from the other
+//! side: they touch the display only when there is one to touch.
 
 use std::io::{IsTerminal, Write};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
 pub enum ColorChoice {
-    /// Colour when stdout is a terminal and `NO_COLOR` is unset.
+    /// Colour when stdout is a terminal and `SCRIV_NO_COLOR` is unset.
     #[default]
     Auto,
     /// Always colour, terminal or not — for a pager (`less -R`) or a recording.
@@ -34,9 +34,9 @@ impl ColorChoice {
     /// `is_tty` is passed in rather than looked up so the rule is a pure
     /// function with a test; [`ColorChoice::for_stdout`] is what callers use.
     ///
-    /// An explicit `always`/`never` outranks `NO_COLOR`: the environment states
+    /// An explicit `always`/`never` outranks `SCRIV_NO_COLOR`: the environment states
     /// a default, and a flag on the command line is the user overriding their
-    /// own default for this one run. `auto` is where `NO_COLOR` applies.
+    /// own default for this one run. `auto` is where `SCRIV_NO_COLOR` applies.
     pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
         match self {
             Self::Always => true,
@@ -51,11 +51,21 @@ impl ColorChoice {
     }
 }
 
-/// Honour the `NO_COLOR` convention: colour is disabled when the variable is
-/// present and non-empty.
+/// The variable that turns scriv's colour off: set and non-empty means no
+/// colour.
+///
+/// Deliberately scriv's own rather than the cross-tool `NO_COLOR`
+/// (<https://no-color.org>), which scriv does not read. The convention is a
+/// single switch for every tool at once, and this is a switch for this one;
+/// having them be the same name would mean scriv could not be made colourful in
+/// an environment that had turned everything else plain. `--color always` is
+/// still the per-run override in either direction.
 pub fn no_color() -> bool {
-    std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+    std::env::var_os(NO_COLOR_ENV_VAR).is_some_and(|v| !v.is_empty())
 }
+
+/// The environment variable [`no_color`] reads.
+pub const NO_COLOR_ENV_VAR: &str = "SCRIV_NO_COLOR";
 
 /// Stdout for a listing, which ends quietly when the reader stops reading.
 ///
@@ -450,12 +460,15 @@ mod tests {
     use super::*;
 
     /// `auto` is the rule that was there before there was a flag: a terminal,
-    /// and `NO_COLOR` unset.
+    /// and `SCRIV_NO_COLOR` unset.
     #[test]
     fn auto_colours_only_a_terminal_without_no_color() {
         assert!(ColorChoice::Auto.resolve(true, false));
         assert!(!ColorChoice::Auto.resolve(false, false), "coloured a pipe");
-        assert!(!ColorChoice::Auto.resolve(true, true), "ignored NO_COLOR");
+        assert!(
+            !ColorChoice::Auto.resolve(true, true),
+            "ignored SCRIV_NO_COLOR"
+        );
     }
 
     /// The point of `always` is a destination that is not a terminal — a pager
@@ -468,14 +481,29 @@ mod tests {
         assert!(!ColorChoice::Never.resolve(false, false));
     }
 
-    /// `NO_COLOR` states a default for the environment; a flag on the command
+    /// scriv reads its own variable, not the cross-tool `NO_COLOR`
+    /// (<https://no-color.org>). The convention is one switch for every tool at
+    /// once; this is a switch for this one, and sharing the name would leave no
+    /// way to keep scriv coloured in an environment that had turned everything
+    /// else plain.
+    ///
+    /// Pinned here because nothing else can catch it: `no_color` reads the
+    /// environment, and whether it read the right name is invisible to a test
+    /// that cannot set one — which is every test in this crate, since mutating
+    /// the environment is unsound once another thread exists.
+    #[test]
+    fn the_variable_is_scrivs_own_and_not_the_shared_convention() {
+        assert_eq!(NO_COLOR_ENV_VAR, "SCRIV_NO_COLOR");
+    }
+
+    /// `SCRIV_NO_COLOR` states a default for the environment; a flag on the command
     /// line is the user overriding their own default for this one run, so it
     /// has to win in both directions.
     #[test]
     fn an_explicit_choice_outranks_no_color() {
         assert!(
             ColorChoice::Always.resolve(true, true),
-            "NO_COLOR beat --color always"
+            "SCRIV_NO_COLOR beat --color always"
         );
         assert!(!ColorChoice::Never.resolve(true, false));
     }

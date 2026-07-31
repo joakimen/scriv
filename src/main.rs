@@ -67,10 +67,12 @@ struct Cli {
 
     /// When to colour printed output
     ///
-    /// `auto` colours a terminal and honours `NO_COLOR`. `always` colours a
-    /// pipe or a file too, for a pager such as `less -R`. Either explicit
-    /// value overrides `NO_COLOR`. The picker is unaffected — it only ever
-    /// draws on a terminal.
+    /// `auto` colours a terminal and honours `SCRIV_NO_COLOR`. `always` colours
+    /// a pipe or a file too, for a pager such as `less -R`. Either explicit
+    /// value overrides `SCRIV_NO_COLOR`. The picker is unaffected — it only
+    /// ever draws on a terminal.
+    ///
+    /// The variable is scriv's own; the cross-tool `NO_COLOR` is not read.
     #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
     color: ColorChoice,
 

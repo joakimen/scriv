@@ -154,7 +154,7 @@ enum Status {
 
 impl Status {
     /// A shape, not a colour alone — the same rule the pull request listings
-    /// follow, so a piped or `NO_COLOR` report says exactly as much.
+    /// follow, so a piped or `SCRIV_NO_COLOR` report says exactly as much.
     fn glyph(self) -> &'static str {
         match self {
             Self::Ok => "✓",
@@ -584,7 +584,7 @@ mod tests {
     }
 
     /// The report has to be readable without colour — piped, redirected, or
-    /// under `NO_COLOR` — so each status carries a distinct shape of its own.
+    /// under `SCRIV_NO_COLOR` — so each status carries a distinct shape of its own.
     #[test]
     fn every_status_is_a_distinct_shape_not_a_colour() {
         let glyphs: Vec<&str> = [Status::Ok, Status::Warn, Status::Fail]

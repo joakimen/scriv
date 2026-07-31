@@ -230,8 +230,12 @@ test that allocated a pty would be testing skim.
   the terminal on its way out. Add a fish wrapper only for what genuinely cannot
   work from a child process.
 - **Colour is decided once, on `Ctx`.** `--color auto|always|never` wins, then
-  `NO_COLOR`, then whether stdout is a terminal — so `ls` output stays pipe-safe
-  by default and `--color always` can still feed `less -R`. Printing code reads
+  `SCRIV_NO_COLOR`, then whether stdout is a terminal — so `ls` output stays
+  pipe-safe by default and `--color always` can still feed `less -R`. The
+  variable is scriv's own: the cross-tool `NO_COLOR` convention is deliberately
+  not read, because it is one switch for every tool at once and this is a switch
+  for this one, and sharing the name would leave no way to keep scriv coloured
+  in an environment that had turned everything else plain. Printing code reads
   `ctx.color()` and never asks the terminal itself; one run must not colour one
   command's output and not another's. The picker is out of scope: it is a
   terminal UI that only ever draws on a terminal.

@@ -111,7 +111,7 @@ impl StatusColumns {
 ///
 /// The row is tinted by state and each glyph carries its own colour on top —
 /// green `✓`, red `✗`. Colour is dropped when stdout is not a terminal, and the
-/// glyphs are shapes rather than colours, so a piped or `NO_COLOR` listing
+/// glyphs are shapes rather than colours, so a piped or `SCRIV_NO_COLOR` listing
 /// still says everything a coloured one does.
 pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
     let prs = collect(ctx, state, limit)?;
