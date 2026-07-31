@@ -63,9 +63,10 @@ gh pr merge --squash --auto
 existing history, with no poll loop in between. It is load-bearing that `build`
 and `demo` are *required* status checks on `main` (the `default` ruleset):
 auto-merge only queues behind checks that are required, so if that rule is ever
-removed, `--auto` stops waiting and merges on the spot.
+removed, `--auto` stops waiting and merges on the spot. They are also `strict`,
+which is what stops a pull request merging against a `main` its CI never saw.
 
-Two things auto-merge does not do for you:
+Three things auto-merge does not do for you:
 
 - **The local branch survives.** `gh` exits the moment auto-merge is armed, so
   `--delete-branch` never gets to run — and the squash rewrites the commit, so
@@ -76,6 +77,32 @@ Two things auto-merge does not do for you:
   indefinitely. Say in the reply that auto-merge is armed, and check back —
   with a backgrounded wait on `gh pr view <n> --json state`, or on the next
   turn — so a failure gets fixed rather than silently parked.
+- **It does not rebase.** The ruleset requires branches to be up to date, so a
+  pull request whose base has moved *blocks* rather than merging, and stays
+  blocked until someone rebases it. See below.
+
+### Parallel pull requests land one at a time
+
+Required checks are `strict`: a pull request cannot merge while `main` has
+commits it does not have. That is not tidiness — it is the only thing that makes
+CI's answer mean anything. Without it, `build` passing says two commits were
+each fine on their own, which is not the question; a pull request that removed a
+function and one written in parallel that still called it were both green and
+the merge did not compile.
+
+So several pull requests in flight merge in sequence, not at once:
+
+1. Arm auto-merge on the one that should land first.
+2. Wait for it (`gh pr view <n> --json state`).
+3. `git checkout main && git pull`, then `git rebase main` in each remaining
+   worktree, resolve, `make`, force-push with `--force-with-lease`, and arm the
+   next.
+
+Order them so the one touching the most files goes first — everything after it
+rebases onto a base that is already settled. When two changes couple across
+files git cannot conflict on, that is what the rebase is for: pin the coupling
+with a test at that point, rather than leaving it for whoever next touches
+either side.
 
 Never commit straight to `main`. The pull request is what leaves a reviewable
 record of work nobody watched happen — which matters more when there is no
