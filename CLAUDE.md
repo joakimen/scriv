@@ -126,11 +126,21 @@ is expected to follow it:
 | `pick.rs` | the skim wrapper: rows, colours, previews |
 | `cmd/*.rs` | the imperative shell — reads the environment, spawns processes, drives selection |
 | `shell.rs` | the fish integration and completions that `scriv init` emits |
+| `tests/cli.rs` | end-to-end runs of the built binary — the wiring the unit tests cannot see |
 
 Decisions belong in pure functions with tests (`classify`, `resolve`,
 `parse_prs`, `sanitize_file_path`); only `cmd/` and the process helpers touch
 the outside world. `Ctx` resolves the environment once and is passed by
 reference, so command implementations do no environment lookups of their own.
+
+`tests/cli.rs` covers what those unit tests cannot: that a flag reaches the
+function it names, that an error leaves the right exit status behind, and that
+stdout carries what a shell is expected to read. Every run there points `HOME`,
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `PWD` at a temporary directory and wipes
+the rest of the environment — a test that passed only on a machine with a
+particular `~/.config/scriv` would be worse than no test. A new command or flag
+that a script can call gets a case there; the interactive paths do not, since a
+test that allocated a pty would be testing skim.
 
 ## Things that are the way they are on purpose
 
