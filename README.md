@@ -34,6 +34,7 @@ scriv config check         # confirm it all resolves
 | `scriv file` | `ls` `pick` `add` `remove` |
 | `scriv branch` | `ls` `pick` `checkout` |
 | `scriv pr` | `ls` `pick` `checkout` `open` `merge` |
+| `scriv proc` | `ls` `pick` `kill` |
 | `scriv history` | `ls` `pick` |
 | `scriv edit` | a file below `$PWD`, opened in `$EDITOR` |
 

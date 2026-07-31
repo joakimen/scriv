@@ -1,10 +1,10 @@
-//! `scriv` — pick repositories, files, git branches and GitHub pull requests
-//! from one fuzzy finder.
+//! `scriv` — pick repositories, files, git branches, GitHub pull requests and
+//! running processes from one fuzzy finder.
 //!
 //! The crate is split into an I/O-free core ([`config`], [`path`], [`files`]'s
 //! pure helpers, [`repo`]'s traversal rules, [`history`]'s fish-history
-//! parsing, [`git`] and [`gh`]'s parsing and classification) and an imperative
-//! shell: the [`cmd`] modules that read the
+//! parsing, [`proc`]'s `ps` parsing, [`git`] and [`gh`]'s parsing and
+//! classification) and an imperative shell: the [`cmd`] modules that read the
 //! environment, touch the filesystem, shell out to `git`/`gh`, and drive
 //! interactive selection. [`Ctx`] resolves the environment once and hands it to
 //! every command.
@@ -18,6 +18,7 @@ pub mod history;
 pub mod logger;
 pub mod path;
 pub mod pick;
+pub mod proc;
 pub mod repo;
 pub mod shell;
 pub mod term;
