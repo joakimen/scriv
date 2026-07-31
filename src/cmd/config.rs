@@ -476,7 +476,7 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
 /// still leaves scriv working.
 pub fn check(ctx: &Ctx) -> Result<()> {
     let checks = collect(ctx);
-    let color = term::stdout_color();
+    let color = ctx.color();
     let width = checks
         .iter()
         .map(|c| c.name.chars().count())
