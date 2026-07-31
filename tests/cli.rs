@@ -102,7 +102,7 @@ impl Sandbox {
 
     /// Run `scriv` with `args`, from `cwd`.
     ///
-    /// `env_clear` is the whole point: an inherited `SCRIV_CONFIG`, `NO_COLOR`
+    /// `env_clear` is the whole point: an inherited `SCRIV_CONFIG`, `SCRIV_NO_COLOR`
     /// or `EDITOR` would quietly change what is being tested, and an inherited
     /// `HOME` would point the run at the developer's own config.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Run {
@@ -114,7 +114,7 @@ impl Sandbox {
     }
 
     /// [`Sandbox::run`] with `env` set on top — for the variables scriv is
-    /// meant to react to, such as `NO_COLOR`.
+    /// meant to react to, such as `SCRIV_NO_COLOR`.
     fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
         self.run_full(self.home(), args, env)
     }
@@ -700,7 +700,32 @@ fn color_always_colours_a_pipe_and_never_does_not() {
     }
 }
 
-/// `NO_COLOR` states a default for the environment; a flag on the command line
+/// `SCRIV_NO_COLOR` is what turns colour off, and it has to actually reach a
+/// run that would otherwise be coloured.
+#[test]
+fn scriv_no_color_turns_colour_off() {
+    let sandbox = Sandbox::new();
+    coloured_listing(&sandbox);
+
+    let run = sandbox.run_with_env(
+        &["--color", "auto", "file", "ls", "--status"],
+        &[("SCRIV_NO_COLOR", "1")],
+    );
+    run.ok();
+    assert!(!run.stdout.contains('\x1b'), "{:?}", run.stdout);
+
+    // Set but empty is not set: the convention every variable of this shape
+    // follows, and the difference between `set -x SCRIV_NO_COLOR ""` meaning
+    // nothing and meaning everything.
+    let empty = sandbox.run_with_env(
+        &["--color", "always", "file", "ls", "--status"],
+        &[("SCRIV_NO_COLOR", "")],
+    );
+    empty.ok();
+    assert!(empty.stdout.contains('\x1b'), "{:?}", empty.stdout);
+}
+
+/// `SCRIV_NO_COLOR` states a default for the environment; a flag on the command line
 /// is the user overriding their own default for this one run, so it wins in
 /// both directions.
 #[test]
@@ -710,12 +735,12 @@ fn an_explicit_color_choice_outranks_no_color() {
 
     let forced = sandbox.run_with_env(
         &["--color", "always", "file", "ls", "--status"],
-        &[("NO_COLOR", "1")],
+        &[("SCRIV_NO_COLOR", "1")],
     );
     forced.ok();
     assert!(
         forced.stdout.contains('\x1b'),
-        "NO_COLOR beat `--color always`: {:?}",
+        "SCRIV_NO_COLOR beat `--color always`: {:?}",
         forced.stdout
     );
 }

@@ -69,7 +69,7 @@ pub struct Ctx {
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
     /// Whether printed output carries colour, resolved once from `--color`,
-    /// `NO_COLOR` and whether stdout is a terminal.
+    /// `SCRIV_NO_COLOR` and whether stdout is a terminal.
     color: bool,
     pub config: Config,
     pub log: Logger,
