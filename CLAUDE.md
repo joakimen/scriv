@@ -25,12 +25,18 @@ done until the old wording is gone. `EXAMPLES` covers the common entry point
 of each command group — add a line when you add a group, not when you add
 every flag.
 
-**2. README.md.** Check each of these in turn, since a change rarely touches
-just one: the feature table under the demo, the `Commands` section (including
-the abbreviations sentence), the key-binding table when `shell.rs` bindings
-change, and the sample `config.toml` when a config key is added or renamed.
-The README's command table and `scriv --help` describe the same surface and
-must not disagree.
+**2. README.md.** It is deliberately short — a page, not a manual — and it stays
+that way. Three things in it can go stale: the command table, which must list
+the same subcommands `scriv <group> --help` does; the fish key-binding sentence,
+when `scriv_key_bindings` changes; and the `Install` line naming the platforms
+and the external tools each command group needs.
+
+Resist adding to it. The README's job is to get someone from nothing to a
+working setup and then hand off — to `scriv --help` for flags, to the generated
+`config.toml` for settings, to `CLAUDE.md` for why anything is the way it is.
+Every one of those is closer to the code and cannot drift from it the way a
+paragraph here can. A new flag does not belong in the README; a new *command
+group* does, as one table row.
 
 **3. `docs/demo.gif`.** If anything changed what a picker shows on screen —
 row layout, colours, preview contents, the commands or flags in
