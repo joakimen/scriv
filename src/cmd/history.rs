@@ -11,18 +11,9 @@ use std::io::Write;
 use anyhow::{Context, Result};
 
 use crate::history::{self, Entry};
-use crate::pick::{PickItem, Preview};
+use crate::pick::PickItem;
 use crate::term;
 use crate::{Ctx, pick};
-
-/// The clock, read once per command so every row is dated against the same
-/// instant.
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|since| since.as_secs() as i64)
-        .unwrap_or(0)
-}
 
 /// Every command in fish's history, newest first and deduplicated.
 fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
@@ -51,28 +42,6 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// The preview for a command: when it was last run, then the command in full.
-///
-/// The row only has one line, so this is where a command longer than the
-/// terminal is wide — or one that spans several lines — is actually readable.
-/// Built from the entry already in hand, so scrolling the list spawns nothing.
-fn preview(entry: &Entry, now: i64, offset: time::UtcOffset) -> String {
-    let Some(when) = entry.when else {
-        return entry.cmd.clone();
-    };
-    let exact = history::stamp_precise(when, offset);
-    if exact.is_empty() {
-        return entry.cmd.clone();
-    }
-    // Both readings, because they answer different questions: the date says
-    // which run this was, the age says whether it is still how you do it.
-    format!(
-        "last run {exact} ({})\n\n{}",
-        history::relative_time(now, when),
-        entry.cmd
-    )
-}
-
 /// Build picker rows: the local date it was last run, then the command folded
 /// onto one line, returning the command as it was really typed.
 ///
@@ -80,13 +49,16 @@ fn preview(entry: &Entry, now: i64, offset: time::UtcOffset) -> String {
 /// shown without being searched. A date is digits at the front of every row;
 /// matched, a query of `3` would rank thousands of timestamps above the command
 /// being reached for.
-fn items(entries: &[Entry], now: i64, offset: time::UtcOffset) -> Vec<PickItem> {
+///
+/// No row carries a preview, so the picker keeps the full width for the
+/// commands: a preview pane would only repeat the row it is beside, and the
+/// selected command goes back on the command line to be read before it runs.
+fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<PickItem> {
     entries
         .iter()
         .map(|entry| {
             PickItem::new(history::one_line(&entry.cmd), entry.cmd.clone())
                 .prefix(format!("{}  ", history::stamp(entry.when, offset)))
-                .preview(Preview::Text(preview(entry, now, offset)))
         })
         .collect()
 }
@@ -127,7 +99,7 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
 pub fn pick(ctx: &Ctx, query: Option<&str>, print0: bool) -> Result<()> {
     let entries = load(ctx)?;
     let chosen = pick::pick_one_queried(
-        items(&entries, now(), ctx.utc_offset()),
+        items(&entries, ctx.utc_offset()),
         "Pick a command",
         query.unwrap_or_default(),
         &ctx.config.picker,
@@ -170,7 +142,7 @@ mod tests {
     /// comes back as something the user never ran.
     #[test]
     fn rows_fold_onto_one_line_but_return_the_real_command() {
-        let items = items(&entries(), 1000, utc());
+        let items = items(&entries(), utc());
         assert_eq!(items[1].label, "git commit -m 'a ⏎ b'");
         assert_eq!(items[1].value(), "git commit -m 'a\nb'");
     }
@@ -181,7 +153,7 @@ mod tests {
     /// `3` ranks four thousand timestamps above the command being reached for.
     #[test]
     fn the_date_is_shown_beside_the_command_but_not_matched() {
-        let items = items(&entries(), 1000, utc());
+        let items = items(&entries(), utc());
         assert_eq!(items[0].prefix.as_deref(), Some("1970-01-01 00:15  "));
         assert_eq!(items[0].label, "git status");
         assert!(!items[0].label.contains("1970"), "the date is searchable");
@@ -191,7 +163,7 @@ mod tests {
     /// place whatever fish recorded.
     #[test]
     fn an_undated_row_holds_the_date_column_open() {
-        let items = items(&entries(), 1000, utc());
+        let items = items(&entries(), utc());
         let (dated, undated) = (
             items[0].prefix.as_deref().unwrap(),
             items[1].prefix.as_deref().unwrap(),
@@ -200,32 +172,13 @@ mod tests {
         assert!(undated.trim().is_empty(), "{undated:?}");
     }
 
-    /// Previews are built from data already in hand — a command preview would
-    /// be spawned again on every keypress that moves the cursor.
+    /// No history row previews. The pane exists only when some row asks for
+    /// one, so this is what keeps the full terminal width on the commands
+    /// rather than on a pane repeating the highlighted row back.
     #[test]
-    fn previews_are_text_rather_than_commands() {
-        for item in items(&entries(), 1000, utc()) {
-            assert!(
-                matches!(item.preview, Some(Preview::Text(_))),
-                "a history row spawns a process to preview itself"
-            );
+    fn no_row_opens_a_preview_pane() {
+        for item in items(&entries(), utc()) {
+            assert!(item.preview.is_none(), "a history row previews itself");
         }
-    }
-
-    /// The preview carries both readings: the exact moment says which run this
-    /// was, the age says whether it is still how you do things.
-    #[test]
-    fn the_preview_dates_the_command_and_shows_it_in_full() {
-        let text = preview(&entries()[0], 1000, utc());
-        assert!(text.starts_with("last run 1970-01-01 00:15:00 ("), "{text}");
-        assert!(text.contains("1m ago"), "{text}");
-        assert!(text.ends_with("git status"), "{text}");
-    }
-
-    /// An entry fish recorded without a `when:` still previews; there is simply
-    /// no date to put above it.
-    #[test]
-    fn an_undated_command_previews_without_a_date() {
-        assert_eq!(preview(&entries()[1], 1000, utc()), "git commit -m 'a\nb'");
     }
 }
