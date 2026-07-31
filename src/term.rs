@@ -1,9 +1,10 @@
 //! Terminal capability checks shared by the printing commands.
 //!
-//! Colour is opt-out per the `NO_COLOR` convention and is never emitted when
-//! stdout is redirected, so `scriv … ls` stays pipe-safe by default. The same
-//! rule governs [`Spinner`] and [`ScratchRow`]: they touch the display only
-//! when there is one to touch.
+//! Colour is decided once, at startup, by [`ColorChoice::resolve`] and carried
+//! on [`Ctx`](crate::Ctx) — `--color` if the user said, else the `NO_COLOR`
+//! convention, else whether stdout is a terminal, so `scriv … ls` stays
+//! pipe-safe by default. [`Spinner`] and [`ScratchRow`] follow the same rule
+//! from the other side: they touch the display only when there is one to touch.
 
 use std::io::{IsTerminal, Write};
 use std::sync::Arc;
@@ -11,9 +12,43 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-/// Whether stdout should carry ANSI colour: a terminal, and `NO_COLOR` unset.
-pub fn stdout_color() -> bool {
-    std::io::stdout().is_terminal() && !no_color()
+/// When to colour printed output, as `--color` states it.
+///
+/// The three names every other tool of this kind uses — ripgrep, fd, `ls`,
+/// `git` — so the flag needs no explaining to anyone who has met one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+#[clap(rename_all = "lower")]
+pub enum ColorChoice {
+    /// Colour when stdout is a terminal and `NO_COLOR` is unset.
+    #[default]
+    Auto,
+    /// Always colour, terminal or not — for a pager (`less -R`) or a recording.
+    Always,
+    /// Never colour.
+    Never,
+}
+
+impl ColorChoice {
+    /// Whether printed output should carry ANSI colour.
+    ///
+    /// `is_tty` is passed in rather than looked up so the rule is a pure
+    /// function with a test; [`ColorChoice::for_stdout`] is what callers use.
+    ///
+    /// An explicit `always`/`never` outranks `NO_COLOR`: the environment states
+    /// a default, and a flag on the command line is the user overriding their
+    /// own default for this one run. `auto` is where `NO_COLOR` applies.
+    pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Never => false,
+            Self::Auto => is_tty && !no_color,
+        }
+    }
+
+    /// [`ColorChoice::resolve`] against this process's stdout and environment.
+    pub fn for_stdout(self) -> bool {
+        self.resolve(std::io::stdout().is_terminal(), no_color())
+    }
 }
 
 /// Honour the `NO_COLOR` convention: colour is disabled when the variable is
@@ -202,11 +237,15 @@ pub struct Spinner {
 /// Start a spinner labelled `label` (e.g. `fetching`), running until it is
 /// dropped.
 ///
+/// `color` is the resolved [`ColorChoice`], so `--color never` gives a plain
+/// spinner rather than a cyan one — the flag means the same thing everywhere
+/// scriv draws.
+///
 /// Bind it to a name — `let _spinner = term::spinner(…)` — for as long as the
 /// wait lasts. A bare `term::spinner(…)` statement drops it immediately and
 /// spins for nothing.
 #[must_use]
-pub fn spinner(label: &str) -> Spinner {
+pub fn spinner(label: &str, color: bool) -> Spinner {
     let stop = Arc::new(AtomicBool::new(false));
     if !std::io::stderr().is_terminal() {
         return Spinner {
@@ -218,7 +257,6 @@ pub fn spinner(label: &str) -> Spinner {
     let row = ScratchRow::take();
 
     let label = label.to_string();
-    let color = !no_color();
     let flag = Arc::clone(&stop);
     let thread = std::thread::spawn(move || {
         let mut frames = FRAMES.iter().cycle();
@@ -345,6 +383,37 @@ mod tests {
 
     use super::*;
 
+    /// `auto` is the rule that was there before there was a flag: a terminal,
+    /// and `NO_COLOR` unset.
+    #[test]
+    fn auto_colours_only_a_terminal_without_no_color() {
+        assert!(ColorChoice::Auto.resolve(true, false));
+        assert!(!ColorChoice::Auto.resolve(false, false), "coloured a pipe");
+        assert!(!ColorChoice::Auto.resolve(true, true), "ignored NO_COLOR");
+    }
+
+    /// The point of `always` is a destination that is not a terminal — a pager
+    /// reading through `less -R`, a recording, a file to be replayed. A rule
+    /// that still checked for a tty would make the flag do nothing at all in
+    /// exactly the case it exists for.
+    #[test]
+    fn always_colours_a_pipe_too() {
+        assert!(ColorChoice::Always.resolve(false, false));
+        assert!(!ColorChoice::Never.resolve(false, false));
+    }
+
+    /// `NO_COLOR` states a default for the environment; a flag on the command
+    /// line is the user overriding their own default for this one run, so it
+    /// has to win in both directions.
+    #[test]
+    fn an_explicit_choice_outranks_no_color() {
+        assert!(
+            ColorChoice::Always.resolve(true, true),
+            "NO_COLOR beat --color always"
+        );
+        assert!(!ColorChoice::Never.resolve(true, false));
+    }
+
     #[test]
     fn paint_is_identity_when_off() {
         assert_eq!(paint("main", 2, false), "main");
@@ -390,7 +459,7 @@ mod tests {
     #[test]
     fn no_terminal_means_no_animation() {
         // The test harness captures stderr, so this is the redirected case.
-        let spinner = spinner("fetching");
+        let spinner = spinner("fetching", true);
         assert!(spinner.thread.is_none(), "spun without a terminal");
     }
 
@@ -399,7 +468,7 @@ mod tests {
     /// nothing but a blank line behind once it stopped.
     #[test]
     fn the_spinner_draws_on_a_row_of_its_own() {
-        let spinner = spinner("fetching");
+        let spinner = spinner("fetching", true);
         assert_eq!(
             spinner._row.is_taken(),
             spinner.thread.is_some(),

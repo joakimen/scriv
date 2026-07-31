@@ -16,6 +16,7 @@ use clap_complete::Shell;
 use scriv::gh::MergeMethod;
 use scriv::git::Filter;
 use scriv::pick::Cancelled;
+use scriv::term::ColorChoice;
 use scriv::{Ctx, Reported, cmd, shell};
 
 /// Usage examples appended to the top-level help.
@@ -60,6 +61,15 @@ struct Cli {
     /// Path to the config file
     #[arg(short, long, global = true, value_name = "FILE")]
     config: Option<String>,
+
+    /// When to colour printed output
+    ///
+    /// `auto` colours a terminal and honours `NO_COLOR`. `always` colours a
+    /// pipe or a file too, for a pager such as `less -R`. Either explicit
+    /// value overrides `NO_COLOR`. The picker is unaffected — it only ever
+    /// draws on a terminal.
+    #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
+    color: ColorChoice,
 
     #[command(subcommand)]
     command: Command,
@@ -423,7 +433,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
-    let ctx = Ctx::load(cli.config.as_deref(), cli.verbose)?;
+    let ctx = Ctx::load(cli.config.as_deref(), cli.verbose, cli.color)?;
 
     match cli.command {
         Command::Repo { command } => match command {

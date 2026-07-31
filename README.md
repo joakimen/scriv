@@ -109,6 +109,10 @@ shapes rather than colours alone, so a piped or `NO_COLOR` listing says as much.
 Branch and pull request lists go stale while you read them; `ctrl-r` refetches
 without closing the picker.
 
+Colour follows `--color auto|always|never`, on any command: `auto` colours a
+terminal and honours `NO_COLOR`, `always` colours a pipe too so `scriv pr ls
+--color always | less -R` keeps its greens and reds.
+
 Every `pick` prints one line and nothing else, so it composes:
 
 ```fish

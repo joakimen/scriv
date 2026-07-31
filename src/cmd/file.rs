@@ -26,7 +26,7 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
         return Ok(());
     }
 
-    let use_color = status && term::stdout_color();
+    let use_color = status && ctx.color();
 
     for line in &lines {
         let expanded = expand_tilde(line, ctx.home_str());

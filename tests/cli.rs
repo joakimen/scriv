@@ -106,8 +106,22 @@ impl Sandbox {
     /// or `EDITOR` would quietly change what is being tested, and an inherited
     /// `HOME` would point the run at the developer's own config.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Run {
-        let out = Command::new(BIN)
-            .args(args)
+        self.run_full(cwd, args, &[])
+    }
+
+    fn run(&self, args: &[&str]) -> Run {
+        self.run_full(self.home(), args, &[])
+    }
+
+    /// [`Sandbox::run`] with `env` set on top — for the variables scriv is
+    /// meant to react to, such as `NO_COLOR`.
+    fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
+        self.run_full(self.home(), args, env)
+    }
+
+    fn run_full(&self, cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Run {
+        let mut cmd = Command::new(BIN);
+        cmd.args(args)
             .current_dir(cwd)
             .env_clear()
             .env("HOME", self.home())
@@ -116,19 +130,17 @@ impl Sandbox {
             .env("XDG_DATA_HOME", self.home().join(".local/share"))
             // `gh`, `git` and the editor are looked up on PATH; keep the real
             // one so the tests that reach them behave as they would in a shell.
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .output()
-            .expect("running scriv");
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
 
+        let out = cmd.output().expect("running scriv");
         Run {
             code: out.status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         }
-    }
-
-    fn run(&self, args: &[&str]) -> Run {
-        self.run_in(self.home(), args)
     }
 }
 
@@ -473,6 +485,86 @@ fn file_add_resolves_a_relative_path_against_the_working_directory() {
     sandbox.run_in(&project, &["file", "add", "main.rs"]).ok();
     let stored = std::fs::read_to_string(sandbox.files_path()).unwrap();
     assert_eq!(stored.trim(), "~/project/main.rs");
+}
+
+// --- colour -----------------------------------------------------------------
+
+/// A sandbox with one present and one missing tracked file, so `file ls
+/// --status` has both a green row and a red one to colour.
+fn coloured_listing(sandbox: &Sandbox) {
+    let here = sandbox.home().join("here.md");
+    std::fs::write(&here, "").unwrap();
+    sandbox.run(&["file", "add", here.to_str().unwrap()]).ok();
+    sandbox
+        .run(&[
+            "file",
+            "add",
+            sandbox.home().join("gone.md").to_str().unwrap(),
+        ])
+        .ok();
+}
+
+/// Every run in this file writes to a pipe, which is the case `--color always`
+/// exists for: `scriv pr ls --color always | less -R` is a listing whose whole
+/// point is the colour, and `auto` drops it because a pipe is not a terminal.
+#[test]
+fn color_always_colours_a_pipe_and_never_does_not() {
+    let sandbox = Sandbox::new();
+    coloured_listing(&sandbox);
+
+    let always = sandbox.run(&["--color", "always", "file", "ls", "--status"]);
+    always.ok();
+    assert!(
+        always.stdout.contains('\x1b'),
+        "no colour through a pipe: {:?}",
+        always.stdout
+    );
+
+    for args in [
+        &["--color", "never", "file", "ls", "--status"][..],
+        // The default through a pipe: unchanged from before there was a flag.
+        &["file", "ls", "--status"][..],
+    ] {
+        let run = sandbox.run(args);
+        run.ok();
+        assert!(
+            !run.stdout.contains('\x1b'),
+            "{args:?} coloured: {:?}",
+            run.stdout
+        );
+        // The glyphs are shapes, so the listing says as much either way.
+        assert!(run.stdout.contains("✓ "), "{:?}", run.stdout);
+        assert!(run.stdout.contains("✗ "), "{:?}", run.stdout);
+    }
+}
+
+/// `NO_COLOR` states a default for the environment; a flag on the command line
+/// is the user overriding their own default for this one run, so it wins in
+/// both directions.
+#[test]
+fn an_explicit_color_choice_outranks_no_color() {
+    let sandbox = Sandbox::new();
+    coloured_listing(&sandbox);
+
+    let forced = sandbox.run_with_env(
+        &["--color", "always", "file", "ls", "--status"],
+        &[("NO_COLOR", "1")],
+    );
+    forced.ok();
+    assert!(
+        forced.stdout.contains('\x1b'),
+        "NO_COLOR beat `--color always`: {:?}",
+        forced.stdout
+    );
+}
+
+/// The three values are the ones every comparable tool takes, and nothing else
+/// is accepted — a typo is a usage error rather than a silent fallback to the
+/// default, which would leave the user thinking they had asked for something.
+#[test]
+fn color_takes_only_the_three_conventional_values() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["--color", "sometimes", "file", "ls"]).code(2);
 }
 
 // --- fish history -----------------------------------------------------------
