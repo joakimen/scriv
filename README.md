@@ -6,11 +6,7 @@
 
 ![A candle burning above an open book](docs/art/seal.svg)
 
-[Scriv](https://kingkiller.fandom.com/wiki/Scriv) is one fuzzy picker for your
-Git repositories, the files you keep returning to, git branches, GitHub pull
-requests and shell history, so you pick from a list instead of typing a path you
-half-remember, a branch name you have to look up, or a command you ran last
-Tuesday.
+Provides fuzzy navigation for common local and remote resources.
 
 ![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 
