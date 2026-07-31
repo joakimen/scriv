@@ -109,14 +109,31 @@ fn unescape(text: &str) -> String {
 /// repeats is what keeps a command run twenty times a day to one row instead of
 /// a screenful of identical ones, and keeping the *newest* of each is what lets
 /// the row say when it was last used.
+///
+/// The set holds borrowed commands rather than copies of them. A history file
+/// is tens of thousands of entries and this runs on every ctrl-r, so cloning
+/// each command into the set — only to throw the clone away — was a second copy
+/// of the whole history built and dropped on the path where the user is waiting
+/// for a picker to open.
 pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
-    let mut seen: HashSet<String> = HashSet::with_capacity(entries.len());
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries.into_iter().rev() {
-        if seen.insert(entry.cmd.clone()) {
-            out.push(entry);
+    // Scoped so the borrows end before the entries are consumed below.
+    let keep = {
+        let mut seen: HashSet<&str> = HashSet::with_capacity(entries.len());
+        let mut keep = vec![false; entries.len()];
+        // Backwards, so the *newest* run of each command is the one kept and
+        // its row can say when it was last used.
+        for (index, entry) in entries.iter().enumerate().rev() {
+            keep[index] = seen.insert(entry.cmd.as_str());
         }
-    }
+        keep
+    };
+
+    let mut out: Vec<Entry> = entries
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(entry, keep)| keep.then_some(entry))
+        .collect();
+    out.reverse();
     out
 }
 
@@ -301,6 +318,38 @@ mod tests {
         // The surviving `ls` is the one from the most recent run, so its row
         // is dated by when it was last used rather than first.
         assert_eq!(recent[0].when, Some(3));
+    }
+
+    /// Order and dedup have to survive the rewrite that stopped cloning every
+    /// command into the set: newest run first, one row per distinct command,
+    /// and every distinct command still present.
+    #[test]
+    fn dedup_keeps_every_distinct_command_in_recency_order() {
+        let entries: Vec<Entry> = ["a", "b", "a", "c", "b", "a"]
+            .iter()
+            .enumerate()
+            .map(|(i, cmd)| Entry {
+                cmd: (*cmd).to_string(),
+                when: Some(i as i64),
+            })
+            .collect();
+
+        let got = recent_first(entries);
+        assert_eq!(
+            got.iter().map(|e| e.cmd.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b", "c"],
+            "not ordered by the most recent run of each command"
+        );
+        // Each surviving row is dated by the *last* time it was run.
+        assert_eq!(
+            got.iter().map(|e| e.when).collect::<Vec<_>>(),
+            vec![Some(5), Some(4), Some(3)]
+        );
+    }
+
+    #[test]
+    fn an_empty_history_dedups_to_nothing() {
+        assert!(recent_first(Vec::new()).is_empty());
     }
 
     #[test]

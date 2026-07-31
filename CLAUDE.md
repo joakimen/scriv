@@ -158,6 +158,14 @@ reference, so command implementations do no environment lookups of their own.
   only to skip a question it can already answer: in a repository it opens that
   one, `--pick` asks anyway, and outside one it is the ordinary picker. The set
   it picks over is unchanged.
+- **`$PWD` is preferred over `getcwd`, but only when it is still true.** A shell
+  sets `$PWD` to the path the user walked, symlinks intact, which is what they
+  expect to see back; `getcwd` resolves those away. But nothing keeps the
+  variable current — a `chdir` in a parent process leaves it behind, and it can
+  simply be set wrong — and a stale one silently records a path for a directory
+  the user was never standing in. `Ctx::load` takes it only when it resolves to
+  the same directory scriv is actually in. Anything else reading the environment
+  for a location it will then write down owes the same check.
 - **Anything drawn inline takes a `term::ScratchRow` first.** The picker and the
   spinner both start on the row the cursor is on, which from a key binding is
   the last row of the shell's prompt — the picker draws over it, the spinner

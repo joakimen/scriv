@@ -75,10 +75,18 @@ impl Ctx {
     /// Resolve the environment and load configuration.
     pub fn load(config_flag: Option<&str>, verbose: bool) -> Result<Self> {
         let home = dirs::home_dir().context("determining home directory")?;
-        let pwd = std::env::var("PWD")
-            .map(PathBuf::from)
-            .or_else(|_| std::env::current_dir())
-            .context("determining working directory")?;
+        let cwd = std::env::current_dir().context("determining working directory")?;
+        // `$PWD` keeps the symlinks the user walked through, which `getcwd`
+        // resolves away — but only when it is still current. See
+        // [`path::resolve_pwd`].
+        let pwd = path::resolve_pwd(
+            std::env::var("PWD").ok().as_deref(),
+            cwd,
+            |claimed, actual| match (claimed.canonicalize(), actual.canonicalize()) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            },
+        );
 
         let scriv_env = std::env::var(config::CONFIG_ENV_VAR).ok();
         let xdg_env = std::env::var(config::XDG_ENV_VAR).ok();

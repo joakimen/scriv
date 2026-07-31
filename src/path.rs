@@ -32,6 +32,35 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
     format!("{}{}", home, &path[1..])
 }
 
+/// Decide which of `$PWD` and the real working directory to work from.
+///
+/// `$PWD` is preferred, and worth preferring: a shell sets it to the path the
+/// user actually walked, symlinks intact, while `getcwd` reports the resolved
+/// one. Somebody who works in `~/dev` where `dev` is a symlink expects to see
+/// `~/dev/…`, not the volume it really lives on.
+///
+/// But `$PWD` is only *usually* right. It is an ordinary exported variable and
+/// nothing keeps it current: `os.chdir` in Python leaves it behind, so does a
+/// `chdir` in any program that spawns scriv, and it can simply be set to
+/// something wrong. Trusted blindly, a stale one silently records the wrong
+/// path — `scriv file add notes.md` writes an entry for a directory the user
+/// was not standing in, and nothing about the output looks unusual.
+///
+/// So it is taken only when it names the directory scriv is genuinely in.
+/// `same_dir` is what decides that — passed in so the rule is testable, and
+/// resolving symlinks on both sides in the real implementation, which is
+/// exactly what makes a symlinked-but-correct `$PWD` still win.
+pub fn resolve_pwd(
+    pwd_env: Option<&str>,
+    cwd: PathBuf,
+    same_dir: impl Fn(&Path, &Path) -> bool,
+) -> PathBuf {
+    match pwd_env.filter(|p| !p.is_empty()).map(PathBuf::from) {
+        Some(pwd) if same_dir(&pwd, &cwd) => pwd,
+        _ => cwd,
+    }
+}
+
 /// Render a repository path relative to the search `root` it was found under,
 /// so a shared base is not repeated on every row.
 ///
@@ -319,5 +348,41 @@ mod tests {
     #[test]
     fn clean_empty_is_dot() {
         assert_eq!(clean(""), ".");
+    }
+
+    /// The reason `$PWD` is preferred at all: a shell reports the path the user
+    /// walked, symlinks intact, and `getcwd` reports the resolved one. Somebody
+    /// working in `~/dev` where `dev` is a symlink expects to see `~/dev/…`.
+    #[test]
+    fn a_current_pwd_wins_even_when_it_is_a_symlinked_spelling() {
+        let got = resolve_pwd(
+            Some("/home/u/dev"),
+            PathBuf::from("/Volumes/work/dev"),
+            |_, _| true,
+        );
+        assert_eq!(got, PathBuf::from("/home/u/dev"));
+    }
+
+    /// A stale `$PWD` is the whole hazard: nothing keeps the variable current —
+    /// `os.chdir` in a Python parent leaves it behind, and it can simply be set
+    /// wrong — and trusting it would silently record a path for a directory the
+    /// user was never standing in.
+    #[test]
+    fn a_pwd_naming_somewhere_else_is_discarded() {
+        let got = resolve_pwd(
+            Some("/somewhere/stale"),
+            PathBuf::from("/real/cwd"),
+            |_, _| false,
+        );
+        assert_eq!(got, PathBuf::from("/real/cwd"));
+    }
+
+    /// Unset or empty is not an answer, and neither is a reason to fail — the
+    /// real working directory is always there to fall back on.
+    #[test]
+    fn a_missing_pwd_falls_back_to_the_real_directory() {
+        let cwd = PathBuf::from("/real/cwd");
+        assert_eq!(resolve_pwd(None, cwd.clone(), |_, _| true), cwd);
+        assert_eq!(resolve_pwd(Some(""), cwd.clone(), |_, _| true), cwd);
     }
 }
