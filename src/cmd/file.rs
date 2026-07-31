@@ -39,16 +39,89 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
             continue;
         }
 
-        let row = match (status, use_color, present) {
-            (false, _, _) => expanded,
-            (true, true, true) => format!("\x1b[32m✓ {expanded}\x1b[0m"),
-            (true, true, false) => format!("\x1b[31m✗ {expanded}\x1b[0m"),
-            (true, false, true) => format!("✓ {expanded}"),
-            (true, false, false) => format!("✗ {expanded}"),
+        let row = if status {
+            status_row(&expanded, present, use_color)
+        } else {
+            expanded
         };
         if !out.line(&row)? {
             break;
         }
+    }
+    Ok(())
+}
+
+/// A file with its existence marked: green tick for there, red cross for gone.
+///
+/// Shared by `file ls --status` and `file prune`, so the entries `prune` offers
+/// to drop look like the rows `ls` already draws them as.
+fn status_row(path: &str, present: bool, color: bool) -> String {
+    match (color, present) {
+        (true, true) => format!("\x1b[32m✓ {path}\x1b[0m"),
+        (true, false) => format!("\x1b[31m✗ {path}\x1b[0m"),
+        (false, true) => format!("✓ {path}"),
+        (false, false) => format!("✗ {path}"),
+    }
+}
+
+/// `scriv file prune` — drop the tracked files that are no longer there.
+///
+/// The list is what it is because files move: a repository is re-cloned, a note
+/// is renamed, a checkout is deleted. Each of those leaves an entry pointing at
+/// nothing, and until now the only way to clear them was to read
+/// `file ls --missing` and remove each one by hand.
+///
+/// What will go is printed before the question is asked, because a count is not
+/// enough to decide on — "remove 4 entries?" is answerable only by someone who
+/// already knows which four.
+pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
+    ctx.ensure_files_migrated()?;
+    let lines = files::read_lines(&ctx.files_path)?;
+
+    let (kept, missing) = files::partition_missing(&lines, |line| {
+        Path::new(&expand_tilde(line, ctx.home_str())).exists()
+    });
+    if missing.is_empty() {
+        println!("Nothing to prune — every tracked file is still there");
+        return Ok(());
+    }
+
+    let mut out = term::Listing::stdout();
+    for line in &missing {
+        let expanded = expand_tilde(line, ctx.home_str());
+        if !out.line(&status_row(&expanded, false, ctx.color()))? {
+            return Ok(());
+        }
+    }
+
+    match term::Confirm::resolve(yes) {
+        term::Confirm::Assumed => {}
+        term::Confirm::Ask => {
+            let question = format!(
+                "Remove {} {} from the list?",
+                missing.len(),
+                if missing.len() == 1 {
+                    "entry"
+                } else {
+                    "entries"
+                }
+            );
+            if !term::confirm(&question)? {
+                println!("Nothing removed");
+                return Ok(());
+            }
+        }
+        // The files themselves are untouched either way — this only edits the
+        // list — but a command that deletes on an assumed yes is one nobody can
+        // safely put in a pipeline.
+        term::Confirm::Impossible => bail!(
+            "no terminal to ask for confirmation on — pass `--yes` to prune without being asked"
+        ),
+    }
+
+    files::write_lines(&ctx.files_path, &kept)?;
+    for line in &missing {
+        println!("Removed {line}");
     }
     Ok(())
 }

@@ -108,6 +108,72 @@ impl<W: Write> Listing<W> {
     }
 }
 
+/// Whether an answer read from a prompt means yes.
+///
+/// Only an explicit yes counts: anything else — a bare return, a stray
+/// keystroke, end of input — is no. A command that deletes something has to be
+/// harder to trigger by accident than by intent.
+pub fn is_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+/// Ask `question` on stderr and read the answer from stdin.
+///
+/// The question goes to stderr because stdout is a result: `scriv file prune`
+/// prints the entries it removed there, and a prompt mixed into that would be
+/// something a script had to parse around.
+///
+/// Whether there is anyone to answer is the caller's problem, not this
+/// function's — see [`Confirm`] for why that distinction matters.
+pub fn confirm(question: &str) -> std::io::Result<bool> {
+    let mut err = std::io::stderr().lock();
+    write!(err, "{question} [y/N] ")?;
+    err.flush()?;
+    drop(err);
+
+    let mut answer = String::new();
+    // End of input is not a yes: a closed stdin has said nothing, and the
+    // safe reading of nothing is no.
+    if std::io::stdin().read_line(&mut answer)? == 0 {
+        return Ok(false);
+    }
+    Ok(is_yes(&answer))
+}
+
+/// Whether a question can be asked at all.
+///
+/// A prompt written to a stdin nobody is typing at is not a safety check — it
+/// is a hang, or an instant "no" that looks like a refusal to work. A command
+/// that needs confirmation and cannot ask for it should say so and name the
+/// flag that skips the question, rather than guessing which answer was meant.
+pub enum Confirm {
+    /// There is a terminal on stdin: ask.
+    Ask,
+    /// `--yes` was given: do not ask.
+    Assumed,
+    /// stdin is a pipe or a file, and no `--yes`: refuse rather than guess.
+    Impossible,
+}
+
+impl Confirm {
+    /// Decide from the `--yes` flag and whether stdin is a terminal.
+    ///
+    /// Split from the check itself so the rule is a pure function with a test;
+    /// [`Confirm::resolve`] is what callers use.
+    pub fn decide(yes: bool, stdin_is_tty: bool) -> Self {
+        match (yes, stdin_is_tty) {
+            (true, _) => Self::Assumed,
+            (false, true) => Self::Ask,
+            (false, false) => Self::Impossible,
+        }
+    }
+
+    /// [`Confirm::decide`] against this process's stdin.
+    pub fn resolve(yes: bool) -> Self {
+        Self::decide(yes, std::io::stdin().is_terminal())
+    }
+}
+
 /// Wrap `text` in an ANSI 256-colour sequence when `on`, so the same colour
 /// indices the picker uses also drive plain listings.
 pub fn paint(text: &str, color: u8, on: bool) -> String {
@@ -412,6 +478,35 @@ mod tests {
             "NO_COLOR beat --color always"
         );
         assert!(!ColorChoice::Never.resolve(true, false));
+    }
+
+    /// Only an explicit yes deletes anything. A bare return is the answer
+    /// someone gives when they were not reading, and it has to mean no.
+    #[test]
+    fn only_an_explicit_yes_is_a_yes() {
+        for answer in ["y", "Y", "yes", "YES", " yes \n"] {
+            assert!(is_yes(answer), "{answer:?} was not read as yes");
+        }
+        for answer in ["", "\n", "n", "no", "ye", "yep", "sure", "1"] {
+            assert!(!is_yes(answer), "{answer:?} was read as yes");
+        }
+    }
+
+    /// `--yes` is the whole point of the flag: it answers the question so a
+    /// script never reaches the prompt.
+    #[test]
+    fn the_yes_flag_skips_the_question() {
+        assert!(matches!(Confirm::decide(true, true), Confirm::Assumed));
+        assert!(matches!(Confirm::decide(true, false), Confirm::Assumed));
+    }
+
+    /// Prompting a stdin nobody is typing at is not caution — it is a hang or
+    /// an instant no that reads as a refusal to work. Saying so, and naming the
+    /// flag, is the only useful answer.
+    #[test]
+    fn a_question_that_cannot_be_asked_is_not_answered_for_the_user() {
+        assert!(matches!(Confirm::decide(false, false), Confirm::Impossible));
+        assert!(matches!(Confirm::decide(false, true), Confirm::Ask));
     }
 
     #[test]
