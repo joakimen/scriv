@@ -164,7 +164,7 @@ fn help_lists_every_top_level_command() {
     let run = sandbox.run(&["--help"]);
     run.ok();
     for command in [
-        "repo", "file", "edit", "branch", "pr", "history", "config", "init",
+        "repo", "file", "edit", "branch", "pr", "proc", "history", "config", "init",
     ] {
         assert!(
             run.stdout.contains(command),
@@ -646,6 +646,157 @@ fn an_explicit_color_choice_outranks_no_color() {
 fn color_takes_only_the_three_conventional_values() {
     let sandbox = Sandbox::new();
     sandbox.run(&["--color", "sometimes", "file", "ls"]).code(2);
+}
+
+// --- processes --------------------------------------------------------------
+
+/// The plain listing's contract with a script: the pid first, one space, then
+/// the command — so `cut -d' ' -f1` gets a pid without a parser.
+#[test]
+fn proc_ls_leads_every_row_with_a_pid() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["proc", "ls"]);
+    run.ok();
+    let lines = run.lines();
+    assert!(!lines.is_empty(), "listed no processes at all");
+    for line in &lines {
+        let (pid, command) = line.split_once(' ').unwrap_or_else(|| panic!("{line:?}"));
+        pid.parse::<i32>()
+            .unwrap_or_else(|_| panic!("not a pid: {line:?}"));
+        assert!(!command.is_empty(), "{line:?}");
+    }
+}
+
+/// A mis-scrolled row must not be able to reach the shell that invoked scriv,
+/// or the terminal above it — with `-9` that ends the session and there is no
+/// undoing it. They are left out of the listing rather than warned about, so
+/// this checks the one process the test can name for certain: scriv's own
+/// parent, which is the test binary.
+#[test]
+fn proc_ls_offers_neither_scriv_nor_the_process_that_ran_it() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["proc", "ls"]);
+    run.ok();
+    let own = std::process::id().to_string();
+    for line in run.lines() {
+        let pid = line.split(' ').next().unwrap();
+        assert_ne!(pid, own, "offered the process that ran it: {line:?}");
+    }
+}
+
+/// `--status` adds the columns in front of the command, and the plain listing
+/// stays free of them — the same split every other `ls` in scriv makes.
+#[test]
+fn proc_ls_status_adds_columns_ahead_of_the_command() {
+    let sandbox = Sandbox::new();
+    let plain = sandbox.run(&["proc", "ls"]);
+    let status = sandbox.run(&["proc", "ls", "--status"]);
+    plain.ok();
+    status.ok();
+    let widest_plain = plain.lines().iter().map(|l| l.len()).max().unwrap_or(0);
+    let widest_status = status.lines().iter().map(|l| l.len()).max().unwrap_or(0);
+    assert!(
+        widest_status > widest_plain,
+        "--status added nothing:\n{}",
+        status.stdout
+    );
+}
+
+/// A listing is what a script reads, so it stays free of escape sequences
+/// unless a terminal is asked for explicitly.
+#[test]
+fn proc_ls_status_is_pipe_safe_by_default() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["proc", "ls", "--status"]);
+    run.ok();
+    assert!(!run.stdout.contains('\x1b'), "coloured a pipe");
+    let forced = sandbox.run(&["--color", "always", "proc", "ls", "--status"]);
+    forced.ok();
+    assert!(forced.stdout.contains('\x1b'), "--color always did nothing");
+}
+
+/// The signal is checked before anything is picked. Discovering that `HUPP` is
+/// not a signal *after* choosing what to kill would waste the one decision the
+/// command exists to take.
+#[test]
+fn proc_kill_refuses_an_unknown_signal_before_picking() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["proc", "kill", "--signal", "HUPP"]);
+    run.code(1);
+    assert!(run.stderr.contains("unknown signal"), "{}", run.stderr);
+    assert!(run.stderr.contains("known signals are"), "{}", run.stderr);
+}
+
+/// `--force` *is* a signal choice, so offering it alongside `--signal` would be
+/// asking which of two answers to the same question wins.
+#[test]
+fn proc_kill_will_not_take_a_signal_and_force_at_once() {
+    let sandbox = Sandbox::new();
+    sandbox
+        .run(&["proc", "kill", "--signal", "TERM", "--force"])
+        .code(2);
+}
+
+/// The whole point, end to end: a named pid really is signalled. Uses a child
+/// of the test's own making, so nothing on the machine running this is at risk.
+#[test]
+fn proc_kill_signals_the_pid_it_is_given() {
+    let sandbox = Sandbox::new();
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawning a process to kill");
+    let pid = child.id().to_string();
+
+    let run = sandbox.run(&["proc", "kill", &pid]);
+    run.ok();
+    assert!(
+        run.stdout.contains("sent TERM to"),
+        "did not report the signal:\n{}",
+        run.stdout
+    );
+
+    let status = child.wait().expect("waiting for the killed process");
+    assert!(
+        !status.success(),
+        "the process outlived the signal: {status:?}"
+    );
+}
+
+/// `--force` reaches the signal that is actually sent, rather than only the
+/// wording of the report — it is the difference between a process that can
+/// ignore the request and one that cannot.
+#[test]
+fn proc_kill_force_sends_kill() {
+    let sandbox = Sandbox::new();
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("spawning a process to kill");
+    let pid = child.id().to_string();
+
+    let run = sandbox.run(&["proc", "kill", "--force", &pid]);
+    run.ok();
+    assert!(run.stdout.contains("sent KILL to"), "{}", run.stdout);
+    child.wait().expect("waiting for the killed process");
+}
+
+/// A pid that is gone is `kill`'s error to report, and scriv exits with its
+/// status rather than printing a second, vaguer line on top.
+#[test]
+fn proc_kill_passes_a_failure_through() {
+    let sandbox = Sandbox::new();
+    let mut child = Command::new("sleep").arg("0").spawn().expect("spawning");
+    let pid = child.id().to_string();
+    child.wait().expect("reaping");
+
+    let run = sandbox.run(&["proc", "kill", &pid]);
+    assert_ne!(run.code, Some(0), "signalled a process that had exited");
+    assert!(
+        !run.stderr.contains("error: "),
+        "restated what kill already said:\n{}",
+        run.stderr
+    );
 }
 
 // --- fish history -----------------------------------------------------------

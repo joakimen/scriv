@@ -457,6 +457,15 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         false,
         "only `pr` and `repo clone`/`open` need it (https://cli.github.com)",
     ));
+    // `kill` gets no row of its own. It ships in the same base system `ps`
+    // does, so a machine missing one is the machine this row already failed
+    // for, and it explains its own absence at the point of use.
+    checks.push(tool_check(
+        "ps",
+        "ps",
+        true,
+        "`proc` reads the process table through it",
+    ));
     checks.push(history_check(ctx));
     checks.push(files_check(ctx));
     checks

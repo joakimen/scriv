@@ -2,8 +2,9 @@
 //! dispatch to the [`cmd`] implementations. All decision logic lives in the
 //! library crate.
 //!
-//! Top-level commands: `repo`, `file`, `branch`, `pr`, and `history` work with
-//! the things scriv finds; `edit` opens a file from the directory you are in;
+//! Top-level commands: `repo`, `file`, `branch`, `pr`, `proc` and `history`
+//! work with the things scriv finds; `edit` opens a file from the directory you
+//! are in;
 //! `config` manages its configuration; `init` prints shell integration. The
 //! help layout follows clap's default (description, usage, commands, options).
 
@@ -31,6 +32,7 @@ const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv edit --tracked         Pick one of your tracked files and edit it
   scriv branch checkout        Pick a local or remote branch and switch to it
   scriv pr checkout            Pick a GitHub pull request and check it out
+  scriv proc kill              Pick running processes and signal them
   scriv history pick           Fuzzy-search your fish history for a command
   scriv init fish | source     Load shell integration + completions";
 
@@ -121,6 +123,17 @@ enum Command {
     Pr {
         #[command(subcommand)]
         command: PrCmd,
+    },
+    /// Find a running process and signal it
+    ///
+    /// Rows come from a single `ps` call, busiest first, and carry the whole
+    /// command line — arguments included — so a process is recognisable by what
+    /// it was started with rather than by its name alone. scriv's own process
+    /// and everything that spawned it are never listed: killing the shell or
+    /// the terminal is not a thing to be one keystroke away from.
+    Proc {
+        #[command(subcommand)]
+        command: ProcCmd,
     },
     /// Search the commands you have already run (fish)
     ///
@@ -368,6 +381,39 @@ enum PrCmd {
 }
 
 #[derive(Subcommand)]
+enum ProcCmd {
+    /// List running processes, busiest first
+    #[command(alias = "list")]
+    Ls {
+        /// Also show the owner, CPU share and how long it has been running
+        ///
+        /// The plain listing is `<pid> <command>`, so `cut -d' ' -f1` reaches
+        /// the pid without a parser.
+        #[arg(long)]
+        status: bool,
+    },
+    /// Fuzzy-select a process and print its pid
+    Pick,
+    /// Signal processes; omit the pids to pick them
+    ///
+    /// `tab` selects several in the picker and they are signalled together.
+    /// The default signal is `TERM`, which a process can catch to flush its
+    /// buffers and clean up after itself; `--force` sends `KILL`, which it
+    /// cannot.
+    Kill {
+        /// Processes to signal, by pid; omit to pick interactively
+        #[arg(value_name = "PID")]
+        pids: Vec<i32>,
+        /// Signal to send, by name or number — `TERM`, `HUP`, `9`
+        #[arg(short, long, value_name = "SIGNAL", default_value = "TERM")]
+        signal: String,
+        /// Send `KILL` instead, which cannot be caught or ignored
+        #[arg(short = '9', long, conflicts_with = "signal")]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum HistoryCmd {
     /// List past commands, most recent first
     #[command(alias = "list")]
@@ -493,6 +539,24 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 delete_branch,
                 auto,
             ),
+        },
+        Command::Proc { command } => match command {
+            ProcCmd::Ls { status } => cmd::proc::ls(&ctx, status),
+            ProcCmd::Pick => cmd::proc::pick(&ctx),
+            ProcCmd::Kill {
+                pids,
+                signal,
+                force,
+            } => {
+                // `--force` and `--signal` conflict, so this is a choice
+                // between the flag and the default rather than an override.
+                let signal = if force {
+                    scriv::proc::Signal::KILL
+                } else {
+                    scriv::proc::Signal::parse(&signal)?
+                };
+                cmd::proc::kill(&ctx, &pids, signal)
+            }
         },
         Command::History { command } => match command {
             HistoryCmd::Ls { status } => cmd::history::ls(&ctx, status),
