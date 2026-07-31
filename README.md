@@ -6,7 +6,7 @@
 
 ![A candle burning above an open book](docs/art/seal.svg)
 
-Provides fuzzy navigation for common local and remote resources.
+Fuzzy navigation and management of common local and remote resources.
 
 ![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 
