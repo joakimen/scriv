@@ -3,6 +3,7 @@
 //! covered by tests that run against temporary directories.
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::thread;
 
@@ -119,7 +120,26 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
     for result in results {
         repos.extend(result?);
     }
-    Ok(repos)
+    Ok(dedup_by_path(repos))
+}
+
+/// Drop repositories found more than once, keeping the first.
+///
+/// The searches are independent, so nothing stops two of them from reaching the
+/// same checkout: an `extra` path that also sits under the root, the same path
+/// listed twice, or two spellings of one directory. Every one of those used to
+/// put the repository in the list twice, which in a picker is two identical
+/// rows where selecting either does the same thing.
+///
+/// The first occurrence wins because the jobs are ordered root-first, and only
+/// the root search knows a repository's owner and therefore its label. Keeping
+/// the later one would leave a labelled repository showing up unlabelled.
+fn dedup_by_path(repos: Vec<FoundRepo>) -> Vec<FoundRepo> {
+    let mut seen = HashSet::with_capacity(repos.len());
+    repos
+        .into_iter()
+        .filter(|repo| seen.insert(repo.path.clone()))
+        .collect()
 }
 
 /// Find directories containing a `.git` entry under `root`, descending at most
@@ -387,6 +407,47 @@ mod tests {
 
         let got = find_repos(root.path(), 2, &[], &quiet()).unwrap();
         assert_eq!(sorted(got), expected);
+    }
+
+    fn found(path: &str, label: &str, owner: Option<&str>) -> FoundRepo {
+        FoundRepo {
+            label: label.to_string(),
+            owner: owner.map(str::to_string),
+            root: PathBuf::from("/root"),
+            path: PathBuf::from(path),
+        }
+    }
+
+    /// The root search and each `extra` path run independently, so nothing
+    /// stops two of them reaching the same checkout — an `extra` entry that is
+    /// also under the root is the ordinary way it happens. Two identical picker
+    /// rows, where selecting either does the same thing, is not a list.
+    #[test]
+    fn a_repository_found_twice_is_listed_once() {
+        let got = dedup_by_path(vec![
+            found("/root/me/foo", "personal", Some("me")),
+            found("/root/me/bar", "personal", Some("me")),
+            found("/root/me/foo", "-", None),
+        ]);
+        assert_eq!(
+            got.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+            vec![PathBuf::from("/root/me/foo"), PathBuf::from("/root/me/bar")]
+        );
+    }
+
+    /// The first occurrence is the one kept, and it has to be: the jobs run
+    /// root-first, and only the root search knows a repository's owner and
+    /// therefore its label. Keep the later copy and a labelled repository turns
+    /// up unlabelled.
+    #[test]
+    fn deduping_keeps_the_labelled_copy() {
+        let got = dedup_by_path(vec![
+            found("/root/me/foo", "personal", Some("me")),
+            found("/root/me/foo", "-", None),
+        ]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].label, "personal");
+        assert_eq!(got[0].owner.as_deref(), Some("me"));
     }
 
     #[test]
