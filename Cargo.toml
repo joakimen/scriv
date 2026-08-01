@@ -30,4 +30,9 @@ unicode-width = "0.2"
 
 [profile.release]
 strip = true
-lto = true
+# Thin rather than fat. Fat LTO is a single serial optimisation pass over the
+# whole program: measured here it costs 31s against thin's 11s on every `make`
+# — the gate CI runs too — and buys 1.1MB of binary. The cross-crate inlining
+# it adds is not measurable in a binary whose runtime is spent spawning git and
+# gh and waiting on a selection.
+lto = "thin"
