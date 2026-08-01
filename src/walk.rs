@@ -56,6 +56,36 @@ const QUEUE_BOUND: usize = 1024;
 /// nothing to grant from in here either: Full Disk Access is given to the
 /// terminal application, not to a process that asks for it.
 pub fn files(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
+    walk(root, Kind::File)
+}
+
+/// Directories under `root`, as paths relative to `root`.
+///
+/// [`files`] in every other respect — same ignore rules, same streaming, same
+/// silence about what it could not read. `root` itself is not offered: `scriv
+/// edit dir` is for going somewhere else, and the editor is already being run
+/// from here.
+pub fn dirs(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
+    walk(root, Kind::Dir)
+}
+
+/// Which entries a walk yields.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    File,
+    Dir,
+}
+
+impl Kind {
+    fn matches(self, entry: &ignore::DirEntry) -> bool {
+        entry.file_type().is_some_and(|ft| match self {
+            Self::File => ft.is_file(),
+            Self::Dir => ft.is_dir(),
+        })
+    }
+}
+
+fn walk(root: &Path, kind: Kind) -> impl Iterator<Item = String> + Send + 'static {
     let root = root.to_path_buf();
     let (tx, rx) = sync_channel::<String>(QUEUE_BOUND);
 
@@ -81,11 +111,17 @@ pub fn files(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
                 let Ok(entry) = entry else {
                     return WalkState::Continue;
                 };
-                if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                if !kind.matches(&entry) {
                     return WalkState::Continue;
                 }
                 let path = entry.path();
                 let rel = path.strip_prefix(&root).unwrap_or(path);
+                // The walk starts at `root`, which strips to nothing. A blank
+                // row is not a choice, and "here" is where the editor already
+                // is.
+                if rel.as_os_str().is_empty() {
+                    return WalkState::Continue;
+                }
                 match tx.send(rel.to_string_lossy().into_owned()) {
                     Ok(()) => WalkState::Continue,
                     // The receiver is gone: the user has selected or cancelled,
@@ -136,6 +172,50 @@ mod tests {
             !got.contains(&"ignored.txt".to_string()),
             ".gitignore not honoured: {got:?}"
         );
+    }
+
+    /// `edit dir` walks the same tree under the same rules and yields only the
+    /// directories — including the ones holding no files at all, which is
+    /// exactly the case a file walk could never surface.
+    #[test]
+    fn dirs_yields_directories_under_the_same_rules() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/cmd")).unwrap();
+        fs::create_dir_all(root.join("empty")).unwrap();
+        fs::write(root.join("src/main.rs"), "").unwrap();
+        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        fs::write(root.join(".gitignore"), "target\n").unwrap();
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+
+        let got: Vec<String> = dirs(root).collect();
+
+        assert!(got.contains(&"src".to_string()), "{got:?}");
+        assert!(got.contains(&"src/cmd".to_string()), "{got:?}");
+        assert!(got.contains(&"empty".to_string()), "{got:?}");
+        assert!(
+            !got.iter().any(|d| d.contains("node_modules")),
+            "WALKER_SKIP dir leaked: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|d| d.starts_with("target")),
+            ".gitignore not honoured: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|d| d.ends_with(".rs")),
+            "a file reached the directory walk: {got:?}"
+        );
+    }
+
+    /// The walk starts at the root, which strips to an empty path. A blank row
+    /// is not something anyone can select, and "here" is where the editor is
+    /// already running.
+    #[test]
+    fn the_root_itself_is_not_offered() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("inner")).unwrap();
+        let got: Vec<String> = dirs(dir.path()).collect();
+        assert_eq!(got, vec!["inner".to_string()]);
     }
 
     /// fd reads `.fdignore` in addition to `.gitignore`; a user who keeps one

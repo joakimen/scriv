@@ -22,15 +22,15 @@ use scriv::{Ctx, Reported, cmd, shell};
 
 /// Usage examples appended to the top-level help.
 ///
-/// Three, and one of each *kind* rather than one per command group: what to run
-/// first, how a `sel` composes into the shell, and a verb acting on its own.
-/// A line per group was thirteen lines of the same shape, which is a wall to
-/// scroll past rather than something read — and the list of commands is already
-/// directly above it. Anything more specific is a `--help` away.
+/// Three, and the three worth the most: what people open scriv for every day.
+/// Setup is not among them — `config init` is run once, and the README already
+/// walks someone through it — and neither is anything a `--help` away. A line
+/// per command group was thirteen lines of the same shape sitting directly
+/// below the list that already named every one of them.
 const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
-  scriv config init            Write a starter configuration
-  cd (scriv repo sel)          Jump to a repository (fish)
-  scriv pr checkout            Select a GitHub pull request and check it out";
+  scriv pr checkout            Select a GitHub pull request and check it out
+  scriv branch switch          Select a branch and switch to it
+  scriv history sel            Search the commands you have already run";
 
 /// Help styling matching cargo: bright-green bold headers and usage,
 /// bright-cyan bold literals (command and flag names), cyan placeholders.
@@ -79,25 +79,31 @@ struct Cli {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 enum Command {
-    /// List and select the Git repositories under your search paths
+    /// Manage local Git repositories
     #[command(visible_alias = "r")]
     Repo {
         #[command(subcommand)]
         command: RepoCmd,
     },
-    /// Track the files you visit regularly
+    /// Manage commonly used files
     #[command(visible_alias = "f")]
     File {
         #[command(subcommand)]
         command: FileCmd,
     },
-    /// Fuzzy-find a file and open it in your editor
+    /// Open files and directories in $EDITOR
     ///
-    /// Selection comes from the current directory tree, honouring `.gitignore`,
-    /// or from your tracked files with `--tracked`. Selecting several opens them
-    /// all. The editor is `$VISUAL`, then `$EDITOR`.
-    #[command(visible_alias = "e")]
+    /// Selection comes from the current directory tree, honouring `.gitignore`.
+    /// Selecting several opens them all. The editor is `$VISUAL`, then
+    /// `$EDITOR`.
+    ///
+    /// With no subcommand this is `edit file`, which is what it is nearly
+    /// always reached for. A file or directory actually named `file` or `dir`
+    /// needs `./file` to tell it apart from the subcommand.
+    #[command(visible_alias = "e", args_conflicts_with_subcommands = true)]
     Edit {
+        #[command(subcommand)]
+        command: Option<EditCmd>,
         /// Files to open; omit to select interactively
         #[arg(value_name = "FILE")]
         files: Vec<String>,
@@ -105,7 +111,7 @@ enum Command {
         #[arg(short, long, conflicts_with = "files")]
         tracked: bool,
     },
-    /// Switch between local and remote git branches
+    /// Manage local and remote Git branches
     ///
     /// Listings lead with the current branch, then local branches, then
     /// remote-only ones, each most recently committed to first. In a branch
@@ -116,7 +122,7 @@ enum Command {
         #[command(subcommand)]
         command: BranchCmd,
     },
-    /// Work with GitHub pull requests (via the `gh` CLI)
+    /// Manage GitHub PRs
     ///
     /// In a pull request selector, ctrl-r asks GitHub again and reloads the list
     /// in place, for when a check has finished while you were looking at it.
@@ -124,7 +130,7 @@ enum Command {
         #[command(subcommand)]
         command: PrCmd,
     },
-    /// Find a running process and signal it
+    /// Manage system processes
     ///
     /// Rows come from a single `ps` call, busiest first, and carry the whole
     /// command line — arguments included — so a process is recognisable by what
@@ -136,7 +142,7 @@ enum Command {
         #[command(subcommand)]
         command: ProcCmd,
     },
-    /// Search the commands you have already run (fish)
+    /// Manage shell history
     ///
     /// Reads fish's history file directly — newest first, with repeats of a
     /// command collapsed onto the one row and dated with when it was last run.
@@ -164,6 +170,34 @@ enum Command {
     Init {
         /// Shell to emit integration for
         shell: Shell,
+    },
+}
+
+#[derive(Subcommand)]
+enum EditCmd {
+    /// Fuzzy-find a file and open it
+    ///
+    /// What `scriv edit` does with no subcommand.
+    #[command(visible_alias = "f")]
+    File {
+        /// Files to open; omit to select interactively
+        #[arg(value_name = "FILE")]
+        files: Vec<String>,
+        /// Select from your tracked files instead of the current directory
+        #[arg(short, long, conflicts_with = "files")]
+        tracked: bool,
+    },
+    /// Fuzzy-find a directory and open it
+    ///
+    /// The preview pane is what is directly inside each one. What an editor
+    /// does with a directory is its own business — a file browser, a project
+    /// root, a tree pane; scriv's part is finding it without a `cd` and a `ls`
+    /// per level.
+    #[command(visible_alias = "d")]
+    Dir {
+        /// Directories to open; omit to select interactively
+        #[arg(value_name = "DIR")]
+        dirs: Vec<String>,
     },
 }
 
@@ -526,7 +560,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             FileCmd::Rm { file } => cmd::file::remove(&ctx, file.as_deref()),
             FileCmd::Prune { yes } => cmd::file::prune(&ctx, yes),
         },
-        Command::Edit { files, tracked } => cmd::edit::run(&ctx, &files, tracked),
+        // No subcommand is `edit file` with whatever was given at the top
+        // level, so the two spellings cannot drift into behaving differently.
+        Command::Edit {
+            command,
+            files,
+            tracked,
+        } => match command.unwrap_or(EditCmd::File { files, tracked }) {
+            EditCmd::File { files, tracked } => cmd::edit::file(&ctx, &files, tracked),
+            EditCmd::Dir { dirs } => cmd::edit::dir(&ctx, &dirs),
+        },
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {
                 cmd::branch::ls(&ctx, scope.filter(), status, scope.fetch)
