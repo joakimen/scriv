@@ -1,12 +1,16 @@
-//! `scriv edit` — fuzzy-find a file and open it in your editor.
+//! `scriv edit` — fuzzy-find a file or a directory and open it in your editor.
 //!
-//! Unlike the other commands, this one is a verb rather than a registry: it
-//! searches whatever directory you are in rather than a list scriv maintains.
-//! `--tracked` points the same selector at the known-files list instead.
+//! Unlike the other groups, this one is not a registry over a set scriv
+//! maintains: `file` and `dir` name what is being *looked for* in the tree the
+//! user is standing in, so neither has an `ls` and neither can be listed
+//! without walking. `--tracked` is the one exception, pointing `file` at the
+//! known-files list instead.
 //!
 //! Nothing here needs shell integration — a child process cannot change its
 //! parent's directory, which is why `repo sel` is wrapped in a fish function,
 //! but it can perfectly well inherit the terminal and run an editor in it.
+//! That holds for a directory too: opening one is the editor's business, not
+//! the shell's, and `cd` is what [`crate::cmd::repo`] is for.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -15,28 +19,50 @@ use std::process::Command;
 use anyhow::{Result, anyhow, bail};
 
 use crate::path::{display_path, expand_tilde};
-use crate::select::{Preview, SelectItem, file_preview};
+use crate::select::{Preview, SelectItem, dir_preview, file_preview};
 use crate::{Ctx, Reported, files, select, walk};
 
-/// `scriv edit [FILE]...` — open `paths`, or select interactively when empty.
+/// `scriv edit file [FILE]...` — open `paths`, or select interactively when
+/// empty.
 ///
 /// With `tracked`, selection comes from the known-files list; otherwise from
 /// the current directory tree. Multiple selections open together, which is what
 /// an editor's buffer list is for.
-pub fn run(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
-    let targets = if !paths.is_empty() {
-        paths.to_vec()
-    } else {
-        let selected = if tracked {
-            select_tracked(ctx)?
+pub fn file(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
+    open_or_select(ctx, paths, || {
+        if tracked {
+            select_tracked(ctx)
         } else {
-            select_from_cwd(ctx)?
-        };
-        match selected {
+            select_files(ctx)
+        }
+    })
+}
+
+/// `scriv edit dir [DIR]...` — open `paths`, or select interactively when
+/// empty.
+///
+/// Every editor worth setting `$EDITOR` to opens a directory as something: a
+/// file browser, a project root, a tree pane. Which one is the editor's
+/// business — scriv's part is finding the directory without a `cd` and a `ls`
+/// per level.
+pub fn dir(ctx: &Ctx, paths: &[String]) -> Result<()> {
+    open_or_select(ctx, paths, || select_dirs(ctx))
+}
+
+/// Open `paths`, or whatever `select` yields when there are none.
+fn open_or_select(
+    ctx: &Ctx,
+    paths: &[String],
+    select: impl FnOnce() -> Result<Option<Vec<String>>>,
+) -> Result<()> {
+    let targets = if paths.is_empty() {
+        match select()? {
             Some(targets) => targets,
             // Cancelled: a conventional silent exit, nothing to open.
             None => return Ok(()),
         }
+    } else {
+        paths.to_vec()
     };
 
     // Selecting nothing is not an error either — the selector was simply left
@@ -55,7 +81,7 @@ pub fn run(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
 /// showing the first is the difference between a selector that opens instantly
 /// and one that appears to hang. An empty tree simply gives an empty selector,
 /// as it would in `fzf`.
-fn select_from_cwd(ctx: &Ctx) -> Result<Option<Vec<String>>> {
+fn select_files(ctx: &Ctx) -> Result<Option<Vec<String>>> {
     // Paths stay relative to the working directory: the editor is launched from
     // it, and relative paths are what shows up in its buffer list.
     let items =
@@ -64,6 +90,23 @@ fn select_from_cwd(ctx: &Ctx) -> Result<Option<Vec<String>>> {
     cancellable(select::select_many_streamed(
         items,
         "Edit",
+        true,
+        &ctx.config.selector,
+    ))
+}
+
+/// Choose directories from the current directory tree.
+///
+/// [`select_files`] over [`walk::dirs`], with the preview built per row rather
+/// than taken from [`Preview::File`]: `bat` on a directory is an error message,
+/// and what identifies a directory is what is inside it.
+fn select_dirs(ctx: &Ctx) -> Result<Option<Vec<String>>> {
+    let items =
+        walk::dirs(Path::new(".")).map(|dir| SelectItem::plain(&dir).preview(dir_preview(&dir)));
+
+    cancellable(select::select_many_streamed(
+        items,
+        "Edit directory",
         true,
         &ctx.config.selector,
     ))

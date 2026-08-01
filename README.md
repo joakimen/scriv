@@ -36,7 +36,7 @@ scriv config check         # confirm it all resolves
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
 | `scriv proc` | `ls` `sel` `kill` |
 | `scriv history` | `ls` `sel` |
-| `scriv edit` | a file below `$PWD`, opened in `$EDITOR` |
+| `scriv edit` | `file` `dir` — found below `$PWD`, opened in `$EDITOR` |
 
 `ls` prints the set, `sel` fuzzy-selects one line of it, and the other verbs
 act. Every `sel` composes: `cd (scriv repo sel)`. Each group takes a one-letter

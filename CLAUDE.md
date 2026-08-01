@@ -26,10 +26,12 @@ done until the old wording is gone.
 `EXAMPLES` is three lines and stays three lines. It once carried one per
 command group, which was thirteen lines of identical shape sitting directly
 below the list of commands that already named every one of them — a wall to
-scroll past rather than something read. What it shows now is one of each
-*kind*: what to run first, how a `sel` composes into the shell, and a verb
-acting on its own. A new command group does not earn a line; it earns one only
-by being a kind of thing none of the three already demonstrates.
+scroll past rather than something read. What it shows now is the three
+commands worth the most: `pr checkout`, `branch switch`, `history sel`. Setup
+is deliberately not among them — `config init` is run once and the README
+already walks someone through it — and neither is anything a `--help` away. A
+new command group does not earn a line; it earns one only by displacing one of
+the three as something people reach for more often.
 
 Aliases are declared `visible_alias`, never `alias`. clap hides the latter, and
 a name the binary accepts but the help does not mention is exactly the drift
@@ -204,9 +206,17 @@ test that allocated a pty would be testing skim.
   status instead of printing a second, vaguer error line on top of git's.
 - **The top-level commands are registries; `edit` is the exception.**
   `repo`/`file`/`branch`/`pr`/`history` are each a set scriv knows about, with
-  `ls`/`sel` and a verb over that set. `edit` acts on the directory the user is
-  standing in, so it is a verb at the top level rather than one more noun — and
-  it has no `ls`. Resist filing ambient-directory work under a noun group.
+  `ls`/`sel` and a verb over that set. `edit` has subcommands too, but they are
+  not that: `file` and `dir` name what is being *looked for* in the tree the
+  user happens to be standing in, which is why neither has an `ls` — there is
+  no set to list without walking one. Resist filing ambient-directory work
+  under a noun group, and resist giving `edit` an `ls`.
+
+  `edit` with no subcommand is `edit file`, dispatched through the same arm so
+  the two spellings cannot drift apart. The cost is that a file actually named
+  `file` or `dir` needs `./file`, which is the ordinary shell answer to an
+  ambiguous first argument and is said in the help.
+
   `repo open` is the one place a registry verb reads the ambient directory, and
   only to skip a question it can already answer: in a repository it opens that
   one, `--select` asks anyway, and outside one it is the ordinary selector. The set

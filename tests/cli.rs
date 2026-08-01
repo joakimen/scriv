@@ -262,6 +262,35 @@ fn the_documented_abbreviations_resolve() {
     }
 }
 
+/// `scriv edit` with no subcommand is `edit file`, and both spellings reach the
+/// editor with the same arguments. `$EDITOR` is `echo` here, so what it was
+/// asked to open comes back on stdout — the one way to see the wiring without
+/// a terminal or a real editor.
+///
+/// The `--` is part of the contract: a file named `-c` is a filename, and to
+/// vim `-c` is an Ex command to run.
+#[test]
+fn edit_defaults_to_the_file_subcommand() {
+    let sandbox = Sandbox::new();
+    let bare = sandbox.run_with_env(&["edit", "notes.md"], &[("EDITOR", "echo")]);
+    bare.ok();
+    let explicit = sandbox.run_with_env(&["edit", "file", "notes.md"], &[("EDITOR", "echo")]);
+    explicit.ok();
+    assert_eq!(bare.stdout, explicit.stdout, "the two spellings disagree");
+    assert_eq!(bare.stdout.trim(), "-- notes.md");
+}
+
+/// `edit dir` takes its own positionals, so a directory reaches the editor the
+/// same way a file does. Without this, `dir` would be indistinguishable from a
+/// file named `dir`.
+#[test]
+fn edit_dir_opens_the_directories_it_is_given() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run_with_env(&["edit", "dir", "src", "tests"], &[("EDITOR", "echo")]);
+    run.ok();
+    assert_eq!(run.stdout.trim(), "-- src tests");
+}
+
 /// Every registry offers `sel` under that name. The command itself needs a
 /// terminal, but whether the verb exists at all is answerable without one — and
 /// a group that missed the rename would only show up as a broken key binding.

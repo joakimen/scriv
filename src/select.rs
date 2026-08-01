@@ -74,6 +74,17 @@ pub fn file_preview(path: &str) -> Preview {
     Preview::Command(file_preview_cmd(path))
 }
 
+/// The preview for a directory: what is directly inside it.
+///
+/// `ls` rather than a recursive listing, and capped at 200 rows: the pane is
+/// re-run on every move through the list, so it has to answer in the time it
+/// takes to scroll past. `-A` shows dotfiles without `.` and `..`, `-p` marks
+/// the subdirectories — enough to recognise a directory by what it contains.
+pub fn dir_preview(path: &str) -> Preview {
+    let path = quote(path);
+    Preview::Command(format!("ls -Ap -- {path} 2>&1 | head -n 200"))
+}
+
 /// The command behind [`Preview::File`] and [`file_preview`].
 fn file_preview_cmd(path: &str) -> String {
     let path = quote(path);
