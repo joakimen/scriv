@@ -1,13 +1,11 @@
 //! GitHub pull requests, via the `gh` CLI.
 //!
 //! scriv does no GitHub authentication of its own: it shells out to `gh`, which
-//! already holds the user's token (`gh auth login`) and knows which repository
-//! the working directory belongs to. That keeps tokens out of scriv's config
-//! and makes enterprise hosts, SSO, and keyring storage work for free.
+//! already holds the user's token and knows which repository the working
+//! directory belongs to.
 //!
-//! As in [`crate::git`], the decisions — parsing `gh`'s JSON, colouring a PR by
-//! its state, rolling checks up into a verdict — are pure functions with tests;
-//! only [`list`] and the process helpers touch the outside world.
+//! As in [`crate::git`], the decisions are pure functions with tests; only
+//! [`list`] and the process helpers touch the outside world.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -19,12 +17,9 @@ use serde::Deserialize;
 use crate::Reported;
 use crate::term;
 
-/// JSON fields requested from `gh pr list`.
-///
-/// `body`, `statusCheckRollup` and `mergeable` are fetched here, with everything
-/// else, so the preview pane can be rendered from memory. They cost no extra
-/// request — only a larger response, and about 200ms on the one call — and save
-/// a `gh pr view` or `gh pr checks` round trip per highlighted row.
+/// JSON fields requested from `gh pr list`. `body`, `statusCheckRollup` and
+/// `mergeable` are fetched here so the preview pane renders from memory rather
+/// than a `gh pr view` round trip per highlighted row.
 const FIELDS: &str =
     "number,title,author,headRefName,isDraft,state,updatedAt,body,statusCheckRollup,mergeable";
 
@@ -65,13 +60,9 @@ pub struct Author {
     pub login: String,
 }
 
-/// One entry in a pull request's status check rollup.
-///
-/// GitHub returns two shapes in the same array: `CheckRun` (GitHub Actions and
-/// other check apps, which report a `status` and, once finished, a
-/// `conclusion`) and `StatusContext` (the older commit-status API, which
-/// reports a single `state`). Both are accepted, so a repository using either —
-/// or both at once — reports correctly.
+/// One entry in a pull request's status check rollup. GitHub returns two shapes
+/// in the same array: `CheckRun`, which reports a `status` and a `conclusion`,
+/// and the older `StatusContext`, which reports a single `state`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Check {
@@ -134,21 +125,9 @@ impl CheckResult {
 }
 
 /// Display width of every status glyph, and of the blank that stands in for
-/// one.
-///
-/// Every glyph is drawn from the East Asian *Narrow* class — `✓` U+2713, `✗`
-/// U+2717, `⧗` U+29D7, `⊘` U+2298 — which is what makes a column of them line
-/// up. Two things were ruled out on the way:
-///
-/// - *Ambiguous*-width glyphs (`●`, `≠`, `◆`) are one column in a Western
-///   terminal and two under a CJK locale, so a list would align for some users
-///   and not others.
-/// - Glyphs the emoji tables also claim (`✔` U+2714, `✖` U+2716, `⚠` U+26A0,
-///   and every `✅`-style emoji) get emoji presentation and double width in many
-///   fonts, and bring their own colour, which cannot then be themed.
-///
-/// None of the four above is in the emoji data at all, so all four stay text,
-/// stay one column, and take the colour they are painted.
+/// one. The glyphs are all East Asian *Narrow* and absent from the emoji data,
+/// so they stay one column and take the colour they are painted. Ambiguous-width
+/// and emoji-presentation glyphs would not.
 pub const GLYPH_WIDTH: usize = 1;
 
 /// The blank that keeps a column aligned when there is nothing to say.
@@ -176,10 +155,7 @@ impl Check {
 }
 
 /// Reduce one check's fields to a verdict, whichever shape it arrived in.
-///
-/// `SKIPPED` and `NEUTRAL` count as passing: they are conclusions GitHub itself
-/// treats as non-blocking, and a matrix job that skips half its legs is the
-/// normal case, not a failure.
+/// `SKIPPED` and `NEUTRAL` count as passing, as GitHub itself treats them.
 fn result_for(status: &str, conclusion: &str, state: &str) -> CheckResult {
     // A `StatusContext` says everything in one field.
     if !state.is_empty() {
@@ -207,12 +183,8 @@ fn result_for(status: &str, conclusion: &str, state: &str) -> CheckResult {
     }
 }
 
-/// Whether `value` is one of `options`, ignoring case.
-///
-/// `gh`'s enums are conventionally upper case but not guaranteed to be, so
-/// every comparison here is case-insensitive. Matching in place rather than
-/// upper-casing first is what keeps it allocation-free: these run once per
-/// check per pull request, several times over while a listing is built.
+/// Whether `value` is one of `options`, ignoring case — `gh`'s enums are
+/// conventionally upper case but not guaranteed to be.
 fn is(value: &str, options: &[&str]) -> bool {
     options
         .iter()
@@ -250,11 +222,9 @@ impl Checks {
         self.total() == 0
     }
 
-    /// The verdict, worst-first: one failure makes the set failing however many
-    /// others are green, and anything still running makes it pending.
-    ///
-    /// Empty when there are no checks — a repository without CI should not be
-    /// made to look like one whose checks have not started.
+    /// The verdict, worst-first. Empty when there are no checks, so a
+    /// repository without CI does not look like one whose checks have not
+    /// started.
     pub fn tag(&self) -> &'static str {
         if self.is_empty() {
             ""
@@ -314,10 +284,8 @@ impl Checks {
 pub enum Mergeable {
     Clean,
     Conflicting,
-    /// GitHub computes mergeability lazily, in the background, and reports
-    /// `UNKNOWN` until that job has run — and always for a merged or closed
-    /// pull request, where the question no longer means anything. Rendered as
-    /// nothing at all rather than guessed at.
+    /// GitHub computes mergeability lazily and reports `UNKNOWN` until that
+    /// job has run. Rendered as nothing rather than guessed at.
     Unknown,
 }
 
@@ -341,14 +309,8 @@ impl Mergeable {
     }
 
     /// The glyph for a list row — one column of [`GLYPH_WIDTH`], and only for a
-    /// conflict.
-    ///
-    /// Merging cleanly is the case that needs no announcing: it is what you
-    /// already assume, it is true of nearly every row, and GitHub only reports
-    /// it once a background job has run, so a green mark would be as much a
-    /// statement about the API's timing as about the branch. A conflict is the
-    /// one answer that changes what you do next, so it is the only one that
-    /// takes up space. The preview names both.
+    /// conflict, which is the answer that changes what happens next. The
+    /// preview names both.
     pub fn glyph(self) -> &'static str {
         match self {
             Self::Conflicting => "⊘",
@@ -367,12 +329,8 @@ impl Mergeable {
 }
 
 /// Whether a pull request looks mergeable right now, from what a single
-/// `gh pr list` already knows.
-///
-/// This is the axis a merge list is sorted by in the reader's head, and it is
-/// not the same as [`PullRequest::state`]: a list of open pull requests is one
-/// shade of green under a state colouring, which is to say no colouring at all
-/// at the moment the colour would be most useful.
+/// `gh pr list` already knows. Not the same as [`PullRequest::state`], which
+/// colours a list of open pull requests all one shade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Readiness {
     /// Nothing in the way: open, not a draft, no failing check, no conflict.
@@ -410,10 +368,8 @@ impl PullRequest {
         Mergeable::parse(&self.mergeable)
     }
 
-    /// Whether this looks mergeable — see [`Readiness`].
-    ///
-    /// A draft counts as unavailable rather than blocked: nothing is wrong with
-    /// it, it is simply not being offered yet.
+    /// Whether this looks mergeable — see [`Readiness`]. A draft counts as
+    /// unavailable rather than blocked.
     pub fn readiness(&self) -> Readiness {
         if self.is_draft || !self.state.eq_ignore_ascii_case("OPEN") {
             return Readiness::Unavailable;
@@ -428,13 +384,8 @@ impl PullRequest {
         }
     }
 
-    /// The checks that are not passing, failures first — the ones worth naming
-    /// in a preview, since a list of thirty green jobs says nothing.
-    ///
-    /// Partitioned in one pass rather than filtered and then sorted: a sort key
-    /// is called once per comparison, so deriving the verdict inside one would
-    /// re-derive it O(n log n) times over. Both halves keep the rollup's own
-    /// order, which is what the sort gave.
+    /// The checks that are not passing, failures first, each half keeping the
+    /// rollup's own order.
     pub fn failing_checks(&self) -> Vec<&Check> {
         let mut failed = Vec::new();
         let mut pending = Vec::new();
@@ -449,8 +400,7 @@ impl PullRequest {
         failed
     }
 
-    /// Just the date part of [`Self::updated_at`]; `gh` reports no relative
-    /// time and a date needs no clock of our own to render.
+    /// Just the date part of [`Self::updated_at`].
     pub fn updated_date(&self) -> &str {
         self.updated_at.split('T').next().unwrap_or_default()
     }
@@ -499,10 +449,7 @@ pub fn parse_prs(data: &str) -> Result<Vec<PullRequest>> {
     }
     let mut prs: Vec<PullRequest> =
         serde_json::from_str(data).context("parsing `gh pr list` output")?;
-    // Titles, branch names and descriptions are written by whoever opened the
-    // pull request — on a public repository, by anyone at all — and every one of
-    // them ends up drawn on a terminal. Made safe here, once, so no listing or
-    // selector row downstream has to remember to.
+    // Foreign text, made safe once here so no row downstream has to remember.
     for pr in &mut prs {
         pr.title = term::one_row(&pr.title);
         pr.head_ref_name = term::one_row(&pr.head_ref_name);
@@ -536,11 +483,8 @@ pub fn checkout(number: u64) -> Result<()> {
     run(&["pr", "checkout", &number.to_string()])
 }
 
-/// Open a pull request in the browser.
-///
-/// `gh pr view --web` is what does the opening: it already knows the host — so
-/// GitHub Enterprise works — and defers to `$BROWSER` and the platform's opener,
-/// which is more than scriv would get right on its own.
+/// Open a pull request in the browser. `gh pr view --web` already knows the
+/// host, so GitHub Enterprise works, and defers to `$BROWSER`.
 pub fn view_web(number: u64) -> Result<()> {
     run(&["pr", "view", "--web", &number.to_string()])
 }
@@ -564,12 +508,8 @@ impl MergeMethod {
     }
 }
 
-/// Merge a pull request.
-///
-/// With no `method`, `gh` prompts for one interactively; that is why this
-/// inherits stdio rather than capturing it. skim has restored the terminal by
-/// the time we get here, so the prompt behaves as it would when `gh` is run by
-/// hand.
+/// Merge a pull request. With no `method`, `gh` prompts for one, which is why
+/// this inherits stdio rather than capturing it.
 pub fn merge(
     number: u64,
     method: Option<MergeMethod>,
@@ -590,11 +530,8 @@ pub fn merge(
     run(&args)
 }
 
-/// JSON fields requested from `gh repo list`.
-///
-/// Only what a selector row and its preview can use. `gh` will happily return
-/// license, topics, and fork parentage; none of it helps choose between two
-/// repositories, and all of it costs response size on an org with hundreds.
+/// JSON fields requested from `gh repo list`: only what a selector row and its
+/// preview can use.
 const REPO_FIELDS: &str =
     "nameWithOwner,description,isPrivate,isArchived,isFork,primaryLanguage,pushedAt";
 
@@ -675,11 +612,8 @@ pub fn parse_repos(data: &str) -> Result<Vec<Repo>> {
     }
     let mut repos: Vec<Repo> =
         serde_json::from_str(data).context("parsing `gh repo list` output")?;
-    // As in [`parse_prs`]: a description is whatever its owner typed. Left out
-    // of this is `name_with_owner`, which is not display text — it is the slug
-    // handed to `gh repo clone` and the directory it lands in, and quietly
-    // rewriting either would clone something other than what was asked for.
-    // [`valid_slug`] is what guards that one.
+    // `name_with_owner` is deliberately left alone: it is not display text but
+    // the slug handed to `gh repo clone`, guarded by [`valid_slug`].
     for repo in &mut repos {
         repo.description = term::one_row(&repo.description);
         if let Some(language) = &mut repo.primary_language {
@@ -689,14 +623,9 @@ pub fn parse_repos(data: &str) -> Result<Vec<Repo>> {
     Ok(repos)
 }
 
-/// Whether `slug` is a GitHub `owner` or `owner/repo` scriv will act on.
-///
-/// A slug is not display text: it is a positional argument to `gh` and a
-/// component of the path a clone is written to. One starting with `-` is read
-/// by `gh` as a flag rather than a name, and one containing `..` or an extra
-/// `/` escapes `<root>/<owner>/<repo>` through the `Path::join` that builds it.
-/// GitHub itself allows neither in a real name, so refusing them costs nothing
-/// and does not depend on `gh` continuing to reject them first.
+/// Whether `slug` is a GitHub `owner` or `owner/repo` scriv will act on. It is
+/// a positional argument to `gh` and a component of the clone path: a leading
+/// `-` reads as a flag, and `..` or an extra `/` escapes the root.
 pub fn valid_slug(slug: &str) -> bool {
     let parts: Vec<&str> = slug.split('/').collect();
     (1..=2).contains(&parts.len())
@@ -711,12 +640,8 @@ pub fn valid_slug(slug: &str) -> bool {
         })
 }
 
-/// Every repository belonging to `owner`.
-///
-/// `--limit` is what drives pagination: `gh` pages through the API until it has
-/// that many, so one generous number stands in for a page loop. It is exposed
-/// rather than hard-coded because an org with more repositories than the limit
-/// would otherwise silently show a truncated list.
+/// Every repository belonging to `owner`. `--limit` drives `gh`'s pagination,
+/// and is exposed so an org larger than it is not silently truncated.
 pub fn list_repos(owner: &str, limit: usize) -> Result<Vec<Repo>> {
     let limit = limit.to_string();
     let out = capture(&[
@@ -731,12 +656,8 @@ pub fn list_repos(owner: &str, limit: usize) -> Result<Vec<Repo>> {
     parse_repos(&out)
 }
 
-/// Clone `owner/repo` into `dest`.
-///
-/// Output is captured rather than inherited: clones run concurrently, and
-/// several `git` progress meters writing to one terminal at once is illegible.
-/// The child's own diagnostics are returned on failure so the caller can
-/// attribute them to the right repository.
+/// Clone `owner/repo` into `dest`. Output is captured because clones run
+/// concurrently, and returned on failure so the caller can attribute it.
 pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
     let output = Command::new("gh")
         .args(["repo", "clone", name_with_owner, &dest.to_string_lossy()])
@@ -755,29 +676,16 @@ pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Open the GitHub page of the repository checked out at `dir`.
-///
-/// `gh repo view --web` is what does the opening, for the same reasons as
-/// [`view_web`]: it knows the host, so GitHub Enterprise works, and it defers to
-/// `$BROWSER` and the platform's opener.
-///
-/// Which repository that is comes from `dir`'s git remotes rather than from the
-/// path, because the two disagree often enough to matter — a directory renamed
-/// on clone, or a fork whose `origin` is not the owner it sits under. Asking git
-/// is the answer scriv would otherwise guess at.
+/// Open the GitHub page of the repository checked out at `dir`. Which
+/// repository that is comes from `dir`'s git remotes, not its path — a renamed
+/// clone or a fork makes the two disagree.
 pub fn view_repo_web(dir: &Path) -> Result<()> {
     run_at(Some(dir), &["repo", "view", "--web"])
 }
 
-/// The authenticated user's login, and the organisations they belong to.
-///
-/// This is the answer to "which owners do you actually clone from" on a machine
-/// with nothing cloned yet, where looking at the filesystem would find nothing.
-///
-/// Failure is returned rather than swallowed. The caller treats these as
-/// suggestions and carries on without them, but "`gh` is not installed" and
-/// "you belong to no organisations" are different facts, and only one of them
-/// is worth telling the user about.
+/// The authenticated user's login, and the organisations they belong to — the
+/// owners to suggest on a machine with nothing cloned yet. Failure is returned
+/// rather than swallowed, since a missing `gh` is worth saying.
 pub fn owners() -> Result<Vec<String>> {
     let mut out = Vec::new();
     let login = capture(&["api", "user", "--jq", ".login"])?;
@@ -788,19 +696,13 @@ pub fn owners() -> Result<Vec<String>> {
 }
 
 /// Run `gh` with the terminal attached, in the working directory scriv was
-/// invoked from.
-///
-/// `gh` writes its own diagnostics, so a failure is [`Reported`] rather than
-/// restated in vaguer words on top.
+/// invoked from. `gh` writes its own diagnostics, so a failure is [`Reported`].
 fn run(args: &[&str]) -> Result<()> {
     run_at(None, args)
 }
 
-/// [`run`], optionally somewhere else.
-///
-/// Most `gh` subcommands resolve which repository they are about from the git
-/// remotes of the directory they run in, which is the whole reason `dir` exists:
-/// a command about a repository the user selected has to run *there*, not here.
+/// [`run`], optionally somewhere else. Most `gh` subcommands resolve which
+/// repository they are about from the directory they run in.
 fn run_at(dir: Option<&Path>, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("gh");
     cmd.args(args);
@@ -832,13 +734,8 @@ fn capture(args: &[&str]) -> Result<String> {
     Ok(into_string(output.stdout))
 }
 
-/// Take ownership of a child's output as a `String`.
-///
-/// `String::from_utf8_lossy(&bytes).into_owned()` would copy the whole buffer
-/// even when it is already valid UTF-8, which it always is here — a `gh repo
-/// list` over a large organisation is megabytes of JSON. This reuses the
-/// buffer, and only pays the copy on the malformed input that would otherwise
-/// have been an error.
+/// Take ownership of a child's output as a `String`, reusing the buffer when it
+/// is already valid UTF-8 — `gh repo list` over a large org is megabytes.
 fn into_string(bytes: Vec<u8>) -> String {
     String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
@@ -866,11 +763,6 @@ mod tests {
          "isDraft":true,"state":"OPEN","updatedAt":"2026-07-20T11:00:00Z"}
     ]"#;
 
-    /// A pull request title is written by whoever opened it — on a public
-    /// repository, by anyone — and `pr ls` writes it straight to a terminal,
-    /// which acts on escape sequences rather than showing them. Unfiltered,
-    /// `\x1b[32m` would let a title paint its own row green, so a pull request
-    /// with failing checks could be made to look like one that passed.
     #[test]
     fn a_pull_request_cannot_carry_an_escape_into_a_listing() {
         let prs = parse_prs(
@@ -887,13 +779,9 @@ mod tests {
         }
         assert!(!pr.author_login().contains('\x1b'));
         assert!(!pr.status_check_rollup[0].name.contains('\x1b'));
-        // The verdict is unchanged: sanitising is about what is drawn, not
-        // about what the checks said.
         assert_eq!(pr.checks().failed, 1);
     }
 
-    /// A description is the same kind of foreign text, and the clone selector
-    /// draws it beside every row.
     #[test]
     fn a_repository_description_cannot_carry_an_escape_either() {
         let repos = parse_repos(
@@ -903,14 +791,10 @@ mod tests {
         .unwrap();
         assert_eq!(repos[0].description, "a[2Kb");
         assert_eq!(repos[0].language(), "R[31must");
-        // The slug is not display text and is left exactly as it arrived —
-        // rewriting it would clone something other than what was named.
+        // Not display text: rewriting it would clone something else.
         assert_eq!(repos[0].name_with_owner, "acme/api");
     }
 
-    /// A slug is a positional argument to `gh` and a component of the path a
-    /// clone lands in. A leading `-` is read as a flag; `..` and an extra `/`
-    /// walk out of `<root>/<owner>/<repo>`.
     #[test]
     fn only_names_github_could_have_issued_are_valid_slugs() {
         for good in ["joakimen", "acme/api", "a-b_c.d", "acme/my.repo"] {
@@ -980,8 +864,6 @@ mod tests {
         assert_eq!(tag_for(false, "CLOSED"), "closed");
     }
 
-    /// The rollup arrives as a mix of `CheckRun` and `StatusContext` objects,
-    /// which report their outcome in entirely different fields.
     const CHECKS: &str = r#"[
         {"number":1,"title":"Mixed","headRefName":"m","state":"OPEN",
          "mergeable":"MERGEABLE","statusCheckRollup":[
@@ -1013,8 +895,6 @@ mod tests {
         assert_eq!(checks.total(), 6);
     }
 
-    /// One failure outranks any number of green checks: that is the thing the
-    /// list has to surface.
     #[test]
     fn one_failure_makes_the_set_failing() {
         assert_eq!(mixed().checks().tag(), "fail");
@@ -1038,8 +918,6 @@ mod tests {
         );
     }
 
-    /// A repository with no CI must not look like one whose checks have not
-    /// started yet.
     #[test]
     fn no_checks_is_blank_not_pending() {
         let checks = Checks::default();
@@ -1048,8 +926,6 @@ mod tests {
         assert_eq!(checks.summary(), "");
     }
 
-    /// A skipped matrix leg or a neutral check is the normal case, not a
-    /// failure — GitHub's own rollup treats both as non-blocking.
     #[test]
     fn skipped_and_neutral_pass() {
         assert_eq!(result_for("COMPLETED", "SKIPPED", ""), CheckResult::Pass);
@@ -1067,8 +943,6 @@ mod tests {
         assert_eq!(mixed().checks().summary(), "2 failed, 1 pending, 3 passed");
     }
 
-    /// The preview names what is wrong, so failures have to come before the
-    /// checks that are merely still running.
     #[test]
     fn failing_checks_are_listed_failures_first() {
         let pr = mixed();
@@ -1084,17 +958,12 @@ mod tests {
         assert_eq!(mixed().mergeable(), Mergeable::Clean);
     }
 
-    /// GitHub computes mergeability in the background and says `UNKNOWN` until
-    /// it has — and always for a merged pull request. Rendering that as
-    /// "conflict", or as "clean", would be a guess either way.
     #[test]
     fn unknown_mergeability_renders_as_nothing() {
         assert_eq!(Mergeable::parse("UNKNOWN").tag(), "");
         assert_eq!(Mergeable::parse("").tag(), "");
     }
 
-    /// A pull request from before these fields were requested — or from a `gh`
-    /// that does not return them — must still parse.
     #[test]
     fn check_fields_are_optional() {
         let prs = parse_prs(SAMPLE).unwrap();
@@ -1102,12 +971,6 @@ mod tests {
         assert_eq!(prs[0].mergeable(), Mergeable::Unknown);
     }
 
-    /// The whole reason these particular glyphs were chosen: every one of them
-    /// occupies exactly [`GLYPH_WIDTH`] terminal columns, so a column of them
-    /// lines up without measuring anything per row. Reaching for a wide glyph
-    /// (any emoji) or an ambiguous-width one (`●`, `◆`, `≠`) would shift every
-    /// row it appeared on, and the damage would show only on the rows that
-    /// happened to use it.
     #[test]
     fn every_status_glyph_is_one_column_wide() {
         use unicode_width::UnicodeWidthStr;
@@ -1130,8 +993,6 @@ mod tests {
         }
     }
 
-    /// A merge list is read for one thing: what can go in now. State says
-    /// nothing there — every open pull request is the same green.
     #[test]
     fn readiness_is_not_state() {
         let ready = mixed();
@@ -1145,8 +1006,6 @@ mod tests {
         assert_eq!(prs[1].readiness(), Readiness::Unavailable);
     }
 
-    /// A merged pull request must never colour as ready, however green its
-    /// checks were at the time.
     #[test]
     fn merged_is_never_ready() {
         let pr = parse_prs(
@@ -1161,8 +1020,6 @@ mod tests {
         assert_eq!(pr.readiness(), Readiness::Unavailable);
     }
 
-    /// A conflict blocks even when every check is green — the two facts are
-    /// independent, and either one is enough.
     #[test]
     fn a_conflict_blocks_a_green_pull_request() {
         let pr = parse_prs(

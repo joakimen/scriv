@@ -1,14 +1,12 @@
 //! Git branch enumeration and checkout.
 //!
-//! Talking to git is a subprocess concern, but the interesting part — deciding
-//! which refs are local, which are remote-only, and what a checkout of a given
-//! name should actually do — is pure and lives here as functions over plain
-//! data ([`parse_ref_lines`], [`classify`], [`resolve`]), covered by tests.
+//! The decisions — which refs are local, which are remote-only, what a checkout
+//! of a given name means — are pure functions over plain data
+//! ([`parse_ref_lines`], [`classify`], [`resolve`]).
 //!
-//! Branches are enumerated with a single `for-each-ref` over `refs/heads` and
-//! `refs/remotes`, so local and remote branches arrive in one pass, already
-//! ordered by commit recency; [`by_relevance`] then groups that order into
-//! current branch, local, remote-only without asking git anything more.
+//! One `for-each-ref` over `refs/heads` and `refs/remotes` enumerates both in a
+//! pass already ordered by commit recency; [`by_relevance`] regroups it without
+//! asking git anything more.
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -123,10 +121,8 @@ pub enum Checkout {
     Track { remote_ref: String },
 }
 
-/// Parse `for-each-ref` output written with the [`SEP`]-joined format.
-///
-/// Rows with too few fields are skipped rather than failing the listing — a
-/// malformed ref should not make the whole command unusable.
+/// Parse `for-each-ref` output written with the [`SEP`]-joined format. Rows
+/// with too few fields are skipped rather than failing the listing.
 pub fn parse_ref_lines(output: &str) -> Vec<RefLine> {
     output
         .lines()
@@ -162,13 +158,9 @@ fn split_remote(short: &str) -> Option<(&str, &str)> {
         .filter(|(r, b)| !r.is_empty() && !b.is_empty())
 }
 
-/// Fold ref rows into the branch list shown to the user.
-///
-/// A local branch whose name also exists on a remote is [`BranchKind::Tracked`]
-/// rather than two rows; a remote ref with no local counterpart becomes a
-/// [`BranchKind::Remote`] row. `origin/HEAD` and friends are dropped — they are
-/// pointers to a default branch, not branches of their own. Input order (git's
-/// `--sort`) is preserved.
+/// Fold ref rows into the branch list shown to the user: a local branch whose
+/// name also exists on a remote is [`BranchKind::Tracked`] rather than two
+/// rows, and `origin/HEAD` is dropped. Input order is preserved.
 pub fn classify(lines: &[RefLine]) -> Vec<Branch> {
     let locals: HashSet<&str> = lines
         .iter()
@@ -248,18 +240,9 @@ fn tier(branch: &Branch) -> u8 {
 }
 
 /// Order branches by how likely one is to be the one wanted: the current
-/// branch, then local branches, then remote-only ones, each block most
-/// recently committed first.
-///
-/// The recency half is free — [`branches`] asks `for-each-ref` for
-/// `--sort=-committerdate`, so the input already arrives newest first and this
-/// is a stable sort that only regroups it. Nothing here reads a ref or parses a
-/// date, which is what keeps a repository with a thousand stale remote branches
-/// as cheap to list as an empty one.
-///
-/// Grouping before recency is deliberate: a remote branch someone else pushed
-/// an hour ago is newer than anything local, but it is not what the person who
-/// typed `branch checkout` in their own working tree is usually reaching for.
+/// branch, then local branches, then remote-only ones, each block most recently
+/// committed first. The recency half comes from git's own `--sort`, so this
+/// only regroups it.
 pub fn by_relevance(mut branches: Vec<Branch>) -> Vec<Branch> {
     // Stable, so committer-date order survives inside each block.
     branches.sort_by_key(tier);
@@ -324,19 +307,13 @@ fn capture(args: &[&str]) -> Result<String> {
             stderr.to_string()
         });
     }
-    // Reuse the buffer rather than copying it: `for-each-ref` over a repository
-    // with thousands of refs is not small, and it is always valid UTF-8. The
-    // copy is paid only on the malformed output that would have been lossy
-    // anyway.
+    // Reuse the buffer; the copy is paid only on malformed output.
     Ok(String::from_utf8(output.stdout)
         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
-/// Run git with `args`, letting it write straight to the terminal so its
-/// progress and "Switched to branch …" messages reach the user unchanged.
-///
-/// A failure is [`Reported`]: git has already said why on stderr, in wording
-/// the user knows, so scriv exits with its status and stays quiet.
+/// Run git with `args`, letting it write straight to the terminal. A failure is
+/// [`Reported`], since git has already said why.
 fn passthrough(args: &[&str]) -> Result<()> {
     let status = Command::new("git")
         .args(args)
@@ -371,10 +348,7 @@ pub fn ensure_repo() -> Result<()> {
 }
 
 /// The root of the repository the working directory is in, if it is in one.
-///
-/// Absence is an answer here rather than an error: a command that adapts to
-/// where you are standing needs to know whether you are standing anywhere, and
-/// "not in a repository" is an ordinary case with its own behaviour.
+/// Absence is an answer rather than an error.
 pub fn repo_root() -> Option<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -409,26 +383,18 @@ pub fn branches() -> Result<Vec<Branch>> {
 
 /// Refresh remote-tracking refs, dropping ones deleted upstream.
 ///
-/// Captured rather than passed through, which is the one place scriv silences
-/// git on purpose. `git fetch --all` narrates itself — `Fetching origin`,
-/// per-remote progress — and neither half of that is wanted here. The line goes
-/// to stdout, where `scriv branch sel` is writing a branch name for a shell to
-/// read; the progress goes to stderr, where it would scribble over the spinner
-/// the caller draws and leave the terminal to be redrawn underneath the selector.
-///
-/// A failure still speaks: [`capture`] returns git's stderr as the error, so
-/// "could not read from remote repository" arrives as scriv's error message
-/// rather than as noise nobody asked for.
+/// The one place scriv silences git on purpose: `git fetch --all` narrates
+/// itself onto the stdout `branch sel` writes a branch name to, and over the
+/// spinner on stderr. A failure still speaks, as [`capture`] returns git's
+/// stderr as the error.
 pub fn fetch() -> Result<()> {
     capture(&["fetch", "--all", "--prune"])
         .context("fetching from remotes")
         .map(|_| ())
 }
 
-/// Perform a resolved checkout.
-///
-/// `switch --track origin/foo` creates local `foo` with its upstream already
-/// set, which is exactly the two-step the user would otherwise do by hand.
+/// Perform a resolved checkout. `switch --track origin/foo` creates local `foo`
+/// with its upstream already set.
 pub fn checkout(action: &Checkout) -> Result<()> {
     match action {
         Checkout::Switch(name) => passthrough(&["switch", "--", name]),
@@ -473,8 +439,6 @@ mod tests {
         assert!(!got[1].head);
     }
 
-    /// The subject is the final field, so separators inside it must not split
-    /// the row or truncate the message.
     #[test]
     fn subject_keeps_trailing_separators() {
         let out = format!("refs/heads/main{SEP} {SEP}{SEP}now{SEP}fix: a{SEP}b");
@@ -507,8 +471,6 @@ mod tests {
         assert_eq!(got[0].kind, BranchKind::Local);
     }
 
-    /// An upstream that has been deleted from the remote leaves the branch
-    /// local-only, not "both".
     #[test]
     fn stale_upstream_is_local_only() {
         let got = classify(&[line("refs/heads/gone", false, "origin/gone")]);
@@ -525,8 +487,6 @@ mod tests {
         assert_eq!(got[0].kind, BranchKind::Tracked);
     }
 
-    /// The remote prefix is kept, so a slash-heavy branch name stays
-    /// unambiguous and `switch --track` gets a ref it can resolve.
     #[test]
     fn remote_only_keeps_its_remote_prefix() {
         let got = classify(&[line("refs/remotes/origin/feat/x", false, "")]);
@@ -550,8 +510,6 @@ mod tests {
         assert_eq!(got[0].name, "origin/main");
     }
 
-    /// The same branch on two remotes, with no local copy, stays two rows —
-    /// the user has to say which remote to track.
     #[test]
     fn same_branch_on_two_remotes_lists_both() {
         let got = classify(&[
@@ -576,8 +534,6 @@ mod tests {
         );
     }
 
-    /// Current branch, then local, then remote-only — regardless of where
-    /// git's date order put them.
     #[test]
     fn relevance_groups_current_then_local_then_remote() {
         let got = by_relevance(classify(&[
@@ -592,8 +548,6 @@ mod tests {
         );
     }
 
-    /// Within a block, git's `--sort=-committerdate` order has to survive: the
-    /// sort is stable, and that is the entire recency half of the ordering.
     #[test]
     fn relevance_keeps_commit_order_inside_each_group() {
         let got = by_relevance(classify(&[
@@ -613,8 +567,6 @@ mod tests {
         );
     }
 
-    /// A detached HEAD has no current branch row; the listing must still be
-    /// grouped rather than falling back to raw date order.
     #[test]
     fn relevance_handles_no_current_branch() {
         let got = by_relevance(classify(&[
@@ -674,8 +626,6 @@ mod tests {
         );
     }
 
-    /// Typing the remote form of a branch that is already local must switch to
-    /// the local branch, not detach HEAD at the remote ref.
     #[test]
     fn remote_form_of_a_local_branch_switches_locally() {
         assert_eq!(

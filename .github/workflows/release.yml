@@ -9,16 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  # Each target names the runner it is built on. Linux builds natively on both
-  # architectures, because a cross-linker would have to be installed first.
-  # Both macOS targets build on the arm64 runner: Apple's linker produces
-  # x86_64 binaries without help, and `rust-toolchain.toml` already installs the
-  # std for every target here, so nothing is needed beyond `--target`.
-  #
-  # Do not add a `macos-13` runner back. GitHub keeps only the latest two macOS
-  # versions and retired that label, so a job asking for it does not fail — it
-  # queues until it expires, which held the v0.2.1 release for hours without
-  # ever reporting an error.
+  # Do not add a `macos-13` runner back. GitHub retired that label, and a job
+  # asking for it does not fail — it queues until it expires, which held the
+  # v0.2.1 release for hours without ever reporting an error.
   build:
     strategy:
       matrix:
@@ -37,24 +30,18 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      # `fetch-depth: 0` is load-bearing, not thoroughness. `build.rs` decides
-      # whether this is a release by asking `git describe --tags
-      # --exact-match`, and the default shallow checkout fetches no tags at
-      # all — so every released binary would answer `--version` with a
-      # development string naming the commit it was built from.
+      # `fetch-depth: 0` is load-bearing: `build.rs` asks `git describe --tags
+      # --exact-match`, and a shallow checkout fetches no tags at all.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      # `rustup show` installs the pinned toolchain; the target is added
-      # explicitly rather than trusted to rust-toolchain.toml's `targets`, which
-      # is honoured only when the toolchain is first installed from that file.
-      # `target add` is idempotent, so saying it twice costs nothing.
+      # The target is added explicitly: rust-toolchain.toml's `targets` is
+      # honoured only when the toolchain is first installed from that file.
       - name: Install toolchain (pinned by rust-toolchain.toml)
         run: |
           rustup show
           rustup target add ${{ matrix.target }}
-      # Keyed by target: two of these jobs share a runner, and a cache entry
-      # holding another architecture's artifacts is worse than a cold cache.
+      # Keyed by target: two of these jobs share a runner.
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: ${{ matrix.target }}
@@ -68,9 +55,6 @@ jobs:
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ${{ env.ASSET }}
-      # Handed to `publish` rather than uploaded to the release from here: the
-      # release is created once with everything attached, and an artifact is the
-      # only way a job on another runner can contribute to that one call.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.ASSET }}
@@ -79,14 +63,9 @@ jobs:
             ${{ env.ASSET }}.sha256
           if-no-files-found: error
 
-  # One job, one `gh release create`, every asset in that single call.
-  #
-  # Releases here are immutable, which means one is sealed the moment it is
-  # published: a later `gh release upload` fails with "Cannot upload assets to an
-  # immutable release". Creating the release from inside the build matrix
-  # therefore cannot work however the race is resolved — the first target to
-  # finish publishes an empty release and locks the other three out. So the
-  # matrix only builds, and publishing waits for all of it.
+  # One job, one `gh release create`, every asset in that single call. Releases
+  # here are immutable — a later `gh release upload` fails — so the matrix
+  # cannot publish, only build.
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -96,9 +75,8 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
-      # `GH_REPO` because this job has no checkout — it only needs the artifacts
-      # — and `gh` otherwise resolves the repository by asking git for a remote,
-      # failing with "not a git repository" before it reaches the API.
+      # `GH_REPO` because this job has no checkout, and `gh` otherwise resolves
+      # the repository by asking git for a remote.
       - name: Publish the release with every asset attached
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,10 +84,8 @@ jobs:
         run: |
           set -eu
           mapfile -t assets < <(find dist -type f | sort)
-          # Eight files: a tarball and a checksum for each of the four targets.
-          # Fewer means a target dropped out without failing the matrix, and a
-          # release missing a platform is worse than a release that did not
-          # happen — it cannot be fixed afterwards.
+          # A tarball and a checksum for each of the four targets. An immutable
+          # release missing a platform cannot be fixed afterwards.
           [ "${#assets[@]}" -eq 8 ] || {
             printf 'expected 8 assets, found %d:\n' "${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]}" >&2

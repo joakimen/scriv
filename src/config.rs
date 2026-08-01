@@ -13,9 +13,7 @@
 //!   clobber hand-written settings or comments.
 //!
 //! A key belongs in a command's table when exactly one command reads it;
-//! anything genuinely shared stays at the top level. That is why `[selector]`
-//! sits beside `[repo]` rather than inside it, and why `display` — a repo
-//! path-rendering choice no other selector has — sits in `[repo]`.
+//! anything genuinely shared stays at the top level.
 
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
@@ -31,20 +29,16 @@ pub const XDG_ENV_VAR: &str = "XDG_CONFIG_HOME";
 
 const DEFAULT_IGNORED_DIRS: &[&str] = &["node_modules", "vendor", "dist", "build", "target"];
 
-/// How deep below [`RepoConfig::root`] a repository sits: `<root>/<owner>/<repo>`.
-///
-/// Fixed rather than configurable. The root mirrors GitHub's own namespace, so
-/// the depth is a property of that layout, not a preference — and fixing it is
-/// what lets `repo clone` know where a clone belongs without being told.
+/// How deep below [`RepoConfig::root`] a repository sits:
+/// `<root>/<owner>/<repo>`. Fixed rather than configurable, which is what lets
+/// `repo clone` know where a clone belongs without being told.
 pub const ROOT_DEPTH: usize = 2;
 
 /// Stand-in label for a repository whose owner carries no configured label.
 pub const UNLABELLED: &str = "-";
 
 /// Owner labels: a label to the GitHub owners it covers. Insertion order is
-/// preserved so labels sort, and take their leftover colours, in the order they
-/// were written — `work` and `personal` are coloured by name and do not depend
-/// on it.
+/// preserved so labels sort, and take their leftover colours, as written.
 pub type Labels = IndexMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -69,18 +63,15 @@ pub struct RepoConfig {
     /// The directory holding `<owner>/<repo>` checkouts, e.g.
     /// `~/dev/github.com`. Everything cloned lands here.
     pub root: Option<String>,
-    /// Repositories outside [`Self::root`], listed individually. An escape
-    /// hatch for checkouts that predate the single-root layout — not somewhere
+    /// Repositories outside [`Self::root`], listed individually. Not somewhere
     /// `clone` will ever write.
     pub extra: Vec<String>,
-    /// Owner labels: a label to the GitHub owners it covers, one label to many
-    /// owners, so `work` can span several orgs and colour as one.
+    /// Owner labels: a label to the GitHub owners it covers, so `work` can
+    /// span several orgs and colour as one.
     ///
-    /// Written as an inline table — `labels = { work = ["acme"] }` — so it is
-    /// an ordinary key of `[repo]` rather than a subtable header. A
-    /// `[repo.labels]` header parses identically, but swallows every bare
-    /// `[repo]` key written after it, which in a hand-edited file is a silent
-    /// misconfiguration rather than an error.
+    /// Written as an inline table — `labels = { work = ["acme"] }`. A
+    /// `[repo.labels]` header parses identically but swallows every bare
+    /// `[repo]` key written after it.
     pub labels: Labels,
     /// Directory names skipped while searching for repositories.
     pub ignore: Vec<String>,
@@ -102,11 +93,8 @@ impl Default for RepoConfig {
 }
 
 impl RepoConfig {
-    /// The label `owner` carries, or `None` when it has none.
-    ///
-    /// Matched case-insensitively: GitHub treats `CapraLifecycle` and
-    /// `capralifecycle` as the same owner, and a directory on disk may be
-    /// spelled either way.
+    /// The label `owner` carries, or `None` when it has none. Matched
+    /// case-insensitively, as GitHub treats owner names.
     pub fn label_of(&self, owner: &str) -> Option<&str> {
         self.labels
             .iter()
@@ -114,8 +102,7 @@ impl RepoConfig {
             .map(|(label, _)| label.as_str())
     }
 
-    /// Every owner named in the config, in label order — the owners worth
-    /// offering first when there is an owner to choose.
+    /// Every owner named in the config, in label order.
     pub fn known_owners(&self) -> Vec<&str> {
         self.labels.values().flatten().map(String::as_str).collect()
     }
@@ -126,23 +113,14 @@ impl RepoConfig {
 #[serde(default)]
 pub struct HistoryConfig {
     /// fish's history file, when it is not the default
-    /// `$XDG_DATA_HOME/fish/fish_history`.
-    ///
-    /// The only reason to set this is a named session: `set -U fish_history
-    /// work` makes fish read `work_history` instead, and it does not export
-    /// that variable, so scriv has no way to find out on its own.
+    /// `$XDG_DATA_HOME/fish/fish_history` — a named session (`set -U
+    /// fish_history work`), which fish does not export.
     pub file: Option<String>,
 }
 
-/// Select the editor `scriv edit` launches: `$VISUAL`, then `$EDITOR` — the order
-/// every other terminal tool uses.
-///
-/// There is deliberately no config key on top. An editor is a property of the
-/// shell session, already stated once where every other tool reads it, and a
-/// third place to set it is a third place to forget it is set.
-///
-/// Blank and whitespace-only values count as unset: `EDITOR=""` is a common way
-/// to say "no editor", and honouring it literally would try to spawn `""`.
+/// Select the editor `scriv edit` launches: `$VISUAL`, then `$EDITOR`. There is
+/// deliberately no config key on top. Blank and whitespace-only values count as
+/// unset.
 pub fn resolve_editor(visual: Option<&str>, editor: Option<&str>) -> Option<String> {
     [visual, editor]
         .into_iter()
@@ -153,12 +131,8 @@ pub fn resolve_editor(visual: Option<&str>, editor: Option<&str>) -> Option<Stri
 }
 
 /// Split an editor command into program and arguments on whitespace, so
-/// `EDITOR="code -w"` spawns `code` with `-w` rather than looking for a program
-/// with a space in its name.
-///
-/// Whitespace is the whole of the syntax — no quoting, no escapes — which is
-/// what git's own `core.editor` fallback does for the simple cases and covers
-/// every editor invocation short of an embedded shell command.
+/// `EDITOR="code -w"` spawns `code` with `-w`. Whitespace is the whole of the
+/// syntax — no quoting, no escapes.
 pub fn split_editor(command: &str) -> Vec<String> {
     command.split_whitespace().map(str::to_string).collect()
 }
@@ -170,10 +144,8 @@ pub struct PathEntry {
     pub depth: usize,
 }
 
-/// Settings for the built-in fuzzy selector (skim), shared by every command that
-/// opens one.
-///
-/// The selector is compiled in — there is no external `fzf` dependency.
+/// Settings for the built-in fuzzy selector (skim), shared by every command
+/// that opens one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectorConfig {
     /// Finder height, e.g. `"50%"` or `"20"`. Passed through to skim.
@@ -220,12 +192,9 @@ impl Default for SelectorConfig {
     }
 }
 
-/// The serialized shape of `config.toml`.
-///
-/// Every key of the layout that preceded `[repo]` is still spelled out here, at
-/// the top level, so an old config can be recognised and explained rather than
-/// half-read: serde ignores what it does not know, and a silently ignored
-/// `root` would look like a config that simply found no repositories.
+/// The serialized shape of `config.toml`. Superseded keys are still spelled
+/// out so an old config is explained rather than half-read — serde ignores what
+/// it does not know.
 #[derive(Deserialize)]
 struct RawToml {
     #[serde(default)]
@@ -243,16 +212,12 @@ struct RawToml {
     editor: Option<String>,
     /// The `paths` key from the layout before that. See [`migration_hint`].
     paths: Option<LegacyPaths>,
-    /// `[picker]`, renamed to `[selector]`. Present for detection only, so a
-    /// config written under the old name is explained rather than silently
-    /// ignored back to the defaults.
+    /// `[picker]`, renamed to `[selector]`. Present for detection only.
     picker: Option<RawSelector>,
 }
 
 /// `[selector]` as written, including the `display` key that moved to `[repo]`.
-///
-/// Every field is optional so an absent one takes [`SelectorConfig`]'s default
-/// while an explicitly written one is preserved.
+/// Every field is optional so an absent one takes [`SelectorConfig`]'s default.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct RawSelector {
@@ -331,11 +296,9 @@ impl LegacyPaths {
     }
 }
 
-/// Render a `[repo]` section, as text the user can paste.
-///
-/// `labels` is written as an inline table rather than a `[repo.labels]` header
-/// precisely because this is advice being pasted into a file that already has
-/// other keys: a header would capture whatever follows it.
+/// Render a `[repo]` section, as text the user can paste. `labels` is an
+/// inline table, since a `[repo.labels]` header would capture whatever the
+/// user has written after it.
 fn render_repo_section(
     root: &str,
     extra: &[String],
@@ -372,13 +335,8 @@ fn render_repo_section(
 }
 
 /// Turn an old `paths` config into the config that replaces it, as text the
-/// user can paste.
-///
-/// The old format encoded the owner in the path — `~/dev/github.com/joakimen`
-/// at depth 1 — which is exactly the two facts the new format wants stated
-/// separately: one root, and which owners carry which label. An entry that does
-/// not fit that shape (`~/bin` at depth 0) becomes an `extra` path, since that
-/// is what `extra` is for.
+/// user can paste. An entry that does not fit the `<root>/<owner>` shape
+/// becomes an `extra` path.
 pub fn migration_hint(paths: &LegacyPaths) -> String {
     let mut roots: IndexMap<String, usize> = IndexMap::new();
     let mut labels: Labels = Labels::new();
@@ -456,9 +414,9 @@ fn legacy_flat_error(flat: &FlatLayout) -> anyhow::Error {
     )
 }
 
-/// The `[selector]` table replacing a `[picker]` one, carrying over the keys
-/// that were actually written — an absent key means the default, and writing
-/// one out would freeze today's default into the user's file.
+/// The `[selector]` table replacing a `[picker]` one, carrying over only the
+/// keys that were actually written: writing out an absent one would freeze
+/// today's default into the user's file.
 fn renamed_picker_table(picker: &RawSelector) -> String {
     let mut table = String::from("[selector]\n");
     if let Some(height) = &picker.height {
@@ -475,11 +433,6 @@ fn renamed_picker_table(picker: &RawSelector) -> String {
 
 /// The error raised for a config whose finder settings are still under
 /// `[picker]`.
-///
-/// Silently reading them under both names would leave the old spelling working
-/// forever, and silently ignoring them would reset a customised height to the
-/// default without a word — so the table is named back to the user with the
-/// keys they wrote already in it.
 fn renamed_picker_error(picker: &RawSelector) -> anyhow::Error {
     let table = renamed_picker_table(picker);
 
@@ -538,9 +491,8 @@ struct RawJson {
     paths: Vec<PathEntry>,
 }
 
-/// Legacy `config.json` predates the root layout entirely, so it gets the same
-/// migration advice — pointed at a `config.toml`, which is what it should have
-/// become long before now.
+/// Legacy `config.json` predates the root layout, so it gets the same
+/// migration advice.
 fn parse_json(data: &str) -> Result<Config> {
     let raw: RawJson = serde_json::from_str(data).context("parsing configuration file")?;
     Err(legacy_paths_error(&LegacyPaths::Flat(raw.paths)))
@@ -575,11 +527,8 @@ fn config_dir(xdg_env: Option<&str>, home: &Path) -> PathBuf {
 
 /// Resolve the config file path by precedence:
 /// explicit `flag` > `SCRIV_CONFIG` > `config.toml` > legacy `config.json`.
-///
-/// `exists` reports whether a candidate path is present, passed in so the
-/// precedence rules stay testable without touching disk. When neither default
-/// candidate exists, the TOML path is returned so callers and error messages
-/// name the file the user is expected to create.
+/// With neither default present, the TOML path is returned, so errors name the
+/// file the user is expected to create.
 pub fn resolve_config_path(
     flag: Option<&str>,
     scriv_env: Option<&str>,
@@ -666,9 +615,8 @@ labels = { personal = ["joakimen"], work = ["capralifecycle", "nsbno"] }
         );
     }
 
-    /// The inline table is what the template teaches, because a `[repo.labels]`
-    /// header swallows any bare `[repo]` key written after it. Both spellings
-    /// have to keep working for anyone who prefers the header.
+    /// Both spellings have to keep working, though only the inline table is
+    /// safe to write after other `[repo]` keys.
     #[test]
     fn labels_accept_a_subtable_header_too() {
         let cfg = parse_toml(
@@ -685,8 +633,6 @@ work = ["acme"]
         assert_eq!(cfg.repo.label_of("acme"), Some("work"));
     }
 
-    /// A key written after an inline `labels` is still a `[repo]` key — the
-    /// ordering fragility the inline form exists to avoid.
     #[test]
     fn keys_after_inline_labels_stay_repo_keys() {
         let cfg = parse_toml(
@@ -701,8 +647,6 @@ ignore = ["node_modules"]
         assert_eq!(cfg.repo.label_of("acme"), Some("work"));
     }
 
-    /// One label covers many owners, which is the whole point: everything
-    /// touched for work colours alike however many orgs it spans.
     #[test]
     fn a_label_spans_several_owners() {
         let cfg =
@@ -712,8 +656,6 @@ ignore = ["node_modules"]
         assert_eq!(cfg.repo.label_of("joakimen"), None);
     }
 
-    /// GitHub owners are case-insensitive, and a directory on disk may be
-    /// spelled differently from the config.
     #[test]
     fn owner_lookup_ignores_case() {
         let cfg = parse_toml("[repo]\nlabels = { work = [\"CapraLifecycle\"] }\n").unwrap();
@@ -740,10 +682,6 @@ ignore = ["node_modules"]
         assert_eq!(cfg.repo.display, RepoDisplay::Relative);
     }
 
-    /// The old format is refused rather than half-understood — but the error
-    /// has to be worth reading, so it derives the replacement from what was
-    /// there. `<root>/<owner>` at depth 1 is exactly the two facts the new
-    /// format states separately.
     #[test]
     fn legacy_paths_config_is_rejected_with_a_migration() {
         let err = parse_toml(
@@ -775,7 +713,6 @@ depth = 1
         assert!(err.contains(r#"extra = ["~/bin"]"#), "{err}");
     }
 
-    /// The root is the one shared by most entries, not whichever came first.
     #[test]
     fn migration_selects_the_most_common_root() {
         let paths = LegacyPaths::Grouped(
@@ -796,8 +733,6 @@ depth = 1
         );
     }
 
-    /// A flat legacy list has no labels to carry over, but still needs a root
-    /// and must not lose any path.
     #[test]
     fn migration_handles_an_ungrouped_list() {
         let hint = migration_hint(&LegacyPaths::Flat(vec![
@@ -808,8 +743,6 @@ depth = 1
         assert!(hint.contains(r#"extra = ["~/bin"]"#), "{hint}");
     }
 
-    /// Legacy JSON predates the root layout too; it gets the same advice
-    /// instead of being silently half-read.
     #[test]
     fn legacy_json_is_rejected_with_a_migration() {
         let err = parse_json(r#"{ "paths": [{"path": "~/dev/github.com/joakimen", "depth": 1}] }"#)
@@ -819,9 +752,6 @@ depth = 1
         assert!(err.contains(r#"root = "~/dev/github.com""#), "{err}");
     }
 
-    /// The flat layout is refused with its own replacement written out, for the
-    /// same reason: serde would otherwise ignore every superseded key and the
-    /// config would look like one that simply found nothing.
     #[test]
     fn flat_layout_is_rejected_with_a_migration() {
         let err = parse_toml(
@@ -852,10 +782,6 @@ display = "tilde"
         assert!(err.contains("$EDITOR"), "{err}");
     }
 
-    /// `[picker]` is the name `[selector]` used to have. Reading it anyway would
-    /// keep the old spelling alive forever, and ignoring it would silently reset
-    /// a customised height — so it is refused, with the keys that were written
-    /// handed back under the new heading.
     #[test]
     fn a_picker_table_is_rejected_with_its_new_name() {
         let err = parse_toml(
@@ -876,9 +802,6 @@ preview_window = "down:40%"
         assert!(err.contains(r#"preview_window = "down:40%""#), "{err}");
     }
 
-    /// A `[picker]` carrying `display` has two things wrong with it. Reporting
-    /// only the table name would send the user back for a second error the
-    /// moment they fixed it.
     #[test]
     fn a_picker_table_carrying_display_says_where_display_went() {
         let err = parse_toml("[picker]\ndisplay = \"tilde\"\n")
@@ -888,9 +811,8 @@ preview_window = "down:40%"
         assert!(err.contains("[repo]"), "{err}");
     }
 
-    /// Advice that does not parse is not advice. Whatever either migration
-    /// error prints has to be a config the very next run accepts, or the user
-    /// pastes it and gets a second error.
+    /// Advice that does not parse is not advice: the printed replacement has
+    /// to be a config the very next run accepts.
     #[test]
     fn the_generated_replacements_parse() {
         let hint = migration_hint(&LegacyPaths::Grouped(
@@ -945,8 +867,6 @@ preview_window = "down:40%"
         assert_eq!(cfg.selector.preview_window, "down:40%");
     }
 
-    /// Every superseded key is detected on its own — a config that only set
-    /// `owners`, or only moved `display`, must not slip through.
     #[test]
     fn each_superseded_key_is_detected_alone() {
         for old in [
@@ -962,8 +882,6 @@ preview_window = "down:40%"
         }
     }
 
-    /// Only the superseded keys trigger it: a `[selector]` with no `display` is
-    /// exactly what the current format asks for.
     #[test]
     fn the_current_layout_is_not_mistaken_for_the_old_one() {
         let cfg = parse_toml(
@@ -1026,8 +944,6 @@ preview = false
         assert_eq!(parse_toml("[selector]\n").unwrap().selector.height, "50%");
     }
 
-    /// Unknown selector keys from older configs (e.g. `backend`) are ignored, not
-    /// an error.
     #[test]
     fn selector_ignores_unknown_keys() {
         let cfg = parse_toml("[selector]\nbackend = \"fzf\"\nheight = \"10\"\n").unwrap();
@@ -1147,7 +1063,6 @@ preview = false
         assert_eq!(resolve_editor(None, None), None);
     }
 
-    /// `EDITOR=""` means "no editor", not a program named "".
     #[test]
     fn editor_ignores_blank_values() {
         assert_eq!(

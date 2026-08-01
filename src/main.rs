@@ -3,10 +3,9 @@
 //! library crate.
 //!
 //! Top-level commands: `repo`, `file`, `branch`, `pr`, `proc` and `history`
-//! work with the things scriv finds; `edit` opens a file from the directory you
-//! are in;
-//! `config` manages its configuration; `init` prints shell integration. The
-//! help layout follows clap's default (description, usage, commands, options).
+//! work with the things scriv finds; `edit` opens a file from the directory the
+//! user is in; `config` manages its configuration; `init` prints shell
+//! integration.
 
 use std::process::ExitCode;
 
@@ -20,13 +19,8 @@ use scriv::select::Cancelled;
 use scriv::term::ColorChoice;
 use scriv::{Ctx, Reported, cmd, shell};
 
-/// Usage examples appended to the top-level help.
-///
-/// Three, and the three worth the most: what people open scriv for every day.
-/// Setup is not among them — `config init` is run once, and the README already
-/// walks someone through it — and neither is anything a `--help` away. A line
-/// per command group was thirteen lines of the same shape sitting directly
-/// below the list that already named every one of them.
+/// Usage examples appended to the top-level help. Three lines, and it stays
+/// three — see CLAUDE.md.
 const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv pr checkout            Select a GitHub pull request and check it out
   scriv branch switch          Select a branch and switch to it
@@ -526,8 +520,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         // A cancelled selector is a silent, conventional exit, not an error.
         Err(err) if err.is::<Cancelled>() => ExitCode::from(130),
-        // git and gh explain their own failures; pass their status through
-        // rather than printing a second, vaguer line on top.
+        // git and gh explain their own failures; pass the status through.
         Err(err) if err.is::<Reported>() => match err.downcast_ref::<Reported>() {
             Some(Reported(code)) if *code > 0 => ExitCode::from(*code as u8),
             _ => ExitCode::FAILURE,
@@ -560,8 +553,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             FileCmd::Rm { file } => cmd::file::remove(&ctx, file.as_deref()),
             FileCmd::Prune { yes } => cmd::file::prune(&ctx, yes),
         },
-        // No subcommand is `edit file` with whatever was given at the top
-        // level, so the two spellings cannot drift into behaving differently.
+        // No subcommand is `edit file`, dispatched through the same arm so
+        // the two spellings cannot drift apart.
         Command::Edit {
             command,
             files,
@@ -611,7 +604,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 force,
             } => {
                 // `--force` and `--signal` conflict, so this is a choice
-                // between the flag and the default rather than an override.
+                // between the flag and the default.
                 let signal = if force {
                     scriv::proc::Signal::KILL
                 } else {

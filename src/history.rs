@@ -1,11 +1,10 @@
 //! fish shell history: where the file lives, what is in it, and how one
 //! recorded command reads as a single selector row.
 //!
-//! fish writes each command to its history file as it is entered, so reading
-//! that file *is* reading the live history — there is no shell to ask, and
-//! `scriv history ls` works from anywhere. The one thing the file cannot say is
-//! which session it belongs to: fish keeps that in `$fish_history`, which it
-//! does not export, so a non-default session is named in the config instead.
+//! fish writes each command as it is entered, so reading the file *is* reading
+//! the live history. The one thing it cannot say is which session it belongs
+//! to: fish keeps that in `$fish_history`, which it does not export, so a
+//! non-default session is named in the config instead.
 //!
 //! Everything here is pure. The file read, the clock and the selector live in
 //! [`cmd::history`](crate::cmd::history).
@@ -45,12 +44,9 @@ pub fn history_path(configured: Option<&str>, xdg_data: Option<&str>, home: &Pat
 /// Read fish's history file into entries, oldest first — the order it stores
 /// them in.
 ///
-/// The format is one `- cmd:` line per command, with indented `when:`,
-/// `added_when:` and `paths:` lines under it. It looks like YAML and is not:
-/// newlines inside a command are escaped rather than quoted, which is what
-/// keeps one command to one line. Anything unrecognised is skipped rather than
-/// refused — a history file is decades of accumulated sessions, and one entry
-/// scriv cannot read must not cost the user the other twenty thousand.
+/// One `- cmd:` line per command, with indented `when:` and friends under it.
+/// It looks like YAML and is not: newlines inside a command are escaped rather
+/// than quoted. Anything unrecognised is skipped rather than refused.
 pub fn parse(data: &str) -> Vec<Entry> {
     let mut entries: Vec<Entry> = Vec::new();
     for line in data.lines() {
@@ -71,12 +67,9 @@ pub fn parse(data: &str) -> Vec<Entry> {
     entries
 }
 
-/// Undo fish's history escaping.
-///
-/// A backslash escapes a backslash, or an `n` standing for a newline, and
-/// nothing else — so a backslash before any other character is one the user
-/// typed and stays as it is. That is why a shell line continuation round-trips:
-/// fish stores the trailing `\` and the newline after it as `\\` then `\n`.
+/// Undo fish's history escaping: a backslash escapes a backslash or an `n`
+/// standing for a newline, and nothing else, so a backslash before any other
+/// character is one the user typed.
 fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -100,19 +93,9 @@ fn unescape(text: &str) -> String {
     out
 }
 
-/// Newest first, with earlier runs of the same command dropped.
-///
-/// The stored order is chronological, so reversing it is what a history search
-/// wants: the command from a moment ago is the first row offered. Dropping
-/// repeats is what keeps a command run twenty times a day to one row instead of
-/// a screenful of identical ones, and keeping the *newest* of each is what lets
-/// the row say when it was last used.
-///
-/// The set holds borrowed commands rather than copies of them. A history file
-/// is tens of thousands of entries and this runs on every ctrl-r, so cloning
-/// each command into the set — only to throw the clone away — was a second copy
-/// of the whole history built and dropped on the path where the user is waiting
-/// for a selector to open.
+/// Newest first, with earlier runs of the same command dropped. The set holds
+/// borrowed commands: this runs on every ctrl-r over tens of thousands of
+/// entries, and cloning each one built a second copy of the whole history.
 pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
     // Scoped so the borrows end before the entries are consumed below.
     let keep = {
@@ -136,14 +119,6 @@ pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
 }
 
 /// Render a command as a single line, for a selector row or a listing.
-///
-/// A row is one line by construction, so a multi-line command has to be folded
-/// into one — and the folding has to be visible, since `git commit -m 'first`
-/// run together with `second'` is not the command it would then appear to be.
-///
-/// [`term::one_row`] is the whole of it: a shell history is foreign text like
-/// any other listing's, and the rule for drawing foreign text on a row belongs
-/// in one place rather than once per source.
 pub fn one_line(cmd: &str) -> String {
     term::one_row(cmd)
 }
@@ -153,13 +128,8 @@ pub fn one_line(cmd: &str) -> String {
 pub const STAMP_WIDTH: usize = "2026-07-30 13:57".len();
 
 /// When a command was last run, as a local date and time: `2026-07-30 13:57`.
-///
-/// Blank — but still [`STAMP_WIDTH`] wide — for an entry carrying no timestamp,
-/// so the commands stay in one column whatever fish did or did not record.
-///
-/// `offset` is passed in rather than looked up: the local offset is an
-/// environment fact, read once by [`Ctx`](crate::Ctx), which is also what keeps
-/// this a pure function with an exactly reproducible answer.
+/// Blank — but still [`STAMP_WIDTH`] wide — for an entry carrying no timestamp.
+/// `offset` is read once by [`Ctx`](crate::Ctx) and passed in.
 pub fn stamp(when: Option<i64>, offset: time::UtcOffset) -> String {
     match when.and_then(|w| local(w, offset)) {
         Some(dt) => render(&dt),
@@ -179,10 +149,9 @@ fn render(dt: &time::OffsetDateTime) -> String {
     )
 }
 
-/// The stored Unix seconds as a local date and time.
-///
-/// `None` for a timestamp outside the range a date can represent — a corrupt or
-/// absurd `when:` is one unreadable row, not a panic partway through a listing.
+/// The stored Unix seconds as a local date and time. `None` for a timestamp
+/// outside the range a date can represent, which is one unreadable row rather
+/// than a panic partway through a listing.
 fn local(when: i64, offset: time::UtcOffset) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::from_unix_timestamp(when)
         .ok()
@@ -213,8 +182,6 @@ mod tests {
         );
     }
 
-    /// The config names the whole file, not a directory: `$fish_history` selects
-    /// a session by name (`work_history`), and scriv cannot see that variable.
     #[test]
     fn a_configured_file_wins_and_expands_home() {
         assert_eq!(
@@ -223,8 +190,6 @@ mod tests {
         );
     }
 
-    /// An empty or whitespace-only key is how a config says "leave it alone",
-    /// not a request to read the current directory.
     #[test]
     fn a_blank_configured_file_falls_back_to_the_default() {
         assert_eq!(
@@ -247,15 +212,11 @@ mod tests {
         assert_eq!(entries[1].when, Some(2000));
     }
 
-    /// `paths:` and `added_when:` are fish's business, and a `- src/lib.rs`
-    /// under `paths:` must not be mistaken for a command.
     #[test]
     fn indented_keys_are_not_commands() {
         assert_eq!(parse(SAMPLE).len(), 3);
     }
 
-    /// A command with no `when:` is still a command worth offering — only the
-    /// preview's date is lost.
     #[test]
     fn an_entry_without_a_timestamp_survives() {
         let entries = parse("- cmd: ls\n");
@@ -268,17 +229,13 @@ mod tests {
         assert!(parse("- cmd: \n  when: 1\n- cmd:    \n").is_empty());
     }
 
-    /// A shell line continuation is a backslash *and* a newline, which fish
-    /// stores as `\\` followed by `\n`. Getting this wrong turns a two-line
-    /// `curl` into one line with a stray backslash in the middle of it.
+    /// fish stores a line continuation as `\\` followed by `\n`.
     #[test]
     fn a_line_continuation_round_trips() {
         let entries = parse("- cmd: curl -X POST \\\\\\n  --data @body.json\n");
         assert_eq!(entries[0].cmd, "curl -X POST \\\n  --data @body.json");
     }
 
-    /// A backslash that escapes nothing fish knows about is a backslash the
-    /// user typed — `grep '\d'` must come back as `grep '\d'`.
     #[test]
     fn an_unrecognised_escape_keeps_its_backslash() {
         assert_eq!(unescape(r"grep '\d\t'"), r"grep '\d\t'");
@@ -289,8 +246,6 @@ mod tests {
         assert_eq!(unescape(r"echo \"), r"echo \");
     }
 
-    /// A command starting with a space is a command starting with a space —
-    /// only the single separator after the key belongs to the format.
     #[test]
     fn a_leading_space_in_the_command_is_preserved() {
         assert_eq!(parse("- cmd:  ls -la\n")[0].cmd, " ls -la");
@@ -305,14 +260,9 @@ mod tests {
             recent.iter().map(|e| e.cmd.as_str()).collect::<Vec<_>>(),
             vec!["ls", "git status"]
         );
-        // The surviving `ls` is the one from the most recent run, so its row
-        // is dated by when it was last used rather than first.
         assert_eq!(recent[0].when, Some(3));
     }
 
-    /// Order and dedup have to survive the rewrite that stopped cloning every
-    /// command into the set: newest run first, one row per distinct command,
-    /// and every distinct command still present.
     #[test]
     fn dedup_keeps_every_distinct_command_in_recency_order() {
         let entries: Vec<Entry> = ["a", "b", "a", "c", "b", "a"]
@@ -347,16 +297,11 @@ mod tests {
         assert_eq!(one_line("git commit -m 'a\nb'"), "git commit -m 'a ⏎ b'");
     }
 
-    /// A row that silently joined the lines would read as a command the user
-    /// never ran, and selecting it still yields the real multi-line text.
     #[test]
     fn folding_a_command_leaves_a_visible_mark() {
         assert!(one_line("a\nb").contains(term::NEWLINE_GLYPH));
     }
 
-    /// An escape sequence pasted into a shell years ago is still sitting in the
-    /// history file; drawing it verbatim would let a row scrolled past recolour
-    /// or reposition the terminal.
     #[test]
     fn control_characters_never_reach_a_row() {
         assert_eq!(one_line("echo \x1b[31mred\x07"), "echo [31mred");
@@ -373,10 +318,6 @@ mod tests {
         assert_eq!(stamp(Some(1785394626), bangkok()), "2026-07-30 13:57");
     }
 
-    /// The offset is the whole point of passing one: the same instant is a
-    /// different wall clock — here a different *day* — depending on where you
-    /// are, and a history listing that showed UTC would be quietly wrong for
-    /// everyone not on it.
     #[test]
     fn the_offset_moves_the_wall_clock() {
         let instant = Some(1785394626);
@@ -385,9 +326,6 @@ mod tests {
         assert_eq!(stamp(instant, west), "2026-07-29 22:57");
     }
 
-    /// Rows line up in one column, so an entry fish recorded without a `when:`
-    /// holds the space open rather than sliding its command left of every
-    /// other row.
     #[test]
     fn an_undated_entry_still_fills_the_column() {
         let blank = stamp(None, bangkok());
@@ -396,8 +334,6 @@ mod tests {
         assert_eq!(stamp(Some(1785394626), bangkok()).len(), STAMP_WIDTH);
     }
 
-    /// A `when:` far outside the range a date can hold is one unreadable row,
-    /// not a panic partway through five thousand of them.
     #[test]
     fn an_absurd_timestamp_renders_blank_rather_than_panicking() {
         assert!(stamp(Some(i64::MAX), bangkok()).trim().is_empty());

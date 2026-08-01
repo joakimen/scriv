@@ -1,10 +1,8 @@
 //! Path helpers with no I/O. Pure functions over path values, so they are
 //! trivially testable in isolation.
 //!
-//! Two representations coexist here. Repository discovery works in
-//! [`PathBuf`] because it walks the filesystem; the known-files list is a
-//! line-oriented text file and stays in `String` end to end. The string
-//! variants exist for the latter.
+//! Two representations coexist: repository discovery works in [`PathBuf`],
+//! while the known-files list is line-oriented text and stays in `String`.
 
 use std::path::{Path, PathBuf};
 
@@ -21,10 +19,8 @@ pub fn expand_home_dir(dir: &str, home: &Path) -> PathBuf {
     }
 }
 
-/// Expand a leading `~` to `home`, operating on strings.
-///
-/// A path that does not begin with `~` is returned unchanged. `~` alone expands
-/// to `home`; `~/rest` expands to `home` followed by `/rest`.
+/// Expand a leading `~` to `home`, operating on strings. A path that does not
+/// begin with `~` is returned unchanged.
 pub fn expand_tilde(path: &str, home: &str) -> String {
     if !path.starts_with('~') {
         return path.to_string();
@@ -34,22 +30,10 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
 
 /// Decide which of `$PWD` and the real working directory to work from.
 ///
-/// `$PWD` is preferred, and worth preferring: a shell sets it to the path the
-/// user actually walked, symlinks intact, while `getcwd` reports the resolved
-/// one. Somebody who works in `~/dev` where `dev` is a symlink expects to see
-/// `~/dev/…`, not the volume it really lives on.
-///
-/// But `$PWD` is only *usually* right. It is an ordinary exported variable and
-/// nothing keeps it current: `os.chdir` in Python leaves it behind, so does a
-/// `chdir` in any program that spawns scriv, and it can simply be set to
-/// something wrong. Trusted blindly, a stale one silently records the wrong
-/// path — `scriv file add notes.md` writes an entry for a directory the user
-/// was not standing in, and nothing about the output looks unusual.
-///
-/// So it is taken only when it names the directory scriv is genuinely in.
-/// `same_dir` is what decides that — passed in so the rule is testable, and
-/// resolving symlinks on both sides in the real implementation, which is
-/// exactly what makes a symlinked-but-correct `$PWD` still win.
+/// `$PWD` keeps the symlinks the user walked, which `getcwd` resolves away —
+/// but nothing keeps it current, and a stale one silently records a path for a
+/// directory the user was never in. It is taken only when `same_dir` says it
+/// names the directory scriv is genuinely in.
 pub fn resolve_pwd(
     pwd_env: Option<&str>,
     cwd: PathBuf,
@@ -61,12 +45,9 @@ pub fn resolve_pwd(
     }
 }
 
-/// Render a repository path relative to the search `root` it was found under,
-/// so a shared base is not repeated on every row.
-///
-/// When the repository *is* the root (a root that is itself a repo, at depth 0),
-/// the relative part is empty; the basename is used instead so the row is not
-/// blank.
+/// Render a repository path relative to the search `root` it was found under.
+/// A repository that *is* the root has an empty relative part, so its basename
+/// is used instead.
 pub fn relative_label(path: &Path, root: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(rest) if !rest.as_os_str().is_empty() => rest.to_string_lossy().into_owned(),
@@ -286,8 +267,7 @@ mod tests {
 
     #[test]
     fn collapses_only_at_a_path_boundary() {
-        // Bare home collapses to `~`; a sibling that merely shares the prefix
-        // as a substring is left alone.
+        // A sibling that merely shares the prefix is left alone.
         assert_eq!(display_path("/home/user", "/home/user", false), "~");
         assert_eq!(
             display_path("/home/username/x", "/home/user", false),
@@ -350,9 +330,6 @@ mod tests {
         assert_eq!(clean(""), ".");
     }
 
-    /// The reason `$PWD` is preferred at all: a shell reports the path the user
-    /// walked, symlinks intact, and `getcwd` reports the resolved one. Somebody
-    /// working in `~/dev` where `dev` is a symlink expects to see `~/dev/…`.
     #[test]
     fn a_current_pwd_wins_even_when_it_is_a_symlinked_spelling() {
         let got = resolve_pwd(
@@ -363,10 +340,6 @@ mod tests {
         assert_eq!(got, PathBuf::from("/home/u/dev"));
     }
 
-    /// A stale `$PWD` is the whole hazard: nothing keeps the variable current —
-    /// `os.chdir` in a Python parent leaves it behind, and it can simply be set
-    /// wrong — and trusting it would silently record a path for a directory the
-    /// user was never standing in.
     #[test]
     fn a_pwd_naming_somewhere_else_is_discarded() {
         let got = resolve_pwd(
@@ -377,8 +350,6 @@ mod tests {
         assert_eq!(got, PathBuf::from("/real/cwd"));
     }
 
-    /// Unset or empty is not an answer, and neither is a reason to fail — the
-    /// real working directory is always there to fall back on.
     #[test]
     fn a_missing_pwd_falls_back_to_the_real_directory() {
         let cwd = PathBuf::from("/real/cwd");

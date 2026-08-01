@@ -2,9 +2,7 @@
 //!
 //! No I/O — [`crate::cmd::proc`] runs `ps` and hands the text here. `ps` is
 //! spawned rather than the process table read directly because every supported
-//! platform ships it, and parsing its output is the same shape `git` and `gh`
-//! already take in this crate: a pure function with tests over text a child
-//! produced.
+//! platform ships it.
 
 use std::collections::HashSet;
 
@@ -12,11 +10,9 @@ use anyhow::{Result, bail};
 
 use crate::term;
 
-/// The `ps` field list scriv reads, in the order [`parse`] expects.
-///
-/// The trailing `=` on each field suppresses its header, so every line is a
-/// process and nothing has to be skipped. `args` comes last because it is the
-/// only field that can contain spaces.
+/// The `ps` field list scriv reads, in the order [`parse`] expects. The
+/// trailing `=` suppresses each header, so every line is a process; `args`
+/// comes last because it is the only field that can contain spaces.
 pub const PS_ARGS: [&str; 3] = ["-axo", "user=,pid=,ppid=,pcpu=,pmem=,etime=,args=", "-ww"];
 
 /// How many fixed-width fields precede the command in a `ps` line.
@@ -38,25 +34,17 @@ pub struct Process {
 
 impl Process {
     /// The process name alone: the last path component of argv[0].
-    ///
-    /// For the first line of a preview, where the full command line is already
-    /// shown underneath and repeating it as a title says nothing.
     pub fn name(&self) -> &str {
         let argv0 = self.command.split_whitespace().next().unwrap_or("");
         argv0.rsplit('/').next().unwrap_or(argv0)
     }
 }
 
-/// Parse the output of `ps` with [`PS_ARGS`].
+/// Parse the output of `ps` with [`PS_ARGS`]. Unparseable lines are skipped
+/// rather than failing the listing.
 ///
-/// Unparseable lines are skipped rather than failing the listing: `ps` prints a
-/// process whose command it cannot read as a blank or truncated line, and one
-/// of those must not take the whole selector down with it.
-///
-/// A command line is the least trustworthy text scriv handles: every process on
-/// the machine chooses its own argv, and `proc ls` writes it to a terminal. It
-/// is made safe here rather than at each of the three places that draw it — see
-/// [`term::one_row`].
+/// Every process chooses its own argv, so the text is made safe here — see
+/// [`term::one_row`] — rather than at each place that draws it.
 pub fn parse(text: &str) -> Vec<Process> {
     text.lines().filter_map(parse_line).collect()
 }
@@ -84,10 +72,8 @@ fn parse_line(line: &str) -> Option<Process> {
     })
 }
 
-/// `pid` and every process above it in the parent chain.
-///
-/// Walked defensively: a `ppid` that is not in the table, or a cycle in a table
-/// read one line at a time while processes were exiting, must not loop forever.
+/// `pid` and every process above it in the parent chain. Walked defensively: a
+/// table read while processes were exiting can contain a cycle.
 pub fn ancestry(processes: &[Process], pid: i32) -> HashSet<i32> {
     let mut chain = HashSet::new();
     let mut current = pid;
@@ -106,16 +92,11 @@ pub fn ancestry(processes: &[Process], pid: i32) -> HashSet<i32> {
 /// Why a pid given on the command line will not be signalled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// `0` or negative. To `kill(2)` these are not processes at all: `0` is the
-    /// caller's own process group, `-1` is every process the user may signal,
-    /// and any other negative number is the process group of its absolute
-    /// value. `scriv proc kill -- -1` would end the login session — from a
-    /// command whose entire premise is that the shell is not reachable by one
-    /// keystroke.
+    /// `0` or negative. To `kill(2)` these are process *groups*, not
+    /// processes: `scriv proc kill -- -1` would end the login session.
     NotAProcess,
     /// scriv itself, or something that spawned it — the chain that runs up
-    /// through the shell to the terminal emulator. The selector has never
-    /// offered these; naming one explicitly must not be the way around that.
+    /// through the shell to the terminal emulator.
     OwnAncestry,
 }
 
@@ -132,15 +113,8 @@ impl Refusal {
     }
 }
 
-/// Check pids given as arguments against the rules the selector enforces by
-/// simply never offering the rows.
-///
-/// The interactive path filters its list through [`selectable`], so a pid that
-/// reaches [`crate::cmd::proc::kill`] from the selector is already known to be
-/// safe. A pid typed on the command line has been through none of that, and
-/// `kill` reads `0` and negatives as process *groups* — so the one path with no
-/// list to filter is also the one that can take out the session. Same rules,
-/// applied to the arguments.
+/// Check pids given as arguments against the rules [`selectable`] enforces by
+/// never offering the row in the first place.
 pub fn refuse(processes: &[Process], self_pid: i32, pids: &[i32]) -> Vec<(i32, Refusal)> {
     let own = ancestry(processes, self_pid);
     pids.iter()
@@ -156,12 +130,9 @@ pub fn refuse(processes: &[Process], self_pid: i32, pids: &[i32]) -> Vec<(i32, R
         .collect()
 }
 
-/// The processes worth offering, busiest first.
-///
-/// scriv's own process and everything that spawned it are dropped. Killing
-/// them is never what the user meant — the chain runs up through the shell to
-/// the terminal emulator — and `-9` on any of it takes the session with it, so
-/// a mis-scrolled row must not be able to reach them at all.
+/// The processes worth offering, busiest first. scriv's own process and
+/// everything that spawned it are dropped: `-9` on any of that chain takes the
+/// session with it.
 pub fn selectable(processes: &[Process], self_pid: i32) -> Vec<Process> {
     let own = ancestry(processes, self_pid);
     let mut visible: Vec<Process> = processes
@@ -169,8 +140,7 @@ pub fn selectable(processes: &[Process], self_pid: i32) -> Vec<Process> {
         .filter(|p| !own.contains(&p.pid))
         .cloned()
         .collect();
-    // Busiest first: a process worth hunting down is usually one that is doing
-    // something. Ties break by pid so the order is stable between runs.
+    // Ties break by pid so the order is stable between runs.
     visible.sort_by(|a, b| {
         b.cpu
             .partial_cmp(&a.cpu)
@@ -180,10 +150,8 @@ pub fn selectable(processes: &[Process], self_pid: i32) -> Vec<Process> {
     visible
 }
 
-/// A plain listing row: the pid and the command, one space apart.
-///
-/// The pid comes first so `scriv proc ls | grep node | cut -d' ' -f1` reaches
-/// it without a parser.
+/// A plain listing row: the pid and the command, one space apart, so
+/// `scriv proc ls | grep node | cut -d' ' -f1` reaches the pid.
 pub fn plain_row(p: &Process) -> String {
     format!("{} {}", p.pid, p.command)
 }
@@ -191,23 +159,14 @@ pub fn plain_row(p: &Process) -> String {
 /// The width the pid column is padded to, so the columns after it line up.
 const PID_WIDTH: usize = 7;
 
-/// The widest the user column is allowed to get.
-///
-/// Wide enough for a login name and for the system accounts that actually
-/// recur — `_windowserver` is 13 — but not for the longest daemon on the
-/// machine. macOS ships a `_installcoordinationd`, and sizing every row to it
-/// spends eight columns of padding on one process nobody was looking for.
+/// The widest the user column is allowed to get: enough for a login name and
+/// for the system accounts that recur, but not for the longest daemon on the
+/// machine.
 const MAX_USER_WIDTH: usize = 14;
 
-/// How wide the user column has to be for `procs` to line up.
-///
-/// Measured rather than fixed, because a system account is longer than a login
-/// name — macOS has `_windowserver`, Linux `systemd-resolve` — and one of those
-/// knocks every column after it out of line. Measured but capped at
-/// [`MAX_USER_WIDTH`], because the outliers are longer still: past the cap a
-/// name is printed in full and pushes its own row out, which costs the
-/// alignment of the rows it appears on rather than the width of all of them.
-/// Cutting the name instead would trade a ragged column for an ambiguous one.
+/// How wide the user column has to be for `procs` to line up: measured, and
+/// capped at [`MAX_USER_WIDTH`]. Past the cap a name is printed in full and
+/// pushes its own row out, rather than being cut into an ambiguous one.
 pub fn user_width(procs: &[Process]) -> usize {
     procs
         .iter()
@@ -219,11 +178,7 @@ pub fn user_width(procs: &[Process]) -> usize {
 
 /// The row `--status` prints and the selector shows: pid, user, cpu, elapsed
 /// running time, then the command. `user_width` comes from [`user_width`] over
-/// the whole listing.
-///
-/// Everything before the command is drawn grey when `color` is on — the same
-/// treatment [`crate::select`] gives a context column, so the eye lands on the
-/// command, which is what anyone is reading the row for.
+/// the whole listing. Everything before the command is drawn grey.
 pub fn status_row(p: &Process, user_width: usize, color: bool) -> String {
     let head = format!(
         "{:>PID_WIDTH$} {:<user_width$} {:>5.1} {:>11}",
@@ -236,16 +191,11 @@ pub fn status_row(p: &Process, user_width: usize, color: bool) -> String {
     )
 }
 
-/// Grey, the terminal's own: the columns that identify a row without being
-/// what the eye is looking for.
+/// Grey, the terminal's own, for the columns before the command.
 const CONTEXT_COLOR: u8 = 8;
 
-/// The preview pane for a highlighted row.
-///
-/// Built from the single `ps` call the listing already made, never a command of
-/// its own: skim re-runs a preview command on every move through the list and
-/// does not kill the previous child, so a per-row `ps` would pile up copies of
-/// itself as the user scrolls.
+/// The preview pane for a highlighted row, built from the single `ps` call the
+/// listing already made rather than a command of its own.
 pub fn preview(p: &Process) -> String {
     format!(
         "{}\n\n  pid      {}\n  ppid     {}\n  user     {}\n  cpu      {:.1}%\n  \
@@ -261,18 +211,13 @@ pub fn preview(p: &Process) -> String {
     )
 }
 
-/// A signal `scriv proc kill` can send, named as `kill` names it.
-///
-/// A closed set rather than an arbitrary string so an unusable signal is
-/// rejected before the selector opens, instead of after the user has chosen what
-/// to kill.
+/// A signal `scriv proc kill` can send, named as `kill` names it. A closed set,
+/// so an unusable signal is rejected before the selector opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signal(&'static str);
 
-/// The signals worth offering, by the names `kill -l` prints.
-///
-/// Not the full table: these are the ones that end or suspend a process, which
-/// is what this command is for. A signal outside it is a job for `kill`.
+/// The signals worth offering, by the names `kill -l` prints: the ones that end
+/// or suspend a process. Anything else is a job for `kill`.
 const SIGNALS: [(&str, i32); 9] = [
     ("HUP", 1),
     ("INT", 2),
@@ -286,11 +231,8 @@ const SIGNALS: [(&str, i32); 9] = [
 ];
 
 impl Signal {
-    /// The default: ask the process to stop and let it clean up.
-    ///
-    /// Not `KILL`, which cannot be caught — a process signalled that way never
-    /// gets to flush a buffer, remove a socket file, or reap its children.
-    /// `--force` is there for when that is what the user wants.
+    /// The default: ask the process to stop and let it clean up. `--force` is
+    /// there for the uncatchable `KILL`.
     pub const TERM: Self = Self("TERM");
     /// Unblockable, for when `TERM` has been ignored.
     pub const KILL: Self = Self("KILL");
@@ -364,9 +306,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// The command is the rest of the line, not the next field: splitting on
-    /// whitespace all the way would truncate every process that takes
-    /// arguments, which is most of the ones anyone goes looking for.
     #[test]
     fn a_command_keeps_its_arguments() {
         assert_eq!(
@@ -375,8 +314,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// `ps` prints a line it cannot fill in for a process that exits while it
-    /// is reading. One of those must not take the listing down with it.
     #[test]
     fn unreadable_lines_are_skipped_rather_than_failing() {
         let text = format!("{SAMPLE}garbage\n  \n99999 1\n");
@@ -391,9 +328,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         assert_eq!(procs[2].name(), "-fish");
     }
 
-    /// Every process on the machine chooses its own argv, and `proc ls` writes
-    /// it to a terminal. An escape that reached it could erase the rows around
-    /// it, so a listing could be made to hide the very process being hunted.
     #[test]
     fn a_command_line_cannot_carry_an_escape_out_of_ps() {
         let procs = parse("joakim 501 1 0.0 0.1 01:00 /bin/evil \x1b[2K\x1b[1;32mhidden\n");
@@ -402,8 +336,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         assert_eq!(procs[0].command, "/bin/evil [2K[1;32mhidden");
     }
 
-    /// The chain scriv must never offer: itself, the shell that ran it, and on
-    /// up to the terminal. `-9` on any of it ends the session.
     #[test]
     fn ancestry_walks_from_a_pid_to_the_top() {
         let procs = sample();
@@ -415,10 +347,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// `kill` reads `0` and negatives as process *groups*, not processes: `0`
-    /// is the caller's own group and `-1` is every process the user may signal.
-    /// `scriv proc kill -- -1` would end the login session, from the one command
-    /// that goes out of its way never to offer the shell.
     #[test]
     fn a_pid_that_is_really_a_process_group_is_refused() {
         let procs = sample();
@@ -432,9 +360,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         }
     }
 
-    /// The selector never offers scriv's own chain, and naming a pid on the
-    /// command line must not be the way around that — it is the path with no
-    /// list to have filtered.
     #[test]
     fn an_ancestor_named_as_an_argument_is_refused_too() {
         let procs = sample();
@@ -449,14 +374,11 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// An ordinary pid is not refused, or the command would do nothing at all.
     #[test]
     fn an_unrelated_pid_passes() {
         assert!(refuse(&sample(), 70123, &[501, 1]).is_empty());
     }
 
-    /// A table read while processes are exiting can contain a ppid loop. The
-    /// walk has to end anyway.
     #[test]
     fn ancestry_terminates_on_a_cycle() {
         let procs = vec![
@@ -482,9 +404,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         assert_eq!(ancestry(&procs, 1), HashSet::from([1, 2]));
     }
 
-    /// Killing scriv, the shell that invoked it, or the terminal above that is
-    /// never what the user meant, and with `-9` it is unrecoverable. They are
-    /// not offered at all rather than warned about.
     #[test]
     fn scriv_and_its_ancestors_are_not_offered() {
         let procs = sample();
@@ -500,7 +419,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         assert_eq!(cpus, vec![12.3, 0.0, 0.0]);
     }
 
-    /// The pid leads the plain row so a script can cut it out without a parser.
     #[test]
     fn a_plain_row_leads_with_the_pid() {
         assert_eq!(
@@ -509,8 +427,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// Every command has to start in the same column, or the listing reads as
-    /// noise. The widths are measured over the whole set for exactly this.
     #[test]
     fn a_status_row_lines_its_columns_up() {
         let procs = sample();
@@ -528,8 +444,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// A system account is longer than a login name, and one of them in the
-    /// list used to push every column after it out of line.
     #[test]
     fn the_user_column_is_as_wide_as_the_longest_name() {
         let mut procs = sample();
@@ -548,9 +462,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         );
     }
 
-    /// One outlier must not spend the whole listing's width. macOS runs an
-    /// `_installcoordinationd`; sizing every row to it wastes eight columns
-    /// where the command is what the reader wants.
     #[test]
     fn one_very_long_name_does_not_widen_every_row() {
         let mut procs = sample();
@@ -570,7 +481,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         assert!(text.contains("ppid     1"), "{text}");
     }
 
-    /// One signal, however it was written.
     #[test]
     fn a_signal_is_read_by_name_or_number_in_any_case() {
         for input in ["KILL", "kill", "SIGKILL", "sigkill", "9", " 9 "] {
@@ -578,8 +488,6 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         }
     }
 
-    /// Rejected here, before the selector opens — not after the user has chosen
-    /// what to kill and `kill` turns it down.
     #[test]
     fn an_unusable_signal_is_refused_up_front() {
         for input in ["NOPE", "0", "64", ""] {
@@ -588,16 +496,12 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         }
     }
 
-    /// TERM, not KILL: a process signalled KILL never gets to flush a buffer,
-    /// unlink a socket, or reap its children.
     #[test]
     fn the_default_signal_can_be_caught() {
         assert_eq!(Signal::TERM.name(), "TERM");
         assert_ne!(Signal::TERM, Signal::KILL);
     }
 
-    /// `--color never` has to reach the row itself, not just the surrounding
-    /// output: a listing piped to a file must not carry escape sequences.
     #[test]
     fn a_status_row_is_plain_without_colour() {
         let p = &sample()[0];

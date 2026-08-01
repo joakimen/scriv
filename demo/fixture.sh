@@ -1,17 +1,8 @@
 #!/bin/sh
-# Build a self-contained sandbox for the README demo.
-#
-# The demo must never show real repositories, branches, or pull requests, and it
-# must look the same every time it is recorded. Both fall out of the seams scriv
-# already has, so nothing here needs a "demo mode" in the binary:
-#
-#   HOME, XDG_CONFIG_HOME  point config discovery at the sandbox; paths then
-#                          render as ~/dev/... with the sandbox as the home
-#   PATH                   a stub `gh` earlier on PATH than the real one, so
-#                          pull requests come from canned JSON, never the network
-#
-# Commit dates are written as offsets from *now*, so relative dates ("2 days
-# ago") read identically whenever the demo is re-recorded.
+# Build a self-contained sandbox for the README demo. Applied from outside via
+# HOME, XDG_CONFIG_HOME and a stub `gh` earlier on PATH, so the binary needs no
+# demo mode. Commit dates are offsets from *now*, so relative dates read the
+# same whenever the demo is re-recorded.
 #
 # Usage: demo/fixture.sh <dir>    (the directory is wiped and rebuilt)
 set -eu
@@ -22,17 +13,14 @@ case $FIX in
     *) FIX=$PWD/$FIX ;;
 esac
 
-# Where the recording finds `scriv`; the release build by default.
 SCRIV_BIN_DIR=${SCRIV_BIN_DIR:-$PWD/target/release}
 
 rm -rf "$FIX"
-# `remotes` lives outside dev/ so the fixture's bare repositories are never
-# walked by repository discovery.
+# `remotes` lives outside dev/ so discovery never walks the bare repositories.
 mkdir -p "$FIX/bin" "$FIX/.config/scriv" "$FIX/remotes" \
     "$FIX/dev/github.com/acme" "$FIX/dev/github.com/personal" "$FIX/notes"
 
-# Keep the user's real git identity, aliases, hooks, and init.defaultBranch out
-# of the fixture: every repository below is built from nothing.
+# Keep the user's real git identity, aliases and hooks out of the fixture.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME='Ada Lovelace' GIT_AUTHOR_EMAIL='ada@example.com'
 export GIT_COMMITTER_NAME='Ada Lovelace' GIT_COMMITTER_EMAIL='ada@example.com'
@@ -64,9 +52,6 @@ DAY=86400
 API=$FIX/dev/github.com/acme/billing-api
 new_repo "$API"
 
-# A few real files, because `scriv edit` walks the working tree and previews
-# what it finds — an empty repository would show an empty selector. Small enough
-# that a preview pane holds the whole file.
 mkdir -p "$API/src"
 cat > "$API/Cargo.toml" <<'EOF'
 [package]
@@ -169,8 +154,6 @@ cat > "$FIX/.config/scriv/files" <<'EOF'
 EOF
 
 # --- stub `gh` ---------------------------------------------------------------
-# scriv runs `gh` through PATH, so a script named `gh` earlier on PATH replaces
-# it wholesale. The demo therefore needs no network and no GitHub account.
 cat > "$FIX/bin/gh" <<'EOF'
 #!/bin/sh
 # Stand-in for the GitHub CLI, used only by the demo fixture.
@@ -212,8 +195,7 @@ JSON
     exit 0
 fi
 
-# `gh pr checkout` creates the local branch and sets its upstream. The stub does
-# the same thing locally, so the demo can show the flow end to end.
+# Done locally, so the demo can show the checkout flow end to end.
 if [ "$1" = "pr" ] && [ "$2" = "checkout" ]; then
     case $3 in
         128) branch=feat/token-bucket ;;
@@ -227,16 +209,14 @@ if [ "$1" = "pr" ] && [ "$2" = "checkout" ]; then
     exit 0
 fi
 
-# `open` and `merge` reach the network for real, so the stub only says what it
-# would have done — enough to try the selectors by hand without a GitHub account.
+# `open` and `merge` reach the network, so the stub only says what it would do.
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
     echo "demo stub: would open https://github.com/acme/billing-api/pull/$4"
     exit 0
 fi
 
 # `gh repo view --web` opens whatever repository it is run *in*, so the stub
-# reports the directory it was called from — which is exactly the choice
-# `scriv repo open` is making on its behalf.
+# reports the directory it was called from.
 if [ "$1" = "repo" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
     echo "demo stub: would open https://github.com/$(basename "$(dirname "$PWD")")/$(basename "$PWD")"
     exit 0
@@ -259,10 +239,7 @@ export HOME='$FIX'
 export XDG_CONFIG_HOME='$FIX/.config'
 export PATH='$FIX/bin':'$SCRIV_BIN_DIR':"\$PATH"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
-# scriv runs \$EDITOR and hands it the terminal. A recording cannot drive a real
-# editor deterministically — and does not need to, since what is being shown is
-# the selecting, not the editing — so the sandbox points it at cat: the file lands
-# on screen and the prompt comes straight back.
+# cat rather than a real editor: a recording cannot drive one deterministically.
 export EDITOR=cat
 export PS1='❯ '
 cd '$API'

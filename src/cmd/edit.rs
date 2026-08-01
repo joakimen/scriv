@@ -2,15 +2,11 @@
 //!
 //! Unlike the other groups, this one is not a registry over a set scriv
 //! maintains: `file` and `dir` name what is being *looked for* in the tree the
-//! user is standing in, so neither has an `ls` and neither can be listed
-//! without walking. `--tracked` is the one exception, pointing `file` at the
-//! known-files list instead.
+//! user is standing in, so neither has an `ls`. `--tracked` is the one
+//! exception, pointing `file` at the known-files list instead.
 //!
-//! Nothing here needs shell integration — a child process cannot change its
-//! parent's directory, which is why `repo sel` is wrapped in a fish function,
-//! but it can perfectly well inherit the terminal and run an editor in it.
-//! That holds for a directory too: opening one is the editor's business, not
-//! the shell's, and `cd` is what [`crate::cmd::repo`] is for.
+//! Nothing here needs shell integration: running an editor works perfectly well
+//! from a child process, and `cd` is what [`crate::cmd::repo`] is for.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -26,8 +22,7 @@ use crate::{Ctx, Reported, files, select, walk};
 /// empty.
 ///
 /// With `tracked`, selection comes from the known-files list; otherwise from
-/// the current directory tree. Multiple selections open together, which is what
-/// an editor's buffer list is for.
+/// the current directory tree. Multiple selections open together.
 pub fn file(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
     open_or_select(ctx, paths, || {
         if tracked {
@@ -41,10 +36,8 @@ pub fn file(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
 /// `scriv edit dir [DIR]...` — open `paths`, or select interactively when
 /// empty.
 ///
-/// Every editor worth setting `$EDITOR` to opens a directory as something: a
-/// file browser, a project root, a tree pane. Which one is the editor's
-/// business — scriv's part is finding the directory without a `cd` and a `ls`
-/// per level.
+/// What opening a directory means is the editor's business; scriv's part is
+/// finding it without a `cd` and a `ls` per level.
 pub fn dir(ctx: &Ctx, paths: &[String]) -> Result<()> {
     open_or_select(ctx, paths, || select_dirs(ctx))
 }
@@ -58,15 +51,12 @@ fn open_or_select(
     let targets = if paths.is_empty() {
         match select()? {
             Some(targets) => targets,
-            // Cancelled: a conventional silent exit, nothing to open.
             None => return Ok(()),
         }
     } else {
         paths.to_vec()
     };
 
-    // Selecting nothing is not an error either — the selector was simply left
-    // with no rows marked.
     if targets.is_empty() {
         return Ok(());
     }
@@ -74,16 +64,9 @@ fn open_or_select(
     open(ctx, &targets)
 }
 
-/// Choose files from the current directory tree.
-///
-/// The walk is streamed into the selector rather than collected first: a home
-/// directory can hold a million files, and waiting out the last one before
-/// showing the first is the difference between a selector that opens instantly
-/// and one that appears to hang. An empty tree simply gives an empty selector,
-/// as it would in `fzf`.
+/// Choose files from the current directory tree, streamed into the selector so
+/// it opens on the first filename rather than the last.
 fn select_files(ctx: &Ctx) -> Result<Option<Vec<String>>> {
-    // Paths stay relative to the working directory: the editor is launched from
-    // it, and relative paths are what shows up in its buffer list.
     let items =
         walk::files(Path::new(".")).map(|file| SelectItem::plain(file).preview(Preview::File));
 
@@ -97,9 +80,8 @@ fn select_files(ctx: &Ctx) -> Result<Option<Vec<String>>> {
 
 /// Choose directories from the current directory tree.
 ///
-/// [`select_files`] over [`walk::dirs`], with the preview built per row rather
-/// than taken from [`Preview::File`]: `bat` on a directory is an error message,
-/// and what identifies a directory is what is inside it.
+/// [`select_files`] over [`walk::dirs`], with the preview built per row: `bat`
+/// on a directory is an error message.
 fn select_dirs(ctx: &Ctx) -> Result<Option<Vec<String>>> {
     let items =
         walk::dirs(Path::new(".")).map(|dir| SelectItem::plain(&dir).preview(dir_preview(&dir)));
@@ -120,8 +102,7 @@ fn select_tracked(ctx: &Ctx) -> Result<Option<Vec<String>>> {
         bail!("no known files yet — add one with `scriv file add <path>`");
     }
 
-    // Show a `~`-collapsed label; hand the editor the absolute path, since the
-    // list is global and rarely relative to where the user is standing.
+    // A `~`-collapsed label, but the editor gets the absolute path.
     let items = lines
         .iter()
         .map(|line| {
@@ -143,11 +124,8 @@ fn cancellable(result: Result<Vec<String>>) -> Result<Option<Vec<String>>> {
     }
 }
 
-/// Launch the editor on `targets`, inheriting the terminal.
-///
-/// A non-zero exit is [`Reported`]: the editor has already had the terminal and
-/// said whatever it wanted to say, so scriv passes the status through without
-/// adding a line of its own.
+/// Launch the editor on `targets`, inheriting the terminal. A non-zero exit is
+/// [`Reported`], since the editor has already had the terminal.
 fn open(ctx: &Ctx, targets: &[String]) -> Result<()> {
     let editor = ctx.editor()?;
     let (program, args) = editor
@@ -159,12 +137,9 @@ fn open(ctx: &Ctx, targets: &[String]) -> Result<()> {
 
     let status = Command::new(program)
         .args(args)
-        // `--` first, because a filename is not a flag however it is spelled.
-        // The walk yields paths relative to the working directory, so a file
-        // named `-c` arrives as exactly that — and to vim, `-c` is an Ex command
-        // to run rather than a file to open. clap catches this on the argument
-        // path and cannot on the selector path, which does not go through clap
-        // at all. Every editor worth setting `$EDITOR` to understands `--`.
+        // `--` first: the walk yields relative paths, so a file named `-c`
+        // arrives as exactly that, and to vim `-c` is an Ex command. clap
+        // cannot catch it on the selector path, which never reaches clap.
         .arg("--")
         .args(targets)
         .status()

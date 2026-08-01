@@ -52,9 +52,7 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
 }
 
 /// A file with its existence marked: green tick for there, red cross for gone.
-///
-/// Shared by `file ls --status` and `file prune`, so the entries `prune` offers
-/// to drop look like the rows `ls` already draws them as.
+/// Shared by `file ls --status` and `file prune`.
 fn status_row(path: &str, present: bool, color: bool) -> String {
     match (color, present) {
         (true, true) => format!("\x1b[32m✓ {path}\x1b[0m"),
@@ -64,16 +62,9 @@ fn status_row(path: &str, present: bool, color: bool) -> String {
     }
 }
 
-/// `scriv file prune` — drop the tracked files that are no longer there.
-///
-/// The list is what it is because files move: a repository is re-cloned, a note
-/// is renamed, a checkout is deleted. Each of those leaves an entry pointing at
-/// nothing, and until now the only way to clear them was to read
-/// `file ls --missing` and remove each one by hand.
-///
-/// What will go is printed before the question is asked, because a count is not
-/// enough to decide on — "remove 4 entries?" is answerable only by someone who
-/// already knows which four.
+/// `scriv file prune` — drop the tracked files that are no longer there. What
+/// will go is printed before the question is asked, since "remove 4 entries?"
+/// is answerable only by someone who already knows which four.
 pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
@@ -111,9 +102,6 @@ pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
                 return Ok(());
             }
         }
-        // The files themselves are untouched either way — this only edits the
-        // list — but a command that deletes on an assumed yes is one nobody can
-        // safely put in a pipeline.
         term::Confirm::Impossible => bail!(
             "no terminal to ask for confirmation on — pass `--yes` to prune without being asked"
         ),
@@ -141,11 +129,8 @@ pub fn add(ctx: &Ctx, file: Option<&str>) -> Result<()> {
         },
     };
 
-    // The list is one path per line, so a path containing a newline is not
-    // something it can hold: written, it comes back as two entries, neither of
-    // which is the file, and `file rm` can then never match the path it was
-    // given. Refused on the way in — the alternative is a list only a text
-    // editor can repair.
+    // One path per line, so a path containing a newline would come back as two
+    // entries that `file rm` can never match. Refused on the way in.
     if let Some(control) = file.chars().find(|c| c.is_control()) {
         bail!(
             "the known-files list is one path per line, so it cannot hold a path \
@@ -206,8 +191,7 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
         return Ok(());
     }
 
-    // Show a `~`-collapsed label; the returned value is the stored line so it
-    // matches the list for removal.
+    // The returned value is the stored line, so it matches for removal.
     let items: Vec<SelectItem> = lines
         .iter()
         .map(|line| {
@@ -260,11 +244,8 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// Interactively choose a file from the current directory tree to add.
-///
-/// The walk is streamed into the selector, so it opens on the first filename
-/// rather than the last — see [`crate::cmd::edit`]. Returns `Ok(None)` when the
-/// user cancels the selector.
+/// Interactively choose a file from the current directory tree to add. Returns
+/// `Ok(None)` when the user cancels the selector.
 fn select_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
     let items =
         walk::files(Path::new(".")).map(|file| SelectItem::plain(file).preview(Preview::File));

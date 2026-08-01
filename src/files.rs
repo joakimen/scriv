@@ -74,10 +74,6 @@ fn temp_name() -> String {
 
 /// Normalise list entries for persistence: trim each line, drop blanks, remove
 /// duplicates, and sort so the written file is deterministic.
-///
-/// Deduped by sorting rather than through a set: the output is sorted either
-/// way, and a `HashSet` would need its own copy of every entry to hold the keys
-/// it compares against.
 pub fn normalize_entries(lines: &[String]) -> Vec<String> {
     let mut result: Vec<String> = lines
         .iter()
@@ -108,12 +104,8 @@ pub fn partition_remove(lines: &[String], to_remove: &[String]) -> (Vec<String>,
 }
 
 /// Split `lines` into the entries whose file is still there and the entries
-/// whose file has gone, preserving the original order of both.
-///
-/// `present` is passed in rather than reaching for the filesystem, which is
-/// what keeps this a decision with a test rather than something only observable
-/// against a real directory. It is given the raw stored line — expanding `~` is
-/// the caller's job, since only the caller knows the home directory.
+/// whose file has gone, preserving the original order of both. `present` is
+/// given the raw stored line; expanding `~` is the caller's job.
 pub fn partition_missing(
     lines: &[String],
     present: impl Fn(&str) -> bool,
@@ -187,8 +179,6 @@ mod tests {
         assert!(removed.is_empty());
     }
 
-    /// Both halves keep the order the list was in, so what `prune` prints
-    /// reads in the same order as `file ls` — the list the user knows.
     #[test]
     fn partition_missing_splits_on_what_is_still_there() {
         let lines = owned(&["a", "b", "c", "d"]);
@@ -197,8 +187,6 @@ mod tests {
         assert_eq!(missing, owned(&["b", "d"]));
     }
 
-    /// A list where nothing is missing must come back untouched, so `prune` can
-    /// tell there is nothing to ask about.
     #[test]
     fn partition_missing_finds_nothing_when_every_file_is_there() {
         let lines = owned(&["a", "b"]);

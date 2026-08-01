@@ -1,13 +1,10 @@
 //! `scriv` — select repositories, files, git branches, GitHub pull requests and
 //! running processes from one fuzzy finder.
 //!
-//! The crate is split into an I/O-free core ([`config`], [`path`], [`files`]'s
-//! pure helpers, [`repo`]'s traversal rules, [`history`]'s fish-history
-//! parsing, [`proc`]'s `ps` parsing, [`git`] and [`gh`]'s parsing and
-//! classification) and an imperative shell: the [`cmd`] modules that read the
-//! environment, touch the filesystem, shell out to `git`/`gh`, and drive
-//! interactive selection. [`Ctx`] resolves the environment once and hands it to
-//! every command.
+//! The crate is split into an I/O-free core and an imperative shell: the
+//! [`cmd`] modules read the environment, touch the filesystem, shell out to
+//! `git`/`gh`, and drive interactive selection; everything else is pure.
+//! [`Ctx`] resolves the environment once and hands it to every command.
 
 pub mod cmd;
 pub mod config;
@@ -31,20 +28,16 @@ use anyhow::{Context, Result};
 /// What `scriv --version` reports.
 ///
 /// The crate version when this commit is a release — sitting exactly on a tag
-/// with nothing modified — and `<version>-dev.<sha>[.dirty]` otherwise, so a
-/// binary built from a checkout is never mistaken for the release of the same
-/// name. Computed at compile time by `build.rs`, which is where the reasoning
-/// lives.
+/// with nothing modified — and `<version>-dev.<sha>[.dirty]` otherwise.
+/// Computed at compile time by `build.rs`.
 pub const VERSION: &str = env!("SCRIV_VERSION");
 
 use config::Config;
 use logger::Logger;
 
-/// A subprocess that already explained its own failure on stderr — `git` and
-/// `gh` both do, in their own well-known wording.
-///
-/// Propagated instead of a message so the command exits with the child's status
-/// without scriv restating what the user just read.
+/// A subprocess that already explained its own failure on stderr. Propagated
+/// instead of a message so the command exits with the child's status without
+/// scriv restating what the user just read.
 #[derive(Debug)]
 pub struct Reported(pub i32);
 
@@ -72,8 +65,7 @@ pub struct Ctx {
     pub legacy_kf_path: PathBuf,
     /// fish's history file, which `scriv history` reads.
     pub history_path: PathBuf,
-    /// This machine's offset from UTC, for dating history entries. See
-    /// [`Ctx::load`] for why it is read here and not where it is used.
+    /// This machine's offset from UTC, for dating history entries.
     utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
@@ -93,9 +85,6 @@ impl Ctx {
     ) -> Result<Self> {
         let home = dirs::home_dir().context("determining home directory")?;
         let cwd = std::env::current_dir().context("determining working directory")?;
-        // `$PWD` keeps the symlinks the user walked through, which `getcwd`
-        // resolves away — but only when it is still current. See
-        // [`path::resolve_pwd`].
         let pwd = path::resolve_pwd(
             std::env::var("PWD").ok().as_deref(),
             cwd,
@@ -119,23 +108,17 @@ impl Ctx {
         let legacy_kf_path = config::legacy_kf_path(xdg_env.as_deref(), &home);
         let config = config::load_config(&config_path)?;
 
-        // fish's data directory, not its config directory — a different XDG
-        // variable from the one above.
+        // fish's data directory, a different XDG variable from the one above.
         let history_path = history::history_path(
             config.history.file.as_deref(),
             std::env::var(history::XDG_DATA_ENV_VAR).ok().as_deref(),
             &home,
         );
 
-        // Read here, at the top of the process, because it cannot be read
-        // later: determining the local offset reads the environment, which is
-        // unsound once another thread might be changing it, so `time` refuses
-        // to answer at all in a multi-threaded process on Unix. By the time a
-        // history row wants dating, skim has threads running. Resolving it once
-        // and carrying it is also simply what `Ctx` is for.
-        //
-        // UTC is the fallback if it cannot be determined — a listing an hour
-        // out beats a listing that refuses to open.
+        // Read at the top of the process because it cannot be read later:
+        // `time` refuses to determine the local offset once the process is
+        // multi-threaded, and skim has threads running by the time a history
+        // row wants dating.
         let utc_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
 
         let editor = config::resolve_editor(
@@ -153,19 +136,14 @@ impl Ctx {
             history_path,
             utc_offset,
             editor,
-            // Resolved here rather than at each listing, so one run cannot
-            // colour one command's output and not another's.
             color: color.for_stdout(),
             config,
             log: Logger::new(verbose),
         })
     }
 
-    /// Whether printed output should carry ANSI colour.
-    ///
-    /// The selector is not governed by this: it is a full terminal UI that only
-    /// ever draws on a terminal, and `--color` is about what scriv *prints* —
-    /// the same scope ripgrep and fd give it.
+    /// Whether printed output should carry ANSI colour. Does not govern the
+    /// selector, which only ever draws on a terminal.
     pub fn color(&self) -> bool {
         self.color
     }
@@ -177,9 +155,6 @@ impl Ctx {
     }
 
     /// The editor command to launch, split into program and arguments.
-    ///
-    /// Errors when nothing is set, naming both variables the user can set
-    /// rather than failing on an empty program name deeper in.
     pub fn editor(&self) -> Result<Vec<String>> {
         let command = self
             .editor
@@ -212,8 +187,7 @@ impl Ctx {
     /// Copy the standalone `kf` tool's list into place on first use.
     ///
     /// Runs only when the known-files list does not yet exist and a legacy `kf`
-    /// config does; idempotent thereafter. The number migrated is reported on
-    /// stderr so the one-time move is visible without polluting stdout.
+    /// config does; idempotent thereafter.
     pub fn ensure_files_migrated(&self) -> Result<()> {
         if self.files_path.exists() || !self.legacy_kf_path.exists() {
             return Ok(());

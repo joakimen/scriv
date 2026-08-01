@@ -16,15 +16,11 @@ jobs:
       - name: Install toolchain (pinned by rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # The same target run locally, rather than the four commands it happens
-      # to expand to today. Spelling them out here meant CI could keep passing
-      # a gate the Makefile no longer described — the two agreed only as long
-      # as somebody remembered to edit both.
+      # The same target run locally, never a copy of what it expands to.
       - run: make
 
-  # The demo is re-recorded by hand (`make demo`), because the render depends on
-  # the fonts installed on the machine. CI only plays the tape, to catch one
-  # that has stopped working — it never commits a GIF of its own.
+  # Plays the tape only. The GIF is re-recorded by hand (`make demo`), since the
+  # render depends on the fonts installed on the machine.
   demo:
     runs-on: ubuntu-latest
     steps:
@@ -32,9 +28,8 @@ jobs:
       - name: Install toolchain (pinned by rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # Installed directly rather than via charmbracelet/vhs-action, which
-      # hardcodes a search for ffmpeg-n5.1 assets in BtbN/FFmpeg-Builds and
-      # fails now that upstream has moved past 5.1.
+      # Not charmbracelet/vhs-action: it hardcodes a search for ffmpeg-n5.1
+      # assets in BtbN/FFmpeg-Builds, which upstream has moved past.
       - name: Install VHS and its recorder dependencies
         env:
           VHS_VERSION: 0.11.0

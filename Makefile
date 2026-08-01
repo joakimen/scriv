@@ -1,13 +1,5 @@
 .DEFAULT_GOAL := build
 
-# Everything that can fail on correctness, and nothing that cannot.
-#
-# The inner loop: a handful of seconds, against `build`'s minute, almost all of
-# which is the release build. That build is worth running before a pull request
-# — release settings turn on optimisations and `lto`, and a crate can compile in
-# debug and fail there — but it is not worth running between two edits to a
-# test, and waiting out a minute for that answer is how a fast loop becomes a
-# slow one.
 .PHONY: check
 check: fmt-check lint test
 
@@ -39,21 +31,18 @@ install:
 run:
 	cargo run -- $(ARGS)
 
-# Re-record docs/demo.gif. Deliberate and local: the render depends on the
-# fonts installed on the machine, so CI checks the tape instead of committing
-# its own copy. Requires vhs (brew install vhs).
+# Re-record docs/demo.gif. Local only — the render depends on installed fonts.
+# Requires vhs (brew install vhs).
 .PHONY: demo
 demo:
 	./demo/record.sh
 
-# Render the tape to a throwaway path, to catch a demo that has stopped
-# working. Leaves the committed GIF alone.
+# Render the tape to a throwaway path, leaving the committed GIF alone.
 .PHONY: demo-check
 demo-check:
 	./demo/record.sh --check
 
-# Build the demo sandbox and print how to enter it, for poking at scriv with
-# fictional repositories, branches, and pull requests.
+# Build the demo sandbox and print how to enter it.
 .PHONY: demo-fixture
 demo-fixture:
 	cargo build --release

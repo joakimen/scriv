@@ -1,12 +1,7 @@
 #!/bin/sh
-# Render the README demo with VHS.
-#
-# Builds scriv, generates the sandbox the tape runs against, then plays the
-# tape. Recording is a deliberate act rather than something CI does on every
-# push: the rendered GIF depends on the fonts installed on the machine, so a
-# CI-generated one would differ from a locally generated one for no good reason.
-# CI runs this with --check instead, which renders to a throwaway path purely to
-# catch a tape that has stopped working.
+# Render the README demo with VHS: build scriv, generate the sandbox the tape
+# runs against, play the tape. `--check` renders to a throwaway path instead,
+# which is what CI runs.
 #
 # Usage: demo/record.sh [--check]
 set -eu
@@ -30,9 +25,8 @@ export SCRIV_BIN_DIR
 
 sh demo/fixture.sh target/demo-fixture
 
-# VHS drives a real terminal over a local socket, and very occasionally loses it
-# mid-recording ("use of closed network connection"). That is a flake in the
-# recorder, not a broken tape, so give it a second go before failing.
+# VHS occasionally loses its terminal socket mid-recording ("use of closed
+# network connection"). A recorder flake, not a broken tape — retry once.
 play() {
     vhs "$@" || {
         echo "demo: recording failed, retrying once..." >&2
@@ -42,7 +36,6 @@ play() {
 }
 
 if [ "$CHECK" = true ]; then
-    # Render somewhere disposable; the committed GIF stays untouched.
     out=$(mktemp -d)/demo-check.gif
     play --output "$out" demo/demo.tape
     [ -s "$out" ] || { echo "demo: tape produced no output" >&2; exit 1; }

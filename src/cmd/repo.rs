@@ -62,12 +62,9 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
 /// follow the terminal theme; cycles if there are more labels than colours.
 const LABEL_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
 
-/// Labels whose colour is fixed by name rather than by config order.
-///
-/// `work` and `personal` are the split nearly every config makes, and reading a
-/// row is faster when the hue means the same thing in every checkout — so they
-/// keep cyan and green wherever they appear in the file. Everything else takes
-/// the next unused hue, in config order.
+/// Labels whose colour is fixed by name rather than by config order, so the hue
+/// means the same thing in every checkout. Everything else takes the next
+/// unused hue, in config order.
 const NAMED_LABEL_COLORS: &[(&str, u8)] = &[("work", 6), ("personal", 2)];
 
 /// The fixed colour for `label`, if it is one of the conventional names.
@@ -79,11 +76,8 @@ fn named_color(label: &str) -> Option<u8> {
 }
 
 /// Map each configured label to a colour.
-///
-/// [`UNLABELLED`](crate::config::UNLABELLED) is deliberately not in the map: an
-/// unlabelled repository is not a label of its own competing for a hue, it is
-/// the absence of one, and stays the terminal's default foreground. Dimming it
-/// would read as "not this one", when it is an ordinary choice.
+/// [`UNLABELLED`](crate::config::UNLABELLED) is deliberately absent: it is not a
+/// label competing for a hue, and stays the terminal's default foreground.
 fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
     // Hues spoken for by a named label actually present, so an unnamed label
     // never collides with `work`'s cyan.
@@ -112,16 +106,10 @@ fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
 }
 
 /// The preview for a repository: its current branch and working-tree state,
-/// then recent commits.
+/// then recent commits. Both commands are local and take tens of milliseconds.
 ///
-/// That is what distinguishes two similarly named checkouts — which branch is
-/// out, whether it is dirty, and what was last done there. Both commands are
-/// local and take tens of milliseconds, which is the bar for running anything
-/// per highlighted row.
-///
-/// `--no-optional-locks` matters here: a plain `git status` refreshes and
-/// rewrites the index, so merely scrolling past a repository would take its
-/// index lock and contend with whatever the user is running in it.
+/// `--no-optional-locks` matters here: a plain `git status` rewrites the index,
+/// so scrolling past a repository would contend for its index lock.
 fn preview(path: &str) -> Preview {
     let repo = select::quote(path);
     Preview::Command(format!(
@@ -132,19 +120,13 @@ fn preview(path: &str) -> Preview {
     ))
 }
 
-/// The selector rows for the discovered repositories.
-///
-/// Each row is prefixed with its label, coloured per label so a `work`
-/// checkout is distinguishable from a personal one at a glance — several owners
-/// can share one label and therefore one colour, and a repository with no label
-/// is left uncoloured. Paths render per `repo.display`. Every row's value is the
-/// absolute path, so a caller can `cd` to it or run a command in it without
-/// re-expanding `~`.
+/// The selector rows for the discovered repositories: each prefixed with its
+/// label and coloured by it, paths rendered per `repo.display`. Every row's
+/// value is the absolute path, so a caller never re-expands `~`.
 fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
     let colors = label_colors(&ctx.config.repo.labels);
 
-    // Character count, not bytes: `{:<width$}` pads by characters, so a byte
-    // length would over-pad a label containing non-ASCII.
+    // Character count, not bytes: `{:<width$}` pads by characters.
     let width = repos
         .iter()
         .map(|r| r.label.chars().count())
@@ -191,11 +173,8 @@ enum Target {
     Select,
 }
 
-/// Decide what `repo open` opens.
-///
-/// Standing in a repository is already a statement of which one you mean, so it
-/// wins over the selector — a key binding pressed in a checkout should not ask a
-/// question it can answer. `--select` is how you say you meant a different one.
+/// Decide what `repo open` opens. Standing in a repository already says which
+/// one is meant, so it wins over the selector; `--select` overrides that.
 fn target(root: Option<PathBuf>, force_select: bool) -> Target {
     match root {
         Some(root) if !force_select => Target::Here(root),
@@ -203,11 +182,9 @@ fn target(root: Option<PathBuf>, force_select: bool) -> Target {
     }
 }
 
-/// `scriv repo open` — open a repository's GitHub page in the browser.
-///
-/// Inside a repository that is this one, with nothing to choose. Anywhere else,
-/// or with `--select`, it is a verb over the same set `ls` and `select` cover and
-/// fuzzy-selects from every repository scriv found.
+/// `scriv repo open` — open a repository's GitHub page in the browser. Inside a
+/// repository that is this one; anywhere else, or with `--select`, it selects
+/// from every repository scriv found.
 pub fn open(ctx: &Ctx, force_select: bool) -> Result<()> {
     if let Target::Here(root) = target(git::repo_root(), force_select) {
         ctx.log
@@ -223,11 +200,8 @@ pub fn open(ctx: &Ctx, force_select: bool) -> Result<()> {
 
 // --- clone ------------------------------------------------------------------
 
-/// How many clones run at once.
-///
-/// Cloning is network-bound, so this is well above the core count; the ceiling
-/// is what a remote will accept from one user before it starts refusing, not
-/// what the machine can compute.
+/// How many clones run at once. Network-bound, so well above the core count;
+/// the ceiling is what a remote accepts from one user.
 const CLONE_CONCURRENCY: usize = 8;
 
 /// Colour for a row that is already on disk. Grey reads as "not actionable",
@@ -245,22 +219,15 @@ fn clone_root(ctx: &Ctx) -> Result<PathBuf> {
     Ok(expand_home_dir(root, ctx.home()))
 }
 
-/// Where `owner/repo` belongs on disk.
-///
-/// The inverse of the discovery walk: a clone lands exactly where `repo sel`
-/// would look for it, so cloning something is the same as adding it to the
-/// selector.
+/// Where `owner/repo` belongs on disk — the inverse of the discovery walk, so a
+/// clone lands exactly where `repo sel` looks for it.
 fn destination(root: &Path, owner: &str, name: &str) -> PathBuf {
     root.join(owner).join(name)
 }
 
 /// Owners worth offering, most useful first: those named in the config, then
-/// any already on disk under the root, then the user's own login and orgs.
-///
-/// The three sources cover each other's blind spots. Config is intent, and
-/// ranks first. The filesystem catches owners cloned from but never configured.
-/// `gh` catches the rest — and is the only one that works on a machine with
-/// nothing cloned yet, which is when `clone` matters most.
+/// any already on disk under the root, then the user's own login and orgs —
+/// the last being the only source that works on a machine with nothing cloned.
 fn owner_candidates(ctx: &Ctx, root: &Path) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -367,20 +334,16 @@ fn repo_preview(repo: &Repo, present: Option<&Path>) -> Preview {
     Preview::Text(out)
 }
 
-/// Build the repository rows, marking the ones already on disk.
-///
-/// Present repositories stay in the list rather than being filtered out: their
-/// absence would read as "this org does not have that repo", when the truth is
-/// the opposite and useful — you already have it.
+/// Build the repository rows, marking the ones already on disk. They stay
+/// listed rather than filtered out, since their absence would read as "this org
+/// does not have that repo".
 fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
     let width = repos
         .iter()
         .map(|r| r.name().chars().count())
         .max()
         .unwrap_or(0);
-    // Rendered once and reused for both the column width and the rows; the
-    // widest tag string cannot be known without formatting every one of them,
-    // and formatting them twice is the easy mistake.
+    // Rendered once and reused for both the column width and the rows.
     let tags: Vec<String> = repos.iter().map(|r| r.tags().join(" ")).collect();
     let tag_width = tags.iter().map(|t| t.chars().count()).max().unwrap_or(0);
 
@@ -407,17 +370,10 @@ fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
         .collect()
 }
 
-/// Clone `repos` into `root`, [`CLONE_CONCURRENCY`] at a time.
-///
-/// The workers pull from a shared queue rather than working through fixed
-/// batches. Clone times vary by orders of magnitude — one large repository
-/// among thirty small ones is the normal case — and a batch that waits for its
-/// slowest member leaves every other worker idle until it finishes.
-///
-/// Every clone is reported, in the order it was requested rather than the order
-/// it finished, so the summary is stable and readable. One failure does not
-/// stop the others: a rate-limited or renamed repository should not cost you
-/// the nine that were fine.
+/// Clone `repos` into `root`, [`CLONE_CONCURRENCY`] at a time, from a shared
+/// queue rather than fixed batches — clone times vary by orders of magnitude.
+/// Results are reported in request order, and one failure does not stop the
+/// others.
 fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
     let next = AtomicUsize::new(0);
     let done: Mutex<Vec<(usize, Result<PathBuf>)>> = Mutex::new(Vec::with_capacity(repos.len()));
@@ -431,8 +387,8 @@ fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
                     let (owner, name) = slug.split_once('/').unwrap_or(("", slug.as_str()));
                     let dest = destination(root, owner, name);
                     let result = gh::clone(slug, &dest).map(|()| dest);
-                    // A worker that panicked mid-clone poisons this; the
-                    // results already collected are still worth reporting.
+                    // A worker that panicked mid-clone poisons this; what was
+                    // already collected is still worth reporting.
                     done.lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .push((index, result));
@@ -462,12 +418,10 @@ fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
 /// `scriv repo clone [owner | owner/repo]` — clone repositories from GitHub
 /// into the configured root.
 ///
-/// With no argument, select an owner (from your config, your root, and `gh`, with
-/// anything you type accepted), then fuzzy-select one or more of that owner's
-/// repositories. `owner/repo` skips both selectors.
-///
-/// Everything lands at `<root>/<owner>/<repo>`, which is where discovery looks,
-/// so a clone is in `repo sel` immediately afterwards.
+/// With no argument, select an owner (from the config, the root, and `gh`, with
+/// anything typed accepted), then one or more of that owner's repositories.
+/// `owner/repo` skips both selectors. Everything lands at
+/// `<root>/<owner>/<repo>`, which is where discovery looks.
 pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
     let root = clone_root(ctx)?;
 
@@ -481,9 +435,8 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
         Some(owner) => owner.to_string(),
         None => select_owner(ctx, &root)?,
     };
-    // The owner selector accepts anything typed, precisely so an owner scriv has
-    // never seen can still be cloned from — which means it is exactly as
-    // unchecked as an argument, and gets the same check.
+    // The owner selector accepts anything typed, so it is exactly as unchecked
+    // as an argument and gets the same check.
     check_slug(&owner)?;
 
     let repos = gh::list_repos(&owner, limit)?;
@@ -509,14 +462,9 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
     finish(ctx, &root, chosen)
 }
 
-/// Reject a name that is not one GitHub could have issued.
-///
-/// A slug is two things at once: a positional argument to `gh`, and the
-/// `<owner>/<repo>` that [`destination`] joins onto the root. One beginning with
-/// `-` is read as a flag rather than a name, and one carrying `..` or a third
-/// path component walks out of the root through that join. `gh` refuses both
-/// today; that is its rule to change, and this is the one place scriv can state
-/// its own.
+/// Reject a name that is not one GitHub could have issued. A slug is both a
+/// positional argument to `gh` and the `<owner>/<repo>` [`destination`] joins
+/// onto the root, so a leading `-` or a `..` has to be refused here.
 fn check_slug(slug: &str) -> Result<()> {
     if gh::valid_slug(slug) {
         return Ok(());
@@ -578,8 +526,6 @@ mod tests {
             .collect()
     }
 
-    /// `work` and `personal` mean the same colour in every config, so a row's
-    /// hue can be read without remembering what order the file was written in.
     #[test]
     fn the_conventional_labels_keep_their_colours() {
         let (first, last) = (labels(&["work", "personal"]), labels(&["personal", "work"]));
@@ -595,9 +541,6 @@ mod tests {
         assert!(!listed_first.contains_key(crate::config::UNLABELLED));
     }
 
-    /// Any other label takes a hue, but never one a named label is already
-    /// using — two groups the same colour is the one thing the tint exists to
-    /// avoid.
     #[test]
     fn other_labels_avoid_the_reserved_hues() {
         let configured = labels(&["client", "work", "oss", "personal"]);
@@ -610,17 +553,12 @@ mod tests {
         assert_eq!(assigned.len(), 4, "two labels share a colour: {colors:?}");
     }
 
-    /// The repository you are standing in is the one you mean: `repo open`
-    /// there opens it rather than asking which of a hundred you wanted.
     #[test]
     fn open_acts_on_the_repository_you_are_in() {
         let here = PathBuf::from("/home/u/dev/github.com/acme/billing-api");
         assert_eq!(target(Some(here.clone()), false), Target::Here(here));
     }
 
-    /// Outside a repository there is nothing ambient to open, so the selector is
-    /// the only answer — and `--select` asks for it from inside one, which is how
-    /// you reach a repository other than the one you are working in.
     #[test]
     fn open_selects_outside_a_repository_or_on_request() {
         assert_eq!(target(None, false), Target::Select);
@@ -629,8 +567,6 @@ mod tests {
         assert_eq!(target(Some(here), true), Target::Select);
     }
 
-    /// A clone must land exactly where discovery looks for it, or cloning
-    /// something would not put it in the selector.
     #[test]
     fn destination_matches_the_discovery_layout() {
         let root = Path::new("/home/u/dev/github.com");
@@ -653,8 +589,6 @@ mod tests {
         assert_eq!(repos[0].pushed_date(), "2026-07-27");
     }
 
-    /// Only what is unusual gets a tag; a public, live, non-fork repository is
-    /// the default and would just add noise to every row.
     #[test]
     fn tags_only_mark_the_unusual() {
         let repos = repos();
@@ -662,8 +596,6 @@ mod tests {
         assert_eq!(repos[1].tags(), vec!["archived", "fork"]);
     }
 
-    /// Repositories already on disk stay listed — their absence would read as
-    /// "the org does not have that repo" — but are marked and greyed.
     #[test]
     fn present_repositories_are_marked_not_hidden() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -680,7 +612,6 @@ mod tests {
         assert_eq!(items[0].value(), "acme/billing-api");
     }
 
-    /// The preview says where it already is — the reason the row is greyed.
     #[test]
     fn preview_names_the_existing_checkout() {
         let path = PathBuf::from("/home/u/dev/github.com/acme/billing-api");

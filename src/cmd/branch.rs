@@ -1,13 +1,11 @@
 //! `scriv branch` — list, select, and check out git branches.
 //!
 //! Local and remote branches are shown in one list, coloured by where they
-//! live, so switching to a branch you have and checking out one you do not are
-//! the same gesture. Selecting a remote-only branch creates the local branch and
-//! sets its upstream, which is the step that otherwise has to be typed by hand.
+//! live. Selecting a remote-only branch creates the local branch and sets its
+//! upstream.
 //!
-//! Every listing arrives ordered by [`git::by_relevance`] — current branch,
-//! then local, then remote-only, newest first within each — so the top of the
-//! list is where the answer usually is.
+//! Every listing arrives ordered by [`git::by_relevance`]: current branch, then
+//! local, then remote-only, newest first within each.
 
 use std::sync::{Arc, Mutex};
 
@@ -19,10 +17,7 @@ use crate::term;
 use crate::{Ctx, select};
 
 /// Every branch in the current repository, optionally refreshing remotes first.
-///
-/// The fetch is the only slow step here, and it is silent (see [`git::fetch`]),
-/// so it gets the spinner: a network round trip with nothing on screen is
-/// indistinguishable from a hang.
+/// The fetch is silent (see [`git::fetch`]), so it gets the spinner.
 fn load(ctx: &Ctx, fetch: bool) -> Result<Vec<Branch>> {
     git::ensure_repo()?;
     if fetch {
@@ -52,11 +47,8 @@ fn collect(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<Vec<Branch>> {
     narrow(load(ctx, fetch)?, filter)
 }
 
-/// Width of the widest branch name, for column alignment.
-///
-/// Counted in characters, not bytes: `{:<width$}` pads by character count, so a
-/// byte length would over-pad any row containing non-ASCII and leave the
-/// columns ragged.
+/// Width of the widest branch name, in characters — `{:<width$}` pads by
+/// character count, so a byte length would over-pad a non-ASCII row.
 fn name_width(branches: &[Branch]) -> usize {
     branches
         .iter()
@@ -113,15 +105,8 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
 }
 
 /// The preview for a branch: its recent commits, with who wrote them and when.
-///
-/// That is the question a branch list actually raises — whose work is this, and
-/// is it still live — and it is answered by the same `git log` invocation for a
-/// local or a remote ref. The trailing `--` keeps a branch named like a file
-/// from being read as a path.
-///
-/// Bounded to 30 commits and run with `--no-optional-locks`, so scrolling the
-/// list never takes the repository's index lock or reads more history than the
-/// pane can show.
+/// The trailing `--` keeps a branch named like a file from being read as a
+/// path. Bounded to 30 commits and run with `--no-optional-locks`.
 fn preview(branch: &Branch) -> Preview {
     Preview::Command(format!(
         "git --no-optional-locks log --color=always --max-count=30 --date=relative \
@@ -156,17 +141,10 @@ fn items(branches: &[Branch]) -> Vec<SelectItem> {
 /// Fuzzy-select one branch, with [`REFRESH_KEY`](select::REFRESH_KEY) fetching
 /// and rebuilding the list without closing the selector.
 ///
-/// Returns the chosen name (`main`, or `origin/main` for a branch that only
-/// exists on a remote) together with the branch list as it stood at that
-/// moment: a refresh replaces that list, and [`git::resolve`] must not decide
-/// what a checkout means from the one the selector opened with. That is what the
-/// shared `known` is for — the reload closure runs on skim's reader thread, so
-/// the two need somewhere to meet.
-///
-/// A failed fetch leaves the rows exactly as they were and is reported once the
-/// selector is out of the way. Interrupting a branch list to say the network is
-/// down helps nobody: the list on screen is still perfectly usable, and it is
-/// almost certainly the branch you wanted.
+/// Returns the chosen name together with the branch list as it stood at that
+/// moment: a refresh replaces the list, and [`git::resolve`] must not resolve
+/// against the one the selector opened with. A failed fetch leaves the rows as
+/// they were and is reported once the selector is out of the way.
 fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Result<Selection> {
     let offered = narrow(branches.clone(), filter)?;
     let known = Arc::new(Mutex::new(branches));
@@ -212,13 +190,9 @@ pub fn sel(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
 /// `scriv branch checkout [name]` — switch to a branch, selecting one when no
 /// name is given.
 ///
-/// A remote-only branch is checked out as a new local branch tracking it, so
-/// `git push`/`git pull` work immediately afterwards. git's own output is left
-/// alone, so the familiar "Switched to branch …" line still appears.
-///
+/// A remote-only branch is checked out as a new local branch tracking it.
 /// `filter` narrows what the selector offers, but a name given on the command
-/// line always resolves against every branch — `--local` is about choosing, not
-/// about what `origin/feature` is allowed to mean.
+/// line always resolves against every branch.
 pub fn checkout(ctx: &Ctx, name: Option<&str>, filter: Filter, fetch: bool) -> Result<()> {
     let loaded = load(ctx, fetch)?;
     let (name, branches) = match name {
@@ -281,17 +255,12 @@ mod tests {
         assert_eq!(items[1].color, Some(BranchKind::Remote.color()));
     }
 
-    /// Names and dates are padded to a common width so the subject column
-    /// lines up across rows.
     #[test]
     fn columns_align() {
         let items = items(&branches());
         assert_eq!(items[0].label.find("init"), items[1].label.find("wip"));
     }
 
-    /// `{:<width$}` pads by character count, so a width measured in bytes makes
-    /// the column wider than the longest name whenever one is non-ASCII —
-    /// `café` is four characters but five bytes.
     #[test]
     fn column_width_counts_characters_not_bytes() {
         let rows = classify(&[RefLine {
