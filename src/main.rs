@@ -443,7 +443,13 @@ enum HistoryCmd {
     /// Fuzzy-select a past command and print it
     Sel {
         /// Text to open the search box with
-        #[arg(short, long, value_name = "TEXT")]
+        ///
+        /// Takes a value beginning with `-` — the fish integration passes
+        /// whatever is on the command line, and a half-typed `--version` is
+        /// text to search for, not a flag. Without this, ctrl-r would fail
+        /// before opening, silently, since a key binding has nowhere to
+        /// report an error.
+        #[arg(short, long, value_name = "TEXT", allow_hyphen_values = true)]
         query: Option<String>,
         /// End the printed command with a NUL rather than a newline
         ///

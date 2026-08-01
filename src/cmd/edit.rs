@@ -116,6 +116,13 @@ fn open(ctx: &Ctx, targets: &[String]) -> Result<()> {
 
     let status = Command::new(program)
         .args(args)
+        // `--` first, because a filename is not a flag however it is spelled.
+        // The walk yields paths relative to the working directory, so a file
+        // named `-c` arrives as exactly that — and to vim, `-c` is an Ex command
+        // to run rather than a file to open. clap catches this on the argument
+        // path and cannot on the selector path, which does not go through clap
+        // at all. Every editor worth setting `$EDITOR` to understands `--`.
+        .arg("--")
         .args(targets)
         .status()
         .map_err(|e| match e.kind() {
