@@ -303,6 +303,57 @@ impl Drop for HangupWatch {
     }
 }
 
+/// Stands in for a line break in text folded onto one row.
+pub const NEWLINE_GLYPH: &str = "⏎";
+
+/// Text from outside scriv, made safe to draw on one row of a terminal.
+///
+/// Everything scriv lists comes from somewhere it does not control — a pull
+/// request title written by whoever opened it, the argv of any process on the
+/// machine, a command typed into a shell years ago — and a listing writes it
+/// straight to a terminal, which *acts on* what it is sent rather than showing
+/// it. `\x1b[2K` erases the row it was drawn on, `\x1b[32m` paints a failing
+/// check green: unfiltered, a listing can be made to say the opposite of what
+/// scriv found. Control characters are therefore dropped rather than passed on,
+/// which is also why scriv's own colour is applied *after* this, never before.
+///
+/// Newlines fold to [`NEWLINE_GLYPH`] rather than wrapping. One row per entry
+/// is what makes `wc -l` and `grep` mean what they look like they mean, and a
+/// title carrying a newline could otherwise forge an entire extra row.
+///
+/// Tabs become a single space: a tab is not a control the terminal acts on
+/// dangerously, but it is one whose width depends on where in the row it lands,
+/// which is enough to knock every column after it out of line.
+pub fn one_row(text: &str) -> String {
+    let joiner = format!(" {NEWLINE_GLYPH} ");
+    text.lines()
+        .map(drop_controls)
+        .collect::<Vec<_>>()
+        .join(&joiner)
+}
+
+/// [`one_row`] for text that is allowed to keep its line breaks — a preview
+/// pane, which is a block rather than a row.
+pub fn block(text: &str) -> String {
+    text.lines()
+        .map(drop_controls)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One line of foreign text with its control characters removed.
+///
+/// `char::is_control` is the Unicode `Cc` category, so this covers the C1
+/// controls (`U+0080`–`U+009F`) as well as the ASCII ones — on a terminal in a
+/// UTF-8 locale those are inert, but on one that is not, `U+009B` *is* a
+/// control sequence introducer.
+fn drop_controls(line: &str) -> String {
+    line.chars()
+        .map(|c| if c == '\t' { ' ' } else { c })
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
 /// Wrap `text` in an ANSI 256-colour sequence when `on`, so the same colour
 /// indices the selector uses also drive plain listings.
 pub fn paint(text: &str, color: u8, on: bool) -> String {
@@ -499,6 +550,59 @@ impl Drop for Spinner {
 
 #[cfg(test)]
 mod tests {
+    use super::{NEWLINE_GLYPH, block, one_row};
+
+    /// The whole point: an escape sequence in foreign text must not reach the
+    /// terminal, which acts on what it is sent. `\x1b[2K` erases the row the
+    /// text was drawn on — enough to make a listing show fewer entries than it
+    /// found.
+    #[test]
+    fn control_characters_never_survive_a_row() {
+        let row = one_row("ok\x1b[2K\x1b[1;31mFAKE\x07\x7f");
+        assert!(!row.contains('\x1b'), "{row:?}");
+        assert_eq!(row, "ok[2K[1;31mFAKE");
+    }
+
+    /// The C1 controls too: on a terminal that is not in a UTF-8 locale,
+    /// `U+009B` *is* a control sequence introducer.
+    #[test]
+    fn c1_controls_are_dropped_as_well() {
+        assert_eq!(one_row("a\u{9b}31mb"), "a31mb");
+    }
+
+    /// A row is one line by construction, so a newline has to become visible
+    /// rather than wrap: unfolded, a pull request title carrying one would forge
+    /// an entire extra row in `pr ls`.
+    #[test]
+    fn a_newline_folds_into_one_visible_row() {
+        let row = one_row("first\nsecond");
+        assert!(!row.contains('\n'), "{row:?}");
+        assert_eq!(row, format!("first {NEWLINE_GLYPH} second"));
+    }
+
+    /// A tab's width depends on where in the row it lands, which is enough to
+    /// knock every column after it out of line.
+    #[test]
+    fn a_tab_becomes_one_space() {
+        assert_eq!(one_row("a\tb"), "a b");
+    }
+
+    /// Ordinary text is left exactly as it was — including the non-ASCII that
+    /// makes up most repository descriptions.
+    #[test]
+    fn text_with_nothing_wrong_with_it_is_unchanged() {
+        for text in ["plain", "æøå — ünïcode", "✓ passed", ""] {
+            assert_eq!(one_row(text), text);
+        }
+    }
+
+    /// A preview pane is a block, not a row: its line breaks are the layout.
+    /// Everything else is still dropped.
+    #[test]
+    fn a_block_keeps_its_line_breaks_and_nothing_else() {
+        assert_eq!(block("a\n\x1b[2Kb"), "a\n[2Kb");
+    }
+
     /// A writer that takes `ok` complete lines and then fails with `kind`,
     /// standing in for a `head` that has read its rows and gone.
     ///

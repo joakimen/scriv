@@ -473,6 +473,7 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
 
     // `owner/repo` names a repository outright; there is nothing to choose.
     if let Some(slug) = target.filter(|t| t.contains('/')) {
+        check_slug(slug)?;
         return finish(ctx, &root, vec![slug.to_string()]);
     }
 
@@ -480,6 +481,10 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
         Some(owner) => owner.to_string(),
         None => select_owner(ctx, &root)?,
     };
+    // The owner selector accepts anything typed, precisely so an owner scriv has
+    // never seen can still be cloned from — which means it is exactly as
+    // unchecked as an argument, and gets the same check.
+    check_slug(&owner)?;
 
     let repos = gh::list_repos(&owner, limit)?;
     ctx.log
@@ -502,6 +507,24 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
         return Ok(());
     }
     finish(ctx, &root, chosen)
+}
+
+/// Reject a name that is not one GitHub could have issued.
+///
+/// A slug is two things at once: a positional argument to `gh`, and the
+/// `<owner>/<repo>` that [`destination`] joins onto the root. One beginning with
+/// `-` is read as a flag rather than a name, and one carrying `..` or a third
+/// path component walks out of the root through that join. `gh` refuses both
+/// today; that is its rule to change, and this is the one place scriv can state
+/// its own.
+fn check_slug(slug: &str) -> Result<()> {
+    if gh::valid_slug(slug) {
+        return Ok(());
+    }
+    bail!(
+        "`{slug}` is not a GitHub owner or owner/repo name — those are letters, \
+         digits, `-`, `_` and `.`, and do not begin with `-`"
+    )
 }
 
 /// Skip what is already on disk, clone the rest, and exit non-zero if any

@@ -200,6 +200,48 @@ fn an_unknown_command_is_a_usage_error() {
     assert!(run.stdout.is_empty(), "usage errors belong on stderr");
 }
 
+/// An alias the binary accepts and the help does not mention is a name only
+/// its author knows about. clap hides `alias` and shows `visible_alias`, and
+/// the two are one keyword apart, so nothing but reading the rendered help
+/// proves which one was written.
+#[test]
+fn help_names_the_aliases_the_binary_accepts() {
+    let sandbox = Sandbox::new();
+    let top = sandbox.run(&["--help"]);
+    top.ok();
+    for alias in ["r", "f", "e", "b", "pc", "h", "c"] {
+        assert!(
+            top.stdout.contains(&format!("[aliases: {alias}]")),
+            "`{alias}` is accepted but unmentioned:\n{}",
+            top.stdout
+        );
+    }
+
+    let branch = sandbox.run(&["branch", "--help"]);
+    branch.ok();
+    assert!(
+        branch.stdout.contains("[aliases: co, switch]"),
+        "{}",
+        branch.stdout
+    );
+}
+
+/// The examples are a fixed three, one of each kind rather than one per command
+/// group — the group list is directly above them and already names every one.
+#[test]
+fn the_help_examples_stay_at_three() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["--help"]);
+    run.ok();
+    let examples = run
+        .stdout
+        .split_once("Examples:")
+        .expect("no examples block")
+        .1;
+    let lines = examples.lines().filter(|l| !l.trim().is_empty()).count();
+    assert_eq!(lines, 3, "the examples block has grown:{examples}");
+}
+
 /// Abbreviations are part of the surface people actually type. They are aliases
 /// in clap, so nothing but a run of the binary proves they resolve.
 #[test]
@@ -228,6 +270,54 @@ fn every_registry_exposes_sel() {
     let sandbox = Sandbox::new();
     for group in ["repo", "file", "branch", "pr", "proc", "history"] {
         sandbox.run(&[group, "sel", "--help"]).ok();
+    }
+}
+
+/// The fish integration hands `--query` whatever is on the command line, so the
+/// value can perfectly well start with a `-`. Rejected as a flag, ctrl-r would
+/// fail before the selector opened — and a key binding has nowhere to report an
+/// error, so it would simply appear to do nothing.
+///
+/// The run gets no terminal, so it fails at the selector rather than at parsing:
+/// "needs a terminal" is the proof the argument was accepted.
+#[test]
+fn a_history_query_may_begin_with_a_dash() {
+    let sandbox = Sandbox::new();
+    let history = sandbox.home().join(".local/share/fish/fish_history");
+    std::fs::create_dir_all(history.parent().unwrap()).unwrap();
+    std::fs::write(&history, "- cmd: git status\n  when: 1700000000\n").unwrap();
+
+    let run = sandbox.run(&["history", "sel", "--query", "--version"]);
+    assert!(
+        !run.stderr.contains("a value is required"),
+        "the query was read as a flag: {}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("needs a terminal"),
+        "expected to get as far as the selector: {}",
+        run.stderr
+    );
+}
+
+/// A slug is a positional argument to `gh` and a component of the path a clone
+/// is written to, so one beginning with `-` is read as a flag and one carrying
+/// `..` walks out of the configured root.
+#[test]
+fn repo_clone_refuses_a_slug_github_could_not_have_issued() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!(
+        "[repo]\nroot = {:?}\n",
+        sandbox.home().join("dev").to_str().unwrap()
+    ));
+    for slug in ["../../etc/passwd", "acme/../../etc"] {
+        let run = sandbox.run(&["repo", "clone", slug]);
+        run.code(1);
+        assert!(
+            run.stderr.contains("not a GitHub owner"),
+            "{slug} was accepted: {}",
+            run.stderr
+        );
     }
 }
 
@@ -517,6 +607,18 @@ fn file_add_ls_and_remove_round_trip() {
     let ls = sandbox.run(&["file", "ls"]);
     ls.ok();
     assert_eq!(ls.lines(), vec![note.to_str().unwrap()]);
+
+    // A path containing a newline is not something a one-path-per-line file can
+    // hold: written, it comes back as two entries and neither is the file, so
+    // `file rm` could never match the path it was given again.
+    let bad = sandbox.run(&["file", "add", "one\ntwo.md"]);
+    bad.code(1);
+    assert!(bad.stderr.contains("one path per line"), "{}", bad.stderr);
+    assert_eq!(
+        sandbox.run(&["file", "ls"]).ok().lines(),
+        vec![note.to_str().unwrap()],
+        "the rejected path reached the list anyway"
+    );
 
     let removed = sandbox.run(&["file", "rm", note.to_str().unwrap()]);
     removed.ok();
@@ -846,6 +948,45 @@ fn proc_kill_refuses_an_unknown_signal_before_selecting() {
     run.code(1);
     assert!(run.stderr.contains("unknown signal"), "{}", run.stderr);
     assert!(run.stderr.contains("known signals are"), "{}", run.stderr);
+}
+
+/// To `kill`, `0` and a negative number are process *groups*, not processes:
+/// `0` is the caller's own group and `-1` is every process the user may signal.
+/// clap takes them happily as `i32`, so nothing but this stands between
+/// `scriv proc kill -- -1` and the end of the login session — from the one
+/// command that deliberately never offers the shell in its selector.
+///
+/// Run for real, with a signal that would work: the point is that the refusal
+/// happens, and a test that could only pass because the signal was invalid
+/// would prove nothing about the guard.
+#[test]
+fn proc_kill_refuses_a_pid_that_is_really_a_process_group() {
+    let sandbox = Sandbox::new();
+    for pid in ["0", "-1"] {
+        let run = sandbox.run(&["proc", "kill", "--signal", "CONT", "--", pid]);
+        run.code(1);
+        assert!(
+            run.stderr.contains("refusing to signal"),
+            "{pid} was not refused: {}",
+            run.stderr
+        );
+        assert!(run.stdout.is_empty(), "{pid} was signalled: {}", run.stdout);
+    }
+}
+
+/// An ordinary pid is not caught by that guard — a check that refused
+/// everything would pass the test above and leave the command useless.
+#[test]
+fn proc_kill_still_accepts_an_ordinary_pid() {
+    let sandbox = Sandbox::new();
+    // Almost certainly not a live process, so `kill` reports it as gone; what
+    // matters is that scriv got as far as asking.
+    let run = sandbox.run(&["proc", "kill", "--signal", "CONT", "2147483646"]);
+    assert!(
+        !run.stderr.contains("refusing to signal"),
+        "an ordinary pid was refused: {}",
+        run.stderr
+    );
 }
 
 /// `--force` *is* a signal choice, so offering it alongside `--signal` would be

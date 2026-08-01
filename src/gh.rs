@@ -17,6 +17,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::Reported;
+use crate::term;
 
 /// JSON fields requested from `gh pr list`.
 ///
@@ -496,7 +497,26 @@ pub fn parse_prs(data: &str) -> Result<Vec<PullRequest>> {
     if data.trim().is_empty() {
         return Ok(Vec::new());
     }
-    serde_json::from_str(data).context("parsing `gh pr list` output")
+    let mut prs: Vec<PullRequest> =
+        serde_json::from_str(data).context("parsing `gh pr list` output")?;
+    // Titles, branch names and descriptions are written by whoever opened the
+    // pull request — on a public repository, by anyone at all — and every one of
+    // them ends up drawn on a terminal. Made safe here, once, so no listing or
+    // selector row downstream has to remember to.
+    for pr in &mut prs {
+        pr.title = term::one_row(&pr.title);
+        pr.head_ref_name = term::one_row(&pr.head_ref_name);
+        pr.body = term::block(&pr.body);
+        if let Some(author) = &mut pr.author {
+            author.login = term::one_row(&author.login);
+        }
+        for check in &mut pr.status_check_rollup {
+            check.name = term::one_row(&check.name);
+            check.context = term::one_row(&check.context);
+            check.workflow_name = term::one_row(&check.workflow_name);
+        }
+    }
+    Ok(prs)
 }
 
 /// Pull requests for the repository the working directory belongs to.
@@ -653,7 +673,42 @@ pub fn parse_repos(data: &str) -> Result<Vec<Repo>> {
     if data.trim().is_empty() {
         return Ok(Vec::new());
     }
-    serde_json::from_str(data).context("parsing `gh repo list` output")
+    let mut repos: Vec<Repo> =
+        serde_json::from_str(data).context("parsing `gh repo list` output")?;
+    // As in [`parse_prs`]: a description is whatever its owner typed. Left out
+    // of this is `name_with_owner`, which is not display text — it is the slug
+    // handed to `gh repo clone` and the directory it lands in, and quietly
+    // rewriting either would clone something other than what was asked for.
+    // [`valid_slug`] is what guards that one.
+    for repo in &mut repos {
+        repo.description = term::one_row(&repo.description);
+        if let Some(language) = &mut repo.primary_language {
+            language.name = term::one_row(&language.name);
+        }
+    }
+    Ok(repos)
+}
+
+/// Whether `slug` is a GitHub `owner` or `owner/repo` scriv will act on.
+///
+/// A slug is not display text: it is a positional argument to `gh` and a
+/// component of the path a clone is written to. One starting with `-` is read
+/// by `gh` as a flag rather than a name, and one containing `..` or an extra
+/// `/` escapes `<root>/<owner>/<repo>` through the `Path::join` that builds it.
+/// GitHub itself allows neither in a real name, so refusing them costs nothing
+/// and does not depend on `gh` continuing to reject them first.
+pub fn valid_slug(slug: &str) -> bool {
+    let parts: Vec<&str> = slug.split('/').collect();
+    (1..=2).contains(&parts.len())
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && !part.starts_with('-')
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                && *part != ".."
+                && *part != "."
+        })
 }
 
 /// Every repository belonging to `owner`.
@@ -810,6 +865,73 @@ mod tests {
         {"number":9,"title":"WIP","author":null,"headRefName":"wip",
          "isDraft":true,"state":"OPEN","updatedAt":"2026-07-20T11:00:00Z"}
     ]"#;
+
+    /// A pull request title is written by whoever opened it — on a public
+    /// repository, by anyone — and `pr ls` writes it straight to a terminal,
+    /// which acts on escape sequences rather than showing them. Unfiltered,
+    /// `\x1b[32m` would let a title paint its own row green, so a pull request
+    /// with failing checks could be made to look like one that passed.
+    #[test]
+    fn a_pull_request_cannot_carry_an_escape_into_a_listing() {
+        let prs = parse_prs(
+            r#"[{"number":1,"title":"fix\u001b[2K\u001b[32m all checks pass",
+                 "author":{"login":"a\u001b[31mb"},"headRefName":"x\u001b[0m",
+                 "body":"para\u001b[2Kone\n\npara two","state":"OPEN",
+                 "statusCheckRollup":[{"name":"bu\u001b[2Kild","status":"COMPLETED",
+                 "conclusion":"FAILURE"}]}]"#,
+        )
+        .unwrap();
+        let pr = &prs[0];
+        for text in [&pr.title, &pr.body, &pr.head_ref_name] {
+            assert!(!text.contains('\x1b'), "{text:?}");
+        }
+        assert!(!pr.author_login().contains('\x1b'));
+        assert!(!pr.status_check_rollup[0].name.contains('\x1b'));
+        // The verdict is unchanged: sanitising is about what is drawn, not
+        // about what the checks said.
+        assert_eq!(pr.checks().failed, 1);
+    }
+
+    /// A description is the same kind of foreign text, and the clone selector
+    /// draws it beside every row.
+    #[test]
+    fn a_repository_description_cannot_carry_an_escape_either() {
+        let repos = parse_repos(
+            r#"[{"nameWithOwner":"acme/api","description":"a\u001b[2Kb",
+                 "primaryLanguage":{"name":"R\u001b[31must"}}]"#,
+        )
+        .unwrap();
+        assert_eq!(repos[0].description, "a[2Kb");
+        assert_eq!(repos[0].language(), "R[31must");
+        // The slug is not display text and is left exactly as it arrived —
+        // rewriting it would clone something other than what was named.
+        assert_eq!(repos[0].name_with_owner, "acme/api");
+    }
+
+    /// A slug is a positional argument to `gh` and a component of the path a
+    /// clone lands in. A leading `-` is read as a flag; `..` and an extra `/`
+    /// walk out of `<root>/<owner>/<repo>`.
+    #[test]
+    fn only_names_github_could_have_issued_are_valid_slugs() {
+        for good in ["joakimen", "acme/api", "a-b_c.d", "acme/my.repo"] {
+            assert!(valid_slug(good), "{good} rejected");
+        }
+        for bad in [
+            "-L",              // read by gh as a flag
+            "--json",          //
+            "..",              // walks out of the root
+            "../../etc",       //
+            "acme/../../etc",  //
+            "a/b/c",           // a third component the layout has no place for
+            "",                //
+            "acme/",           // an empty component
+            "/api",            //
+            "acme/api;whoami", // shell metacharacters, if one ever reaches a shell
+            "acme api",
+        ] {
+            assert!(!valid_slug(bad), "{bad} accepted");
+        }
+    }
 
     #[test]
     fn parses_gh_output() {

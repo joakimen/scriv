@@ -55,3 +55,18 @@ make                # fmt check, clippy, tests, release build
 make demo           # re-record docs/demo.gif
 make demo-fixture   # build the demo sandbox and poke at it by hand
 ```
+
+## Releasing
+
+Bump `version` in `Cargo.toml`, refresh `Cargo.lock` (`cargo check`), and merge
+that as its own pull request. Then tag the merge commit on `main`:
+
+```sh
+git checkout main && git pull
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+The tag is what releases: `.github/workflows/release.yml` builds macOS and Linux
+on x86_64 and arm64, attaches four tarballs with checksums and build
+provenance, and writes the notes from the commits. Releases are immutable, so a
+tag pushed at the wrong commit needs a new version rather than a fix.

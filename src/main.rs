@@ -21,20 +21,16 @@ use scriv::term::ColorChoice;
 use scriv::{Ctx, Reported, cmd, shell};
 
 /// Usage examples appended to the top-level help.
+///
+/// Three, and one of each *kind* rather than one per command group: what to run
+/// first, how a `sel` composes into the shell, and a verb acting on its own.
+/// A line per group was thirteen lines of the same shape, which is a wall to
+/// scroll past rather than something read — and the list of commands is already
+/// directly above it. Anything more specific is a `--help` away.
 const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv config init            Write a starter configuration
-  scriv config check           Check your setup and report what is wrong
-  scriv repo sel               Fuzzy-select a repository, print its path
   cd (scriv repo sel)          Jump to a repository (fish)
-  scriv repo clone             Select an owner, then repositories to clone
-  scriv file add <path>        Track a file you visit often
-  scriv edit                   Select a file under the current directory, edit it
-  scriv edit --tracked         Select one of your tracked files and edit it
-  scriv branch checkout        Select a local or remote branch and switch to it
-  scriv pr checkout            Select a GitHub pull request and check it out
-  scriv proc kill              Select running processes and signal them
-  scriv history sel            Fuzzy-search your fish history for a command
-  scriv init fish | source     Load shell integration + completions";
+  scriv pr checkout            Select a GitHub pull request and check it out";
 
 /// Help styling matching cargo: bright-green bold headers and usage,
 /// bright-cyan bold literals (command and flag names), cyan placeholders.
@@ -84,13 +80,13 @@ struct Cli {
 #[command(disable_help_subcommand = true)]
 enum Command {
     /// List and select the Git repositories under your search paths
-    #[command(alias = "r")]
+    #[command(visible_alias = "r")]
     Repo {
         #[command(subcommand)]
         command: RepoCmd,
     },
     /// Track the files you visit regularly
-    #[command(alias = "f")]
+    #[command(visible_alias = "f")]
     File {
         #[command(subcommand)]
         command: FileCmd,
@@ -100,7 +96,7 @@ enum Command {
     /// Selection comes from the current directory tree, honouring `.gitignore`,
     /// or from your tracked files with `--tracked`. Selecting several opens them
     /// all. The editor is `$VISUAL`, then `$EDITOR`.
-    #[command(alias = "e")]
+    #[command(visible_alias = "e")]
     Edit {
         /// Files to open; omit to select interactively
         #[arg(value_name = "FILE")]
@@ -115,7 +111,7 @@ enum Command {
     /// remote-only ones, each most recently committed to first. In a branch
     /// selector, ctrl-r fetches from every remote and reloads the list without
     /// closing the selector.
-    #[command(alias = "b")]
+    #[command(visible_alias = "b")]
     Branch {
         #[command(subcommand)]
         command: BranchCmd,
@@ -135,7 +131,7 @@ enum Command {
     /// it was started with rather than by its name alone. scriv's own process
     /// and everything that spawned it are never listed: killing the shell or
     /// the terminal is not a thing to be one keystroke away from.
-    #[command(alias = "pc")]
+    #[command(visible_alias = "pc")]
     Proc {
         #[command(subcommand)]
         command: ProcCmd,
@@ -150,13 +146,13 @@ enum Command {
     ///
     /// The date is shown but never searched: it is digits at the front of every
     /// row, and matching it would rank timestamps above commands.
-    #[command(alias = "h")]
+    #[command(visible_alias = "h")]
     History {
         #[command(subcommand)]
         command: HistoryCmd,
     },
     /// Manage the configuration
-    #[command(alias = "c")]
+    #[command(visible_alias = "c")]
     Config {
         #[command(subcommand)]
         command: ConfigCmd,
@@ -174,7 +170,7 @@ enum Command {
 #[derive(Subcommand)]
 enum RepoCmd {
     /// List every repository found under your search paths
-    #[command(alias = "list")]
+    #[command(visible_alias = "list")]
     Ls {
         /// Return absolute file paths
         #[arg(short = 'A', long)]
@@ -216,7 +212,7 @@ enum RepoCmd {
 #[derive(Subcommand)]
 enum FileCmd {
     /// List known files
-    #[command(alias = "list")]
+    #[command(visible_alias = "list")]
     Ls {
         /// Show file existence indicators
         #[arg(long)]
@@ -276,7 +272,7 @@ impl BranchScope {
 #[derive(Subcommand)]
 enum BranchCmd {
     /// List local and remote branches
-    #[command(alias = "list")]
+    #[command(visible_alias = "list")]
     Ls {
         /// Show the current-branch marker, local/both/remote tag, and last commit
         #[arg(long)]
@@ -293,7 +289,7 @@ enum BranchCmd {
     ///
     /// Checking out a remote-only branch creates the matching local branch and
     /// sets its upstream.
-    #[command(aliases = ["co", "switch"])]
+    #[command(visible_aliases = ["co", "switch"])]
     Checkout {
         /// Branch to check out, e.g. `main` or `origin/feature`
         branch: Option<String>,
@@ -344,7 +340,7 @@ impl MergeMethodArg {
 #[derive(Subcommand)]
 enum PrCmd {
     /// List pull requests
-    #[command(alias = "list")]
+    #[command(visible_alias = "list")]
     Ls {
         /// Also show the state tag, source branch, and last-updated date
         ///
@@ -360,7 +356,7 @@ enum PrCmd {
         scope: PrScope,
     },
     /// Check out a pull request's branch; omit the number to select one
-    #[command(alias = "co")]
+    #[command(visible_alias = "co")]
     Checkout {
         /// Pull request number
         number: Option<u64>,
@@ -399,7 +395,7 @@ enum PrCmd {
 #[derive(Subcommand)]
 enum ProcCmd {
     /// List running processes, busiest first
-    #[command(alias = "list")]
+    #[command(visible_alias = "list")]
     Ls {
         /// Also show the owner, CPU share and how long it has been running
         ///
@@ -432,7 +428,7 @@ enum ProcCmd {
 #[derive(Subcommand)]
 enum HistoryCmd {
     /// List past commands, most recent first
-    #[command(alias = "list")]
+    #[command(visible_alias = "list")]
     Ls {
         /// Prefix each command with the local date and time it was last run
         ///
@@ -443,7 +439,13 @@ enum HistoryCmd {
     /// Fuzzy-select a past command and print it
     Sel {
         /// Text to open the search box with
-        #[arg(short, long, value_name = "TEXT")]
+        ///
+        /// Takes a value beginning with `-` — the fish integration passes
+        /// whatever is on the command line, and a half-typed `--version` is
+        /// text to search for, not a flag. Without this, ctrl-r would fail
+        /// before opening, silently, since a key binding has nowhere to
+        /// report an error.
+        #[arg(short, long, value_name = "TEXT", allow_hyphen_values = true)]
         query: Option<String>,
         /// End the printed command with a NUL rather than a newline
         ///

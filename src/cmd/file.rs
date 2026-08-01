@@ -141,6 +141,23 @@ pub fn add(ctx: &Ctx, file: Option<&str>) -> Result<()> {
         },
     };
 
+    // The list is one path per line, so a path containing a newline is not
+    // something it can hold: written, it comes back as two entries, neither of
+    // which is the file, and `file rm` can then never match the path it was
+    // given. Refused on the way in — the alternative is a list only a text
+    // editor can repair.
+    if let Some(control) = file.chars().find(|c| c.is_control()) {
+        bail!(
+            "the known-files list is one path per line, so it cannot hold a path \
+             containing {}",
+            match control {
+                '\n' => "a newline".to_string(),
+                '\t' => "a tab".to_string(),
+                c => format!("the control character U+{:04X}", c as u32),
+            }
+        );
+    }
+
     let sanitized = sanitize_file_path(&file, ctx.home_str(), ctx.pwd_str());
     let expanded = expand_tilde(&sanitized, ctx.home_str());
     if !Path::new(&expanded).exists() {
@@ -158,7 +175,7 @@ pub fn add(ctx: &Ctx, file: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// `scriv file remove [path]` — remove a file, by argument or interactively.
+/// `scriv file rm [path]` — remove a file, by argument or interactively.
 pub fn remove(ctx: &Ctx, file: Option<&str>) -> Result<()> {
     ctx.ensure_files_migrated()?;
     match file {
