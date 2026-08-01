@@ -1,10 +1,8 @@
 //! `scriv history` — search the commands you have already run.
 //!
-//! The list is fish's own history file, newest first with repeats dropped, so
-//! ctrl-r lands on what you ran a moment ago and a command you run daily takes
-//! one row. Selecting a command prints it rather than running it: what to do
-//! with it is the shell's decision, and the fish integration puts it back on
-//! the command line for you to look at before pressing enter.
+//! The list is fish's own history file, newest first with repeats dropped.
+//! Selecting a command prints it rather than running it; the fish integration
+//! puts it back on the command line to be read before enter.
 
 use std::io::Write;
 
@@ -27,9 +25,8 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
 
-    // A history file is decades of accumulated sessions and holds whatever was
-    // typed at the shell, which is not always valid UTF-8. One bad byte in one
-    // entry from 2019 must not cost the user the list.
+    // A history file holds whatever was typed at the shell, which is not
+    // always valid UTF-8.
     let entries = history::recent_first(history::parse(&String::from_utf8_lossy(&data)));
     if entries.is_empty() {
         anyhow::bail!("no commands in {}", path.display());
@@ -46,13 +43,9 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
 /// onto one line, returning the command as it was really typed.
 ///
 /// The date is a [`SelectItem::prefix`] rather than part of the label, so it is
-/// shown without being searched. A date is digits at the front of every row;
-/// matched, a query of `3` would rank thousands of timestamps above the command
-/// being reached for.
-///
-/// No row carries a preview, so the selector keeps the full width for the
-/// commands: a preview pane would only repeat the row it is beside, and the
-/// selected command goes back on the command line to be read before it runs.
+/// shown without being searched — matched, a query of `3` would rank thousands
+/// of timestamps first. No row carries a preview, so the selector keeps the
+/// full width for the commands.
 fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<SelectItem> {
     entries
         .iter()
@@ -65,11 +58,9 @@ fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<SelectItem> {
 
 /// `scriv history ls` — print past commands, newest first, one per line.
 ///
-/// A multi-line command is folded onto its one line like everywhere else, so
-/// the output stays one entry per line and pipes into `wc -l` or `grep`
-/// meaning what it looks like it means. `--status` prefixes the local date and
-/// time each was last run — the same column the selector shows, in a fixed-width
-/// sortable form, so `awk` and `grep` can both work on it.
+/// A multi-line command is folded onto one line, so the output stays one entry
+/// per line. `--status` prefixes the local date and time each was last run, in
+/// a fixed-width sortable form.
 pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     let entries = load(ctx)?;
     let offset = ctx.utc_offset();
@@ -91,11 +82,8 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
 
 /// `scriv history sel` — fuzzy-select a past command and print it.
 ///
-/// `query` seeds the search box, so ctrl-r pressed halfway through typing a
-/// command starts narrowed to what is already there instead of throwing it
-/// away. `print0` terminates the result with a NUL rather than a newline: a
-/// command may itself contain newlines, and only a NUL tells the shell reading
-/// this where one command ends.
+/// `query` seeds the search box. `print0` terminates the result with a NUL
+/// rather than a newline, since a command may itself contain newlines.
 pub fn sel(ctx: &Ctx, query: Option<&str>, print0: bool) -> Result<()> {
     let entries = load(ctx)?;
     let chosen = select::select_one_queried(
@@ -137,9 +125,6 @@ mod tests {
         time::UtcOffset::UTC
     }
 
-    /// The row is folded onto one line; selecting it has to yield the command
-    /// as it was actually typed, newlines and all, or a multi-line command
-    /// comes back as something the user never ran.
     #[test]
     fn rows_fold_onto_one_line_but_return_the_real_command() {
         let items = items(&entries(), utc());
@@ -147,10 +132,6 @@ mod tests {
         assert_eq!(items[1].value(), "git commit -m 'a\nb'");
     }
 
-    /// The date is shown but never searched. It lives in the prefix, so the
-    /// label — which is what skim matches the query against — is the command
-    /// and nothing else. Fold the date into the label instead and a query of
-    /// `3` ranks four thousand timestamps above the command being reached for.
     #[test]
     fn the_date_is_shown_beside_the_command_but_not_matched() {
         let items = items(&entries(), utc());
@@ -159,8 +140,6 @@ mod tests {
         assert!(!items[0].label.contains("1970"), "the date is searchable");
     }
 
-    /// Undated rows keep the column open, so every command starts in the same
-    /// place whatever fish recorded.
     #[test]
     fn an_undated_row_holds_the_date_column_open() {
         let items = items(&entries(), utc());
@@ -172,9 +151,6 @@ mod tests {
         assert!(undated.trim().is_empty(), "{undated:?}");
     }
 
-    /// No history row previews. The pane exists only when some row asks for
-    /// one, so this is what keeps the full terminal width on the commands
-    /// rather than on a pane repeating the highlighted row back.
     #[test]
     fn no_row_opens_a_preview_pane() {
         for item in items(&entries(), utc()) {

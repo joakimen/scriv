@@ -1,10 +1,8 @@
 //! Terminal capability checks shared by the printing commands.
 //!
 //! Colour is decided once, at startup, by [`ColorChoice::resolve`] and carried
-//! on [`Ctx`](crate::Ctx) — `--color` if the user said, else `SCRIV_NO_COLOR`,
-//! else whether stdout is a terminal, so `scriv … ls` stays pipe-safe by
-//! default. [`Spinner`] and [`ScratchRow`] follow the same rule from the other
-//! side: they touch the display only when there is one to touch.
+//! on [`Ctx`](crate::Ctx). [`Spinner`] and [`ScratchRow`] touch the display
+//! only when there is one to touch.
 
 use std::io::{IsTerminal, Write};
 
@@ -15,9 +13,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// When to colour printed output, as `--color` states it.
-///
-/// The three names every other tool of this kind uses — ripgrep, fd, `ls`,
-/// `git` — so the flag needs no explaining to anyone who has met one of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
 pub enum ColorChoice {
@@ -31,14 +26,8 @@ pub enum ColorChoice {
 }
 
 impl ColorChoice {
-    /// Whether printed output should carry ANSI colour.
-    ///
-    /// `is_tty` is passed in rather than looked up so the rule is a pure
-    /// function with a test; [`ColorChoice::for_stdout`] is what callers use.
-    ///
-    /// An explicit `always`/`never` outranks `SCRIV_NO_COLOR`: the environment states
-    /// a default, and a flag on the command line is the user overriding their
-    /// own default for this one run. `auto` is where `SCRIV_NO_COLOR` applies.
+    /// Whether printed output should carry ANSI colour. An explicit
+    /// `always`/`never` outranks `SCRIV_NO_COLOR`, which applies under `auto`.
     pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
         match self {
             Self::Always => true,
@@ -54,14 +43,8 @@ impl ColorChoice {
 }
 
 /// The variable that turns scriv's colour off: set and non-empty means no
-/// colour.
-///
-/// Deliberately scriv's own rather than the cross-tool `NO_COLOR`
-/// (<https://no-color.org>), which scriv does not read. The convention is a
-/// single switch for every tool at once, and this is a switch for this one;
-/// having them be the same name would mean scriv could not be made colourful in
-/// an environment that had turned everything else plain. `--color always` is
-/// still the per-run override in either direction.
+/// colour. Deliberately scriv's own rather than the cross-tool `NO_COLOR`
+/// (<https://no-color.org>), which scriv does not read.
 pub fn no_color() -> bool {
     std::env::var_os(NO_COLOR_ENV_VAR).is_some_and(|v| !v.is_empty())
 }
@@ -70,19 +53,10 @@ pub fn no_color() -> bool {
 pub const NO_COLOR_ENV_VAR: &str = "SCRIV_NO_COLOR";
 
 /// Stdout for a listing, which ends quietly when the reader stops reading.
-///
-/// `println!` panics on a closed pipe, so `scriv history ls | head` — five
-/// thousand rows produced for a reader that wanted three — ends in a Rust
-/// stack trace where every other command-line tool would simply stop. Listings
-/// write through here instead.
-///
-/// Only the long ones ever noticed: a few hundred rows fit in the pipe buffer,
-/// so the write that fails never happens and the panic stayed hidden until a
-/// listing got big enough to outrun `head`.
+/// `println!` panics on a closed pipe, so `scriv history ls | head` would end
+/// in a stack trace where every other command-line tool simply stops.
 pub struct Listing<W: Write> {
     out: W,
-    /// Cleared once the far end has gone, so the caller is told once and no
-    /// further write is attempted.
     open: bool,
 }
 
@@ -94,17 +68,13 @@ impl Listing<std::io::Stdout> {
 }
 
 impl<W: Write> Listing<W> {
-    /// Wrap a writer. Taking one rather than reaching for stdout is what lets
-    /// the closed-pipe behaviour be tested against a writer that really fails.
+    /// Wrap a writer.
     pub fn new(out: W) -> Self {
         Self { out, open: true }
     }
 
-    /// Write one line, reporting whether there is still anyone reading.
-    ///
-    /// `Ok(false)` means the reader has closed the pipe: stop producing rows
-    /// that have nowhere to go. Any other write failure is a real error and is
-    /// returned as one — a full disk must not look like a `head`.
+    /// Write one line. `Ok(false)` means the reader has closed the pipe: stop
+    /// producing rows. Any other write failure is returned as an error.
     pub fn line(&mut self, text: &str) -> std::io::Result<bool> {
         if !self.open {
             return Ok(false);
@@ -120,23 +90,13 @@ impl<W: Write> Listing<W> {
     }
 }
 
-/// Whether an answer read from a prompt means yes.
-///
-/// Only an explicit yes counts: anything else — a bare return, a stray
-/// keystroke, end of input — is no. A command that deletes something has to be
-/// harder to trigger by accident than by intent.
+/// Whether an answer read from a prompt means yes. Only an explicit yes counts.
 pub fn is_yes(answer: &str) -> bool {
     matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-/// Ask `question` on stderr and read the answer from stdin.
-///
-/// The question goes to stderr because stdout is a result: `scriv file prune`
-/// prints the entries it removed there, and a prompt mixed into that would be
-/// something a script had to parse around.
-///
-/// Whether there is anyone to answer is the caller's problem, not this
-/// function's — see [`Confirm`] for why that distinction matters.
+/// Ask `question` on stderr, since stdout is a result, and read the answer
+/// from stdin. Whether there is anyone to answer is [`Confirm`]'s business.
 pub fn confirm(question: &str) -> std::io::Result<bool> {
     let mut err = std::io::stderr().lock();
     write!(err, "{question} [y/N] ")?;
@@ -144,20 +104,14 @@ pub fn confirm(question: &str) -> std::io::Result<bool> {
     drop(err);
 
     let mut answer = String::new();
-    // End of input is not a yes: a closed stdin has said nothing, and the
-    // safe reading of nothing is no.
     if std::io::stdin().read_line(&mut answer)? == 0 {
         return Ok(false);
     }
     Ok(is_yes(&answer))
 }
 
-/// Whether a question can be asked at all.
-///
-/// A prompt written to a stdin nobody is typing at is not a safety check — it
-/// is a hang, or an instant "no" that looks like a refusal to work. A command
-/// that needs confirmation and cannot ask for it should say so and name the
-/// flag that skips the question, rather than guessing which answer was meant.
+/// Whether a question can be asked at all. A command that needs confirmation
+/// and cannot ask for it should say so and name the flag that skips it.
 pub enum Confirm {
     /// There is a terminal on stdin: ask.
     Ask,
@@ -169,9 +123,6 @@ pub enum Confirm {
 
 impl Confirm {
     /// Decide from the `--yes` flag and whether stdin is a terminal.
-    ///
-    /// Split from the check itself so the rule is a pure function with a test;
-    /// [`Confirm::resolve`] is what callers use.
     pub fn decide(yes: bool, stdin_is_tty: bool) -> Self {
         match (yes, stdin_is_tty) {
             (true, _) => Self::Assumed,
@@ -186,42 +137,27 @@ impl Confirm {
     }
 }
 
-/// The status scriv exits with when its terminal disappears underneath it.
-///
-/// 128 + SIGHUP, which is what the shell would have reported had the signal
-/// been delivered and taken its default action. Nothing is waiting to read it —
-/// the terminal is gone — but a status that means something is still cheaper
-/// than one that does not.
+/// The status scriv exits with when its terminal disappears underneath it:
+/// 128 + SIGHUP, what the shell would have reported.
 pub const EXIT_HANGUP: u8 = 129;
 
-/// How often the terminal is probed while a selector is open. Twice a second is
-/// far below anything measurable and still notices a hangup promptly.
+/// How often the terminal is probed while a selector is open.
 const HANGUP_POLL: Duration = Duration::from_millis(500);
 
 /// How many probes in a row must fail before the terminal is called gone.
-///
-/// More than one because the consequence is ending the process: a single odd
-/// answer from a terminal that is still there would take down a selector somebody
-/// was reading.
+/// More than one, because the consequence is ending the process.
 const HANGUP_STRIKES: u32 = 2;
 
 /// Whether a failed probe means the terminal has gone, rather than that the
 /// probe itself was interrupted.
-///
-/// `EIO` is what a pty whose other end has closed answers with, and `ENXIO` is
-/// the same answer from a device that is no longer attached. `EBADF` means the
-/// descriptor is not there at all. `EINTR` and `EAGAIN` are ordinary and say
-/// nothing about the terminal.
 pub fn is_hangup(err: rustix::io::Errno) -> bool {
     use rustix::io::Errno;
     matches!(err, Errno::IO | Errno::NXIO | Errno::BADF | Errno::PIPE)
 }
 
-/// Ask the terminal whether it is still there, without writing to it.
-///
-/// A zero-length write runs the driver's checks and then writes no bytes, so it
-/// cannot disturb what the selector has drawn — and unlike a read, it cannot take
-/// a keystroke that skim was going to act on.
+/// Ask the terminal whether it is still there. A zero-length write runs the
+/// driver's checks without disturbing what the selector has drawn, and unlike
+/// a read it cannot take a keystroke skim was going to act on.
 fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
     match rustix::io::write(fd, &[]) {
         Ok(_) => true,
@@ -231,26 +167,14 @@ fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
 
 /// Ends the process if the terminal goes away while a selector is open.
 ///
-/// The selector is skim, and skim's input loop does not stop when its event
-/// stream ends: on a pty whose other end has closed, `crossterm`'s
-/// `EventStream` yields end-of-stream immediately and forever, and skim's
-/// `select!` treats that as nothing to do and asks again. The result is a
-/// process pinning a core for as long as it is left alone — one was found here
-/// having done so for over a day.
-///
-/// Normally the kernel prevents this: closing the other end of a pty sends
-/// `SIGHUP` to the foreground process group and the default action ends scriv
-/// before skim can spin. This is for when that does not happen — an orphaned
-/// process group, a terminal that never hung up the group scriv was in — which
-/// is the state the spinning process had reached.
-///
-/// The real fix belongs in skim, whose loop should stop when its input ends.
-/// Until it does, scriv declines to be the process left behind.
+/// skim's input loop does not stop when its event stream ends: on a pty whose
+/// other end has closed it spins at 100% CPU indefinitely. `SIGHUP` normally
+/// ends scriv first; this is for when it does not, such as an orphaned process
+/// group. Remove it once skim's loop terminates on its own.
 #[must_use]
 pub struct HangupWatch {
     stop: Arc<AtomicBool>,
-    /// `None` when there was no terminal to watch, which makes this a no-op
-    /// rather than a check at the call site.
+    /// `None` when there was no terminal to watch.
     thread: Option<JoinHandle<()>>,
 }
 
@@ -260,8 +184,7 @@ pub struct HangupWatch {
 /// immediately and watches nothing.
 pub fn watch_for_hangup() -> HangupWatch {
     let stop = Arc::new(AtomicBool::new(false));
-    // stderr is what the selector draws on, so it is the terminal whose loss
-    // matters. Without one there is nothing to watch and nothing to protect.
+    // stderr is what the selector draws on, so it is the terminal that matters.
     if !std::io::stderr().is_terminal() {
         return HangupWatch { stop, thread: None };
     }
@@ -280,9 +203,8 @@ pub fn watch_for_hangup() -> HangupWatch {
             }
             strikes += 1;
             if strikes >= HANGUP_STRIKES {
-                // Nothing to unwind: the terminal that skim's state describes is
-                // gone, and every destructor between here and `main` would be
-                // writing to it. Leaving by the shortest route is the point.
+                // Nothing to unwind: every destructor between here and `main`
+                // would be writing to a terminal that is gone.
                 std::process::exit(EXIT_HANGUP as i32);
             }
         }
@@ -296,9 +218,8 @@ pub fn watch_for_hangup() -> HangupWatch {
 impl Drop for HangupWatch {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // Not joined: the thread sleeps in half-second steps, and making every
-        // selector's exit wait for one would be paying for the watch on the path
-        // where nothing went wrong.
+        // Not joined: the thread sleeps in half-second steps, and no selector's
+        // exit should wait one out.
         drop(self.thread.take());
     }
 }
@@ -308,22 +229,11 @@ pub const NEWLINE_GLYPH: &str = "⏎";
 
 /// Text from outside scriv, made safe to draw on one row of a terminal.
 ///
-/// Everything scriv lists comes from somewhere it does not control — a pull
-/// request title written by whoever opened it, the argv of any process on the
-/// machine, a command typed into a shell years ago — and a listing writes it
-/// straight to a terminal, which *acts on* what it is sent rather than showing
-/// it. `\x1b[2K` erases the row it was drawn on, `\x1b[32m` paints a failing
-/// check green: unfiltered, a listing can be made to say the opposite of what
-/// scriv found. Control characters are therefore dropped rather than passed on,
-/// which is also why scriv's own colour is applied *after* this, never before.
-///
-/// Newlines fold to [`NEWLINE_GLYPH`] rather than wrapping. One row per entry
-/// is what makes `wc -l` and `grep` mean what they look like they mean, and a
-/// title carrying a newline could otherwise forge an entire extra row.
-///
-/// Tabs become a single space: a tab is not a control the terminal acts on
-/// dangerously, but it is one whose width depends on where in the row it lands,
-/// which is enough to knock every column after it out of line.
+/// Control characters are dropped: a terminal *acts on* what it is sent, so a
+/// pull request title carrying `\x1b[32m` could otherwise make a listing say
+/// the opposite of what scriv found. scriv's own colour is applied after this,
+/// never before. Newlines fold to [`NEWLINE_GLYPH`] so one entry stays one row,
+/// and tabs become a space so columns stay aligned.
 pub fn one_row(text: &str) -> String {
     let joiner = format!(" {NEWLINE_GLYPH} ");
     text.lines()
@@ -341,12 +251,9 @@ pub fn block(text: &str) -> String {
         .join("\n")
 }
 
-/// One line of foreign text with its control characters removed.
-///
-/// `char::is_control` is the Unicode `Cc` category, so this covers the C1
-/// controls (`U+0080`–`U+009F`) as well as the ASCII ones — on a terminal in a
-/// UTF-8 locale those are inert, but on one that is not, `U+009B` *is* a
-/// control sequence introducer.
+/// One line of foreign text with its control characters removed. Covers the C1
+/// controls as well as the ASCII ones: on a terminal in a non-UTF-8 locale,
+/// `U+009B` *is* a control sequence introducer.
 fn drop_controls(line: &str) -> String {
     line.chars()
         .map(|c| if c == '\t' { ' ' } else { c })
@@ -366,10 +273,7 @@ pub fn paint(text: &str, color: u8, on: bool) -> String {
 
 /// Paint `text`, then return to `back` rather than to the terminal default —
 /// for a cell that carries its own colour inside a row that already has one.
-///
-/// [`paint`] ends with a reset, so using it for a cell mid-row would leave
-/// everything after that cell uncoloured. Here the row's own colour is
-/// re-opened instead, and the row's trailing reset still closes it.
+/// [`paint`] would end with a reset and leave the rest of the row uncoloured.
 pub fn paint_within(text: &str, color: u8, back: u8, on: bool) -> String {
     if on {
         format!("\x1b[38;5;{color}m{text}\x1b[38;5;{back}m")
@@ -380,25 +284,16 @@ pub fn paint_within(text: &str, color: u8, back: u8, on: bool) -> String {
 
 /// A row of the terminal to draw on that is not the shell's.
 ///
-/// Everything scriv draws inline — the spinner, the selector's viewport — starts
-/// on the row the cursor is on, and when scriv is invoked from a key binding
-/// that is the last row of the shell's prompt. Drawing there overwrites it, and
-/// erasing there leaves it blank. A one-line prompt survives either, because
-/// the shell redraws the whole thing afterwards; a two-line prompt does not —
-/// its first row is still on screen, so what is left is a prompt cut in half.
-///
-/// Taking a fresh row instead keeps any prompt intact. Stepping back up on the
-/// way out is what makes that safe: it leaves the cursor on the row the shell
-/// left it on, which is where its repaint expects to find it. Without that the
-/// shell redraws one row lower and strands a copy of the prompt above the new
-/// one.
+/// Anything drawn inline starts on the row the cursor is on, which from a key
+/// binding is the last row of the prompt — a two-line prompt is left cut in
+/// half. Taking a fresh row and stepping back up on the way out leaves the
+/// cursor where the shell's repaint expects it.
 ///
 /// Bind it for as long as the drawing lasts — `let _row = ScratchRow::take()`.
 /// A bare statement gives the row straight back.
 #[must_use]
 pub struct ScratchRow {
-    /// `false` when there was no terminal to take a row on, which makes the
-    /// whole type a no-op rather than a check at each call site.
+    /// `false` when there was no terminal to take a row on.
     taken: bool,
 }
 
@@ -408,9 +303,8 @@ impl ScratchRow {
         let taken = std::io::stderr().is_terminal();
         if taken {
             let mut err = std::io::stderr().lock();
-            // An explicit carriage return: the cursor sits part-way along the
-            // prompt row, and whether a bare newline also returns to column 0
-            // depends on a terminal mode the shell owns, not scriv.
+            // An explicit carriage return: whether a bare newline returns to
+            // column 0 depends on a terminal mode the shell owns.
             let _ = err.write_all(b"\r\n");
             let _ = err.flush();
         }
@@ -422,8 +316,7 @@ impl ScratchRow {
         Self { taken: false }
     }
 
-    /// Whether a row was actually taken — false without a terminal to take one
-    /// on. For tests and for callers deciding what to draw.
+    /// Whether a row was actually taken — false without a terminal.
     pub fn is_taken(&self) -> bool {
         self.taken
     }
@@ -443,49 +336,31 @@ impl Drop for ScratchRow {
 /// Move the cursor up one row, staying in its column.
 const CURSOR_UP: &[u8] = b"\x1b[A";
 
-/// Frames of the spinner, in order. Braille dots: one cell wide in every
-/// terminal, so the line never changes width as it turns.
+/// Frames of the spinner, in order. Braille dots are one cell wide everywhere,
+/// so the line never changes width as it turns.
 const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-/// How long each frame is held. Ten frames at this rate is a full turn per
-/// second — visible movement, and nowhere near enough redraws to matter.
+/// How long each frame is held: ten frames make a full turn per second.
 const FRAME_TIME: Duration = Duration::from_millis(100);
 
-/// Erase the line the cursor is on and return to its start, so the next frame
-/// overwrites the previous one instead of stacking up.
+/// Erase the line the cursor is on and return to its start.
 const CLEAR_LINE: &str = "\r\x1b[2K";
 
 /// A one-line "working on it" animation on stderr, erased when dropped.
 ///
-/// For the waits scriv cannot make shorter — a `git fetch`, a `gh` round trip —
-/// where the alternative is a frozen terminal that looks like a hang. It draws
-/// on stderr because stdout is a result: `scriv branch sel` writes a branch
-/// name there for a shell to read, and an animation in the middle of it would
-/// be read as part of the name.
-///
-/// It takes a [`ScratchRow`] to turn on, because each frame erases the whole
-/// row it is drawn on: on the prompt's row that would wipe the prompt, and
-/// unlike the selector that follows it, a spinner is not big enough to hide what
-/// it destroyed.
-///
-/// Nothing is drawn at all when stderr is not a terminal, so a redirected or
-/// piped run stays clean, and the animation is never what a script has to
-/// parse around.
+/// Drawn on stderr because stdout is a result. Takes a [`ScratchRow`], since
+/// each frame erases the whole row it is drawn on. Nothing is drawn at all
+/// when stderr is not a terminal.
 pub struct Spinner {
     stop: Arc<AtomicBool>,
-    /// `None` when there was no terminal to draw on, which makes every method
-    /// here a no-op rather than a special case at each call site.
+    /// `None` when there was no terminal to draw on.
     thread: Option<JoinHandle<()>>,
     /// Dropped after the animation is erased, handing the row back.
     _row: ScratchRow,
 }
 
 /// Start a spinner labelled `label` (e.g. `fetching`), running until it is
-/// dropped.
-///
-/// `color` is the resolved [`ColorChoice`], so `--color never` gives a plain
-/// spinner rather than a cyan one — the flag means the same thing everywhere
-/// scriv draws.
+/// dropped. `color` is the resolved [`ColorChoice`].
 ///
 /// Bind it to a name — `let _spinner = term::spinner(…)` — for as long as the
 /// wait lasts. A bare `term::spinner(…)` statement drops it immediately and
@@ -509,12 +384,10 @@ pub fn spinner(label: &str, color: bool) -> Spinner {
         while !flag.load(Ordering::Relaxed) {
             let frame = frames.next().unwrap_or(&FRAMES[0]);
             let mut err = std::io::stderr().lock();
-            // Cyan matches the "not here yet" hue the selectors already use for
-            // things that come from a remote.
             let _ = write!(err, "{CLEAR_LINE}{} {label}", paint(frame, 6, color));
             let _ = err.flush();
-            // Sleeping the whole frame would delay the erase by up to a frame
-            // after the work finishes; waking often keeps the exit prompt.
+            // Woken in fractions of a frame so the erase is not delayed by a
+            // whole one after the work finishes.
             for _ in 0..10 {
                 if flag.load(Ordering::Relaxed) {
                     return;
@@ -532,15 +405,13 @@ pub fn spinner(label: &str, color: bool) -> Spinner {
 
 impl Drop for Spinner {
     /// Stop the animation and erase its line before the row it was drawn on
-    /// goes back, leaving the terminal exactly as it was found — the selector
-    /// that opens next draws over nothing.
+    /// goes back.
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         let Some(thread) = self.thread.take() else {
             return;
         };
-        // Join before erasing: a frame still in flight would otherwise be
-        // written after the erase and left on screen.
+        // Join before erasing, or a frame in flight lands after the erase.
         let _ = thread.join();
         let mut err = std::io::stderr().lock();
         let _ = write!(err, "{CLEAR_LINE}");
@@ -552,10 +423,6 @@ impl Drop for Spinner {
 mod tests {
     use super::{NEWLINE_GLYPH, block, one_row};
 
-    /// The whole point: an escape sequence in foreign text must not reach the
-    /// terminal, which acts on what it is sent. `\x1b[2K` erases the row the
-    /// text was drawn on — enough to make a listing show fewer entries than it
-    /// found.
     #[test]
     fn control_characters_never_survive_a_row() {
         let row = one_row("ok\x1b[2K\x1b[1;31mFAKE\x07\x7f");
@@ -563,16 +430,11 @@ mod tests {
         assert_eq!(row, "ok[2K[1;31mFAKE");
     }
 
-    /// The C1 controls too: on a terminal that is not in a UTF-8 locale,
-    /// `U+009B` *is* a control sequence introducer.
     #[test]
     fn c1_controls_are_dropped_as_well() {
         assert_eq!(one_row("a\u{9b}31mb"), "a31mb");
     }
 
-    /// A row is one line by construction, so a newline has to become visible
-    /// rather than wrap: unfolded, a pull request title carrying one would forge
-    /// an entire extra row in `pr ls`.
     #[test]
     fn a_newline_folds_into_one_visible_row() {
         let row = one_row("first\nsecond");
@@ -580,15 +442,11 @@ mod tests {
         assert_eq!(row, format!("first {NEWLINE_GLYPH} second"));
     }
 
-    /// A tab's width depends on where in the row it lands, which is enough to
-    /// knock every column after it out of line.
     #[test]
     fn a_tab_becomes_one_space() {
         assert_eq!(one_row("a\tb"), "a b");
     }
 
-    /// Ordinary text is left exactly as it was — including the non-ASCII that
-    /// makes up most repository descriptions.
     #[test]
     fn text_with_nothing_wrong_with_it_is_unchanged() {
         for text in ["plain", "æøå — ünïcode", "✓ passed", ""] {
@@ -596,19 +454,15 @@ mod tests {
         }
     }
 
-    /// A preview pane is a block, not a row: its line breaks are the layout.
-    /// Everything else is still dropped.
     #[test]
     fn a_block_keeps_its_line_breaks_and_nothing_else() {
         assert_eq!(block("a\n\x1b[2Kb"), "a\n[2Kb");
     }
 
     /// A writer that takes `ok` complete lines and then fails with `kind`,
-    /// standing in for a `head` that has read its rows and gone.
-    ///
-    /// Counting newlines rather than calls is what makes it a stand-in at all:
-    /// `writeln!` reaches the writer more than once per line, so a stub that
-    /// counted calls would fail partway through a row instead of between them.
+    /// standing in for a `head` that has read its rows and gone. Counts
+    /// newlines, not calls: `writeln!` reaches the writer more than once per
+    /// line, and the stub has to fail between rows rather than inside one.
     struct FailsAfter {
         ok: usize,
         kind: std::io::ErrorKind,
@@ -642,11 +496,6 @@ mod tests {
         }
     }
 
-    /// `scriv history ls | head` produces five thousand rows for a reader that
-    /// wants three, and `println!` answers the closed pipe with a panic. Short
-    /// listings hid it — a few hundred rows fit in the pipe buffer, so the
-    /// failing write never happened — which is why it only surfaced once a
-    /// listing got long enough to outrun `head`.
     #[test]
     fn a_reader_that_stops_reading_ends_the_listing_rather_than_failing_it() {
         let mut listing = super::Listing::new(FailsAfter::new(2, std::io::ErrorKind::BrokenPipe));
@@ -656,14 +505,10 @@ mod tests {
             !listing.line("three").unwrap(),
             "kept writing past the reader"
         );
-        // Told once, then silent: no further write is even attempted.
         assert!(!listing.line("four").unwrap());
         assert_eq!(listing.out.lines(), vec!["one", "two"]);
     }
 
-    /// A full disk must not be mistaken for a `head`. Everything other than the
-    /// reader leaving is a real failure, and a listing that swallowed it would
-    /// report success having printed half of what was asked for.
     #[test]
     fn other_write_failures_still_fail_the_listing() {
         for kind in [
@@ -682,8 +527,6 @@ mod tests {
 
     use super::*;
 
-    /// `auto` is the rule that was there before there was a flag: a terminal,
-    /// and `SCRIV_NO_COLOR` unset.
     #[test]
     fn auto_colours_only_a_terminal_without_no_color() {
         assert!(ColorChoice::Auto.resolve(true, false));
@@ -694,19 +537,12 @@ mod tests {
         );
     }
 
-    /// The point of `always` is a destination that is not a terminal — a pager
-    /// reading through `less -R`, a recording, a file to be replayed. A rule
-    /// that still checked for a tty would make the flag do nothing at all in
-    /// exactly the case it exists for.
     #[test]
     fn always_colours_a_pipe_too() {
         assert!(ColorChoice::Always.resolve(false, false));
         assert!(!ColorChoice::Never.resolve(false, false));
     }
 
-    /// `EIO` is what a pty answers once the other end has closed, and it is the
-    /// answer the spinning selector was getting. `ENXIO` is a device that is no
-    /// longer attached, `EBADF` a descriptor that is not there at all.
     #[test]
     fn the_errors_that_mean_the_terminal_has_gone() {
         use rustix::io::Errno;
@@ -715,9 +551,6 @@ mod tests {
         }
     }
 
-    /// Ending the process is the consequence, so anything that merely means
-    /// "ask again" must not reach it. An interrupted or would-block write says
-    /// nothing at all about whether the terminal is still there.
     #[test]
     fn an_interrupted_probe_is_not_a_hangup() {
         use rustix::io::Errno;
@@ -726,9 +559,6 @@ mod tests {
         }
     }
 
-    /// Without a terminal there is nothing to watch and nothing that could go
-    /// wrong, so no thread is started — and nothing can call `exit` on a run
-    /// that was only ever a pipe.
     #[test]
     fn no_terminal_means_nothing_is_watched() {
         // The test harness captures stderr, so this is the redirected case.
@@ -739,31 +569,19 @@ mod tests {
         );
     }
 
-    /// 128 + SIGHUP: the status the shell would have reported had the signal
-    /// been delivered and taken its default action.
     #[test]
     fn the_hangup_exit_status_is_the_one_a_signal_would_have_given() {
         assert_eq!(EXIT_HANGUP, 128 + 1);
     }
 
-    /// scriv reads its own variable, not the cross-tool `NO_COLOR`
-    /// (<https://no-color.org>). The convention is one switch for every tool at
-    /// once; this is a switch for this one, and sharing the name would leave no
-    /// way to keep scriv coloured in an environment that had turned everything
-    /// else plain.
-    ///
-    /// Pinned here because nothing else can catch it: `no_color` reads the
-    /// environment, and whether it read the right name is invisible to a test
-    /// that cannot set one — which is every test in this crate, since mutating
-    /// the environment is unsound once another thread exists.
+    /// Pinned because nothing else can catch it: no test in this crate can set
+    /// an environment variable, so the name `no_color` reads is invisible to
+    /// every other check.
     #[test]
     fn the_variable_is_scrivs_own_and_not_the_shared_convention() {
         assert_eq!(NO_COLOR_ENV_VAR, "SCRIV_NO_COLOR");
     }
 
-    /// `SCRIV_NO_COLOR` states a default for the environment; a flag on the command
-    /// line is the user overriding their own default for this one run, so it
-    /// has to win in both directions.
     #[test]
     fn an_explicit_choice_outranks_no_color() {
         assert!(
@@ -773,8 +591,6 @@ mod tests {
         assert!(!ColorChoice::Never.resolve(true, false));
     }
 
-    /// Only an explicit yes deletes anything. A bare return is the answer
-    /// someone gives when they were not reading, and it has to mean no.
     #[test]
     fn only_an_explicit_yes_is_a_yes() {
         for answer in ["y", "Y", "yes", "YES", " yes \n"] {
@@ -785,17 +601,12 @@ mod tests {
         }
     }
 
-    /// `--yes` is the whole point of the flag: it answers the question so a
-    /// script never reaches the prompt.
     #[test]
     fn the_yes_flag_skips_the_question() {
         assert!(matches!(Confirm::decide(true, true), Confirm::Assumed));
         assert!(matches!(Confirm::decide(true, false), Confirm::Assumed));
     }
 
-    /// Prompting a stdin nobody is typing at is not caution — it is a hang or
-    /// an instant no that reads as a refusal to work. Saying so, and naming the
-    /// flag, is the only useful answer.
     #[test]
     fn a_question_that_cannot_be_asked_is_not_answered_for_the_user() {
         assert!(matches!(Confirm::decide(false, false), Confirm::Impossible));
@@ -812,8 +623,6 @@ mod tests {
         assert_eq!(paint("main", 2, true), "\x1b[38;5;2mmain\x1b[0m");
     }
 
-    /// A cell painted mid-row has to hand the row's colour back, or everything
-    /// after it renders in the terminal default.
     #[test]
     fn paint_within_returns_to_the_row_colour() {
         assert_eq!(
@@ -824,8 +633,6 @@ mod tests {
         assert_eq!(paint_within("✓", 2, 5, false), "✓");
     }
 
-    /// Every frame has to be one column wide, or the line jitters as it turns
-    /// and the erase leaves a tail behind.
     #[test]
     fn spinner_frames_are_a_single_character() {
         for frame in FRAMES {
@@ -833,17 +640,12 @@ mod tests {
         }
     }
 
-    /// The erase has to clear the whole line, not just return to its start:
-    /// a shorter label drawn over a longer one would otherwise leave the tail
-    /// of the old text on screen.
     #[test]
     fn clearing_erases_the_line_it_returns_to() {
         assert!(CLEAR_LINE.starts_with('\r'));
         assert!(CLEAR_LINE.contains("\x1b[2K"), "no erase-line sequence");
     }
 
-    /// With no terminal to draw on — a piped or redirected run — the spinner
-    /// starts no thread and writes nothing at all.
     #[test]
     fn no_terminal_means_no_animation() {
         // The test harness captures stderr, so this is the redirected case.
@@ -851,9 +653,6 @@ mod tests {
         assert!(spinner.thread.is_none(), "spun without a terminal");
     }
 
-    /// The spinner has to draw on a row of its own: every frame erases the
-    /// whole line, so on the prompt's row it would wipe the prompt and leave
-    /// nothing but a blank line behind once it stopped.
     #[test]
     fn the_spinner_draws_on_a_row_of_its_own() {
         let spinner = spinner("fetching", true);
@@ -864,9 +663,6 @@ mod tests {
         );
     }
 
-    /// Taking a row writes to the terminal, so a redirected run must take
-    /// none — the newline and the cursor-up would otherwise end up in
-    /// whatever is reading stderr.
     #[test]
     fn no_terminal_means_no_row_taken() {
         assert_eq!(
@@ -876,9 +672,6 @@ mod tests {
         assert!(!ScratchRow::none().is_taken());
     }
 
-    /// Stepping back up is what leaves the cursor where the shell left it. A
-    /// sequence that also moved the column, or one that scrolled, would put
-    /// the shell's repaint somewhere else entirely.
     #[test]
     fn the_row_is_given_back_by_moving_up_one() {
         assert_eq!(CURSOR_UP, b"\x1b[A");

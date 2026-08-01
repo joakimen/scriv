@@ -138,13 +138,8 @@ pub fn path(ctx: &Ctx) -> Result<()> {
 
 // --- check ------------------------------------------------------------------
 
-/// How one check came out.
-///
-/// The distinction between [`Status::Warn`] and [`Status::Fail`] is what makes
-/// the command's exit status worth anything: only a failure means something is
-/// actually broken. A missing `gh` is a warning because five of the six command
-/// groups do not need it; a root that does not exist is a failure because
-/// nothing works without one.
+/// How one check came out. Only [`Status::Fail`] means something is actually
+/// broken, which is what makes the command's exit status worth anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
     Ok,
@@ -153,8 +148,7 @@ enum Status {
 }
 
 impl Status {
-    /// A shape, not a colour alone — the same rule the pull request listings
-    /// follow, so a piped or `SCRIV_NO_COLOR` report says exactly as much.
+    /// A shape, not a colour alone, so a piped report says exactly as much.
     fn glyph(self) -> &'static str {
         match self {
             Self::Ok => "✓",
@@ -205,10 +199,8 @@ impl Check {
     }
 }
 
-/// Render one check as its row: glyph, aligned name, detail.
-///
-/// `width` is the widest name in the report, counted in characters rather than
-/// bytes so a non-ASCII name would not over-pad the column.
+/// Render one check as its row: glyph, aligned name, detail. `width` is the
+/// widest name in the report, counted in characters.
 fn render(check: &Check, width: usize, color: bool) -> String {
     let row = format!(
         "{glyph} {name:<width$}  {detail}",
@@ -226,16 +218,10 @@ fn failures(checks: &[Check]) -> usize {
     checks.iter().filter(|c| c.status == Status::Fail).count()
 }
 
-/// Resolve `program` against `path_env` the way a shell would.
-///
-/// A name containing a separator is a path already and is used as it stands;
-/// anything else is looked for in each `PATH` entry in order. `exists` is
-/// passed in so the rule is a pure function with a test rather than something
-/// that can only be exercised against whatever happens to be installed.
-///
-/// Executability is deliberately not checked: a file on `PATH` under the name
-/// the user configured is what they meant, and reporting "found but not
-/// executable" is a distinction the spawn itself makes better.
+/// Resolve `program` against `path_env` the way a shell would: a name
+/// containing a separator is a path already, anything else is looked for in
+/// each `PATH` entry in order. Executability is deliberately not checked — the
+/// spawn reports that better.
 fn resolve_on_path(
     program: &str,
     path_env: Option<&str>,
@@ -280,12 +266,9 @@ fn tool_check(name: &'static str, program: &str, required: bool, note: &str) -> 
     }
 }
 
-/// The config file itself: whether there is one, and where.
-///
-/// Reaching this point at all means it parsed — [`Ctx::load`](crate::Ctx::load)
-/// refuses to build otherwise — so the only question left is whether one
-/// exists. Absent is a warning, not a failure: the known-files commands work
-/// without any config at all.
+/// The config file itself: whether there is one, and where. Reaching this point
+/// means it parsed, so the only question left is whether one exists — and
+/// absent is a warning, since the known-files commands work without one.
 fn config_check(ctx: &Ctx) -> Check {
     let path = ctx.config_path.display().to_string();
     if ctx.config_path.exists() {
@@ -337,8 +320,7 @@ fn root_checks(ctx: &Ctx) -> Vec<Check> {
         checks.push(if missing.is_empty() {
             Check::ok("repo extra", format!("{total} path(s), all present"))
         } else {
-            // A hard error, because discovery treats a missing search path as
-            // one: the whole selector fails rather than quietly listing less.
+            // Discovery treats a missing search path as a hard error.
             Check::fail("repo extra", format!("missing: {}", missing.join(", ")))
         });
     }
@@ -346,13 +328,9 @@ fn root_checks(ctx: &Ctx) -> Vec<Check> {
     checks
 }
 
-/// How many repositories discovery actually finds — the number the selector will
-/// show, which is the only figure that answers "is my root right".
-///
-/// Skipped when a search path has already been reported missing. Discovery
-/// treats that as a hard error, so running it anyway would report the same
-/// problem a second time in vaguer words, and the report is meant to be one
-/// line per thing wrong.
+/// How many repositories discovery actually finds. Skipped when a search path
+/// has already been reported missing, so the report stays one line per thing
+/// wrong.
 fn discovery_check(ctx: &Ctx, paths_ok: bool) -> Option<Check> {
     if !paths_ok || (ctx.config.repo.root.is_none() && ctx.config.repo.extra.is_empty()) {
         return None;
@@ -377,8 +355,8 @@ fn editor_check(ctx: &Ctx) -> Check {
             "no $VISUAL or $EDITOR — `scriv edit` has nothing to open files with",
         );
     };
-    // The setting may carry arguments (`code -w`); only the program is looked
-    // for, which is the same split the launch does.
+    // The setting may carry arguments (`code -w`); only the program is
+    // looked for, the same split the launch does.
     let program = setting.split_whitespace().next().unwrap_or(setting);
     match on_path(program) {
         Some(found) => Check::ok("editor", format!("{setting} ({})", found.display())),
@@ -422,8 +400,7 @@ fn files_check(ctx: &Ctx) -> Check {
     if missing == 0 {
         Check::ok("tracked files", format!("{} tracked", lines.len()))
     } else {
-        // Not a failure: a list going stale is what happens to a list, and
-        // `file ls --missing` is the thing to run next.
+        // Not a failure: `file ls --missing` is the thing to run next.
         Check::warn(
             "tracked files",
             format!(
@@ -457,9 +434,7 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         false,
         "only `pr` and `repo clone`/`open` need it (https://cli.github.com)",
     ));
-    // `kill` gets no row of its own. It ships in the same base system `ps`
-    // does, so a machine missing one is the machine this row already failed
-    // for, and it explains its own absence at the point of use.
+    // `kill` gets no row: it ships in the same base system `ps` does.
     checks.push(tool_check(
         "ps",
         "ps",
@@ -471,18 +446,9 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
     checks
 }
 
-/// `scriv config check` — look at everything scriv depends on and say what is
-/// wrong with it.
-///
-/// A tool that only reports the first thing it trips over makes fixing a setup
-/// a sequence of round trips: run it, read one error, fix it, run it again.
-/// This looks at all of it in one go — the config file, the paths it names, the
-/// repositories discovery actually finds, the editor, `git`, `gh`, the history
-/// file and the tracked list — and reports each with what to do about it.
-///
-/// The exit status is non-zero only when something is genuinely broken, so it
-/// is worth putting in a setup script; a warning is a thing worth knowing that
-/// still leaves scriv working.
+/// `scriv config check` — look at everything scriv depends on in one go and say
+/// what is wrong with it. The exit status is non-zero only when something is
+/// genuinely broken, so it is worth putting in a setup script.
 pub fn check(ctx: &Ctx) -> Result<()> {
     let checks = collect(ctx);
     let color = ctx.color();
@@ -511,10 +477,6 @@ mod tests {
     use super::*;
     use crate::config::{RepoDisplay, load_config};
 
-    /// The starter config is the main thing teaching the current layout, so it
-    /// has to be a config scriv actually accepts — a template still written in
-    /// a superseded shape would hand every new user the migration error on
-    /// their first run.
     #[test]
     fn the_starter_template_parses() {
         let dir = tempfile::tempdir().unwrap();
@@ -531,12 +493,7 @@ mod tests {
         assert_eq!(cfg.selector.height, "50%");
     }
 
-    /// Every commented-out key is advice, and advice that does not parse is
-    /// worse than none — uncommenting them all has to still yield a valid
-    /// config, including the inline `labels` table.
-    ///
-    /// A commented key is `# <name> = ...`; prose comments are left alone, so
-    /// this stays a test of the suggestions rather than of the heuristic.
+    /// A commented key is `# <name> = ...`; prose comments are left alone.
     #[test]
     fn the_templates_commented_keys_parse_when_uncommented() {
         let is_key = |line: &str| {
@@ -568,9 +525,6 @@ mod tests {
 
     // --- check ---
 
-    /// Only a failure is a failure. Getting this wrong in the other direction
-    /// makes the command useless in a setup script: a missing `gh`, which five
-    /// of the six command groups do not care about, would fail the run.
     #[test]
     fn warnings_do_not_fail_the_run() {
         let checks = vec![
@@ -583,8 +537,6 @@ mod tests {
         assert_eq!(failures(&broken), 1);
     }
 
-    /// The report has to be readable without colour — piped, redirected, or
-    /// under `SCRIV_NO_COLOR` — so each status carries a distinct shape of its own.
     #[test]
     fn every_status_is_a_distinct_shape_not_a_colour() {
         let glyphs: Vec<&str> = [Status::Ok, Status::Warn, Status::Fail]
@@ -601,8 +553,6 @@ mod tests {
         assert!(!plain.contains('\x1b'), "colour leaked into a plain report");
     }
 
-    /// Names are padded into one column so the details line up; the padding is
-    /// what makes a report of ten rows scannable rather than ragged.
     #[test]
     fn names_are_padded_into_one_column() {
         let rows = [
@@ -613,8 +563,6 @@ mod tests {
         assert_eq!(column(&rows[0]), column(&rows[1]), "{rows:?}");
     }
 
-    /// A program is looked for in each `PATH` entry in order, so the one that
-    /// would actually be spawned is the one reported.
     #[test]
     fn path_lookup_takes_the_first_match_in_order() {
         let found = resolve_on_path("gh", Some("/a:/b:/c"), |p| {
@@ -635,8 +583,6 @@ mod tests {
         );
     }
 
-    /// An editor set to an absolute path — `EDITOR=/opt/bin/hx` — is a path,
-    /// not a name to search for.
     #[test]
     fn a_program_with_a_separator_is_used_as_it_stands() {
         assert_eq!(

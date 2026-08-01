@@ -40,10 +40,8 @@ impl FoundRepo {
 }
 
 /// The owner of a repository at `path` under `root`: the single directory
-/// between them, per the `<root>/<owner>/<repo>` layout.
-///
-/// `None` when `path` is not exactly that shape, which is what keeps a stray
-/// checkout at the wrong depth from being labelled with a nonsense owner.
+/// between them, per the `<root>/<owner>/<repo>` layout. `None` when `path` is
+/// not exactly that shape.
 pub fn owner_of(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
     let parts: Vec<_> = rel.components().collect();
@@ -123,17 +121,9 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
     Ok(dedup_by_path(repos))
 }
 
-/// Drop repositories found more than once, keeping the first.
-///
-/// The searches are independent, so nothing stops two of them from reaching the
-/// same checkout: an `extra` path that also sits under the root, the same path
-/// listed twice, or two spellings of one directory. Every one of those used to
-/// put the repository in the list twice, which in a selector is two identical
-/// rows where selecting either does the same thing.
-///
-/// The first occurrence wins because the jobs are ordered root-first, and only
-/// the root search knows a repository's owner and therefore its label. Keeping
-/// the later one would leave a labelled repository showing up unlabelled.
+/// Drop repositories found more than once, keeping the first. The jobs are
+/// ordered root-first, and only the root search knows a repository's owner and
+/// therefore its label.
 fn dedup_by_path(repos: Vec<FoundRepo>) -> Vec<FoundRepo> {
     let mut seen = HashSet::with_capacity(repos.len());
     repos
@@ -146,12 +136,8 @@ fn dedup_by_path(repos: Vec<FoundRepo>) -> Vec<FoundRepo> {
 /// `max_depth` levels. Directories whose basename is in `ignore` are skipped,
 /// and a discovered repository is not descended into.
 ///
-/// The search runs one depth level at a time, with the directories at each
-/// level divided between worker threads. The work is almost entirely waiting on
-/// `stat` and `readdir` — on a cold cache a root of a hundred repositories
-/// spends most of its half-second latency-bound, one directory at a time — so
-/// overlapping the levels is what makes it quick. The number of *directories*
-/// visited is unchanged; they are simply not queued behind each other.
+/// One depth level at a time, with each level divided between worker threads —
+/// the work is almost entirely waiting on `stat` and `readdir`.
 fn find_repos(
     root: &Path,
     max_depth: usize,
@@ -179,10 +165,8 @@ fn find_repos(
     Ok(repos)
 }
 
-/// How many directories to look at concurrently. The work is I/O latency, not
-/// computation, so this is a concurrency figure rather than a CPU count — but
-/// the core count is a sane scale for it, and a machine that reports none gets
-/// a modest default rather than no parallelism at all.
+/// How many directories to look at concurrently. The work is I/O latency, so
+/// this is a concurrency figure; the core count is a sane scale for it.
 fn workers() -> usize {
     std::thread::available_parallelism().map_or(4, |n| n.get())
 }
@@ -222,9 +206,8 @@ fn visit_level(
             .collect();
         handles
             .into_iter()
-            // Re-raise rather than dropping a chunk: silently returning fewer
-            // repositories than exist is the one failure a selector cannot show.
-            // `find_all_repos` turns this into "discovery worker panicked".
+            // Re-raised rather than dropped: returning fewer repositories than
+            // exist is the one failure a selector cannot show.
             .flat_map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
             .collect()
     })
@@ -281,14 +264,9 @@ fn visit(dir: &Path, last: bool, ignore: &[String], log: &Logger) -> (Vec<PathBu
 }
 
 /// Whether `entry` is a directory, **following symbolic links**.
-///
 /// [`DirEntry::file_type`](std::fs::DirEntry::file_type) reports on the link
-/// itself, so a symlinked checkout — or a symlinked owner directory, which
-/// takes every repository under it down too — reads as "not a directory" and
-/// vanishes from the listing without so much as a warning. Symlinking a
-/// repository into the root is an ordinary thing to do, and discovery is
-/// depth-capped, so the link is followed and the extra `stat` is paid only for
-/// the entries that are actually links.
+/// itself, so a symlinked checkout would otherwise vanish from the listing
+/// without a warning. The extra `stat` is paid only for actual links.
 fn is_dir(entry: &std::fs::DirEntry, path: &Path) -> bool {
     match entry.file_type() {
         Ok(file_type) if file_type.is_symlink() => {
@@ -360,11 +338,6 @@ mod tests {
         assert_eq!(got, vec![root.path().to_path_buf()]);
     }
 
-    /// A checkout symlinked into the root is a repository like any other.
-    /// `DirEntry::file_type` reports on the link, not its target, so both of
-    /// these used to read as "not a directory" and disappear — the symlinked
-    /// owner taking every repository beneath it along with it, and no warning
-    /// printed either way.
     #[cfg(unix)]
     #[test]
     fn follows_symlinked_directories() {
@@ -395,8 +368,6 @@ mod tests {
         assert!(repo.join(".git").exists() && nested.join(".git").exists());
     }
 
-    /// Every level is walked concurrently, so a root wide enough to be split
-    /// across threads must still find everything exactly once.
     #[test]
     fn parallel_levels_find_every_repo() {
         let root = TempDir::new().unwrap();
@@ -418,10 +389,6 @@ mod tests {
         }
     }
 
-    /// The root search and each `extra` path run independently, so nothing
-    /// stops two of them reaching the same checkout — an `extra` entry that is
-    /// also under the root is the ordinary way it happens. Two identical selector
-    /// rows, where selecting either does the same thing, is not a list.
     #[test]
     fn a_repository_found_twice_is_listed_once() {
         let got = dedup_by_path(vec![
@@ -435,10 +402,6 @@ mod tests {
         );
     }
 
-    /// The first occurrence is the one kept, and it has to be: the jobs run
-    /// root-first, and only the root search knows a repository's owner and
-    /// therefore its label. Keep the later copy and a labelled repository turns
-    /// up unlabelled.
     #[test]
     fn deduping_keeps_the_labelled_copy() {
         let got = dedup_by_path(vec![

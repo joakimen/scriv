@@ -9,15 +9,11 @@ use crate::proc::{self, Process, Signal};
 use crate::select::{Preview, SelectItem};
 use crate::{Ctx, Reported, select, term};
 
-/// The whole process table, as `ps` reported it.
+/// The whole process table, as `ps` reported it. One call serves the listing,
+/// the selector rows and every preview pane.
 ///
-/// One `ps` call serves the listing, the selector rows and every preview pane —
-/// see [`proc::preview`] for why the previews are built from it rather than
-/// asking again per row.
-///
-/// Unfiltered, because the entries that must never be *offered* are exactly the
-/// ones [`proc::refuse`] has to recognise when a pid is named on the command
-/// line: filter here and the parent chain is no longer there to check against.
+/// Unfiltered, because the entries that must never be *offered* are the ones
+/// [`proc::refuse`] has to recognise when a pid is named on the command line.
 fn table() -> Result<Vec<Process>> {
     let output = Command::new("ps")
         .args(proc::PS_ARGS)
@@ -85,10 +81,8 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
 
 /// `scriv proc kill` — signal processes, by pid or interactively.
 ///
-/// Several pids are signalled one at a time rather than in a single `kill`
-/// call, so that one refusal — a process owned by another user, or one that
-/// exited between the listing and the keystroke — is reported against the row
-/// it belongs to and does not hide the others that worked.
+/// Several pids are signalled one at a time, so a refusal is reported against
+/// the row it belongs to and does not hide the ones that worked.
 pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal) -> Result<()> {
     let table = table()?;
     let procs = proc::selectable(&table, self_pid());
@@ -99,9 +93,8 @@ pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal) -> Result<()> {
             None => return Ok(()),
         }
     } else {
-        // Nothing filtered these, so they are checked instead — refusing the
-        // whole run rather than skipping the bad ones, since a list that was
-        // partly signalled and partly not is the hardest outcome to act on.
+        // Nothing filtered these, so the whole run is refused rather than the
+        // bad pids skipped: a partly signalled list is the hardest outcome.
         let refused = proc::refuse(&table, self_pid(), pids);
         if let Some((pid, refusal)) = refused.first() {
             bail!("refusing to signal {pid}: {}", refusal.reason());
@@ -114,9 +107,7 @@ pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal) -> Result<()> {
 
     let mut failed = 0;
     for pid in targets {
-        // The name is for the report only, so a process that has since exited
-        // is still signalled — and `kill` is the one that gets to say it is
-        // gone.
+        // The name is for the report only; `kill` says whether it is gone.
         let name = procs
             .iter()
             .find(|p| p.pid == pid)
@@ -142,8 +133,8 @@ fn choose(ctx: &Ctx, procs: &[Process], signal: Signal) -> Result<Option<Vec<i32
     if procs.is_empty() {
         bail!("no processes to select from");
     }
-    // The prompt names the signal, because `--force` is not visible once the
-    // selector has taken the screen and the two are not equally recoverable.
+    // The prompt names the signal: `--force` is not visible once the selector
+    // has taken the screen.
     let prompt = format!("Send {signal} to");
     let selected = match select::select_many(rows(procs), &prompt, &ctx.config.selector) {
         Ok(selected) => selected,
@@ -155,10 +146,8 @@ fn choose(ctx: &Ctx, procs: &[Process], signal: Signal) -> Result<Option<Vec<i32
     ))
 }
 
-/// Selector rows: the aligned listing row, returning the pid.
-///
-/// Uncoloured whatever `--color` says — the selector is a terminal UI that only
-/// ever draws on a terminal, and it tints its own rows.
+/// Selector rows: the aligned listing row, returning the pid. Uncoloured
+/// whatever `--color` says, since the selector tints its own rows.
 fn rows(procs: &[Process]) -> Vec<SelectItem> {
     let width = proc::user_width(procs);
     procs

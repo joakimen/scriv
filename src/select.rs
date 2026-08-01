@@ -1,17 +1,14 @@
 //! Interactive fuzzy selection, built in via [`skim`].
 //!
-//! The fuzzy finder is compiled into the binary — there is no `fzf` subprocess
-//! and no external dependency. Every place that asks the user to choose a path
-//! goes through here, so selection looks and behaves the same everywhere.
+//! The fuzzy finder is compiled into the binary — there is no `fzf` subprocess.
+//! Every place that asks the user to choose goes through here.
 //!
 //! Items carry a separate [`SelectItem::label`] (shown and fuzzy-matched) and
 //! value (returned on selection), so the selector can show a `~`-collapsed path
-//! or a group tag while still returning an absolute path.
+//! while still returning an absolute one.
 //!
-//! Rows can arrive either all at once ([`select_one`], [`select_many`]) or as they
-//! are discovered ([`select_one_streamed`], [`select_many_streamed`]) — the latter
-//! is what makes a walk of a large tree usable, since the selector opens on the
-//! first rows instead of the last.
+//! Rows arrive either all at once ([`select_one`], [`select_many`]) or as they
+//! are discovered ([`select_one_streamed`], [`select_many_streamed`]).
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -39,22 +36,20 @@ impl std::error::Error for Cancelled {}
 
 /// What the preview pane shows for the highlighted row.
 ///
-/// Prefer [`Preview::Text`] whenever the data is already in hand: it renders
-/// instantly, with nothing to spawn or wait for. A [`Preview::Command`] is only
-/// appropriate for work that is local and fast (tens of milliseconds), because
-/// skim spawns it again on every move through the list and does not kill the
-/// previous child.
+/// Prefer [`Preview::Text`] whenever the data is already in hand. A
+/// [`Preview::Command`] is only appropriate for work that is local and fast
+/// (tens of milliseconds), because skim spawns it again on every move through
+/// the list and does not kill the previous child.
 pub enum Preview {
     /// Ready-made text; ANSI escapes are honoured.
     Text(String),
-    /// A shell command, run only when the row is highlighted — so the cost is
-    /// paid per look, not per item. skim exports `COLUMNS` and `ROWS` to it,
-    /// for tools that wrap their own output.
+    /// A shell command, run only when the row is highlighted. skim exports
+    /// `COLUMNS` and `ROWS` to it.
     Command(String),
-    /// The row's own value, previewed as a file — [`file_preview`] built when
-    /// the row is highlighted rather than when the row is created. A streamed
-    /// walk can produce a million rows, and a formatted command string on each
-    /// of them is a hundred megabytes of panes nobody looks at.
+    /// The row's own value, previewed as a file. Built when the row is
+    /// highlighted rather than when it is created: a streamed walk can produce
+    /// a million rows, and a command string on each is megabytes of panes
+    /// nobody looks at.
     File,
 }
 
@@ -64,22 +59,13 @@ pub fn quote(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
-/// The preview for a file: its contents.
-///
-/// `bat` renders them with syntax highlighting when it is installed; `head`
-/// covers everyone else, and its error text is the preview when the path is
-/// gone — which the known-files list expects to happen. Both are bounded to
-/// 200 lines, so scrolling a list never reads a large file in full.
+/// The preview for a file: its contents, via `bat` when installed and `head`
+/// otherwise, bounded to 200 lines.
 pub fn file_preview(path: &str) -> Preview {
     Preview::Command(file_preview_cmd(path))
 }
 
-/// The preview for a directory: what is directly inside it.
-///
-/// `ls` rather than a recursive listing, and capped at 200 rows: the pane is
-/// re-run on every move through the list, so it has to answer in the time it
-/// takes to scroll past. `-A` shows dotfiles without `.` and `..`, `-p` marks
-/// the subdirectories — enough to recognise a directory by what it contains.
+/// The preview for a directory: what is directly inside it, capped at 200 rows.
 pub fn dir_preview(path: &str) -> Preview {
     let path = quote(path);
     Preview::Command(format!("ls -Ap -- {path} 2>&1 | head -n 200"))
@@ -100,17 +86,12 @@ fn file_preview_cmd(path: &str) -> String {
 /// theme), and `preview` fills the preview pane while the row is highlighted.
 pub struct SelectItem {
     pub label: String,
-    /// Drawn dim, ahead of the label, and *not* matched against.
-    ///
-    /// For a column that identifies a row without being what you search for —
-    /// the date on a history entry. Putting it in the label instead would make
-    /// it searchable, and since a date is digits at the start of every row,
-    /// typing a `3` would rank four thousand timestamps above the command you
-    /// were reaching for.
+    /// Drawn dim, ahead of the label, and *not* matched against — for a column
+    /// that identifies a row without being what one searches for, such as the
+    /// date on a history entry.
     pub prefix: Option<String>,
-    /// `None` when the value is the label itself, which is the common case for
-    /// path rows — worth not storing twice when a walk streams in a million of
-    /// them. Read it through [`SelectItem::value`].
+    /// `None` when the value is the label itself. Read through
+    /// [`SelectItem::value`].
     value: Option<String>,
     pub color: Option<u8>,
     pub preview: Option<Preview>,
@@ -163,13 +144,10 @@ impl SelectItem {
     }
 }
 
-/// Colour of a [`SelectItem::prefix`]: ANSI 8, the terminal's own grey, so the
-/// column reads as context beside the command rather than competing with it.
+/// Colour of a [`SelectItem::prefix`]: ANSI 8, the terminal's own grey.
 const PREFIX_COLOR: u8 = 8;
 
-/// Bridges a [`SelectItem`] to skim: `text()` drives display and matching,
-/// `output()` is what a selection yields, `display()` tints the row, and
-/// `preview()` fills the preview pane.
+/// Bridges a [`SelectItem`] to skim.
 struct SkItem {
     item: SelectItem,
 }
@@ -184,8 +162,6 @@ impl SkimItem for SkItem {
     }
 
     fn display(&self, mut context: DisplayContext) -> Line<'_> {
-        // Tint the whole row in the group's colour; skim still overlays its
-        // match highlighting on top via `to_line`.
         if let Some(idx) = self.item.color {
             context.base_style = context.base_style.fg(Color::Indexed(idx));
         }
@@ -194,10 +170,8 @@ impl SkimItem for SkItem {
             return context.to_line(self.text());
         };
 
-        // The prefix is drawn here rather than folded into the label because
-        // `to_line`'s highlight positions are indices into the matched text.
-        // Prepending a span leaves those indices — and so the highlighting —
-        // exactly where they belong, over the label alone.
+        // Prepended as a span rather than folded into the label, so
+        // `to_line`'s highlight positions still index the matched text.
         let mut line = Line::default();
         line.push_span(Span::styled(
             prefix.clone(),
@@ -212,8 +186,8 @@ impl SkimItem for SkItem {
             Some(Preview::Text(text)) => ItemPreview::AnsiText(text.clone()),
             Some(Preview::Command(cmd)) => ItemPreview::Command(cmd.clone()),
             Some(Preview::File) => ItemPreview::Command(file_preview_cmd(self.item.value())),
-            // Blank rather than `Global`, which would run the (empty) global
-            // preview command for rows that have nothing to show.
+            // Blank rather than `Global`, which would run the empty global
+            // preview command.
             None => ItemPreview::Text(String::new()),
         }
     }
@@ -251,35 +225,23 @@ pub fn select_one_queried(
         .ok_or_else(|| Cancelled.into())
 }
 
-/// The key that asks a reloadable selector to go and get fresher rows.
-///
-/// This displaces skim's own `ctrl-r` (rotate between matching modes), which is
-/// why only the selectors over remote data offer it: those are the lists that go
-/// stale while you look at them, and re-reading them is worth more there than
-/// switching to regex matching.
+/// The key that asks a reloadable selector to go and get fresher rows. It
+/// displaces skim's own `ctrl-r`, so only the selectors over remote data offer
+/// it.
 pub const REFRESH_KEY: &str = "ctrl-r";
 
 /// Fetches a fresh set of rows. Called on a background thread, so it may block
 /// for as long as the network takes.
 ///
-/// Infallible by construction: a reload that fails is the caller's to explain,
-/// and the useful answer is almost always "keep showing what we had", which
-/// only the caller can rebuild. Hand back the old rows and remember the error.
+/// Infallible by construction: a reload that fails should hand back the old
+/// rows and remember the error, which only the caller can do.
 pub type Reload = Box<dyn FnMut() -> Vec<SelectItem> + Send>;
 
 /// [`select_one`], with [`REFRESH_KEY`] bound to reloading the list in place.
 ///
 /// The selector does not close and reopen: `reload` runs on a background thread
-/// while skim keeps drawing, with its own reading spinner turning next to the
-/// row count, and the rows already on screen stay there until the new ones
-/// arrive. The query, the cursor and the preview pane are never disturbed —
-/// there is nothing to restore, because nothing was torn down.
-///
-/// This works by handing skim a [`CommandCollector`] of scriv's own. skim's
-/// `reload` action clears the item pool and asks the collector for a new
-/// source; the stock collector runs a shell command, and this one calls
-/// `reload` instead. So the refresh rides skim's real reload path — including
-/// the spinner and the "still reading" state — without a shell in sight.
+/// while skim keeps drawing, and the query, cursor and preview pane are never
+/// disturbed.
 pub fn select_one_reloading(
     items: Vec<SelectItem>,
     prompt: &str,
@@ -319,25 +281,15 @@ impl CommandCollector for ReloadCollector {
         let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
         let reload = Arc::clone(&self.reload);
 
-        // The counter is skim's only view of whether this collector has
-        // stopped, and `ReaderControl::kill` *busy-waits* on it. Whatever this
-        // thread does, it has to decrement quickly when asked — so the reload
-        // itself runs on a second, uncounted thread and this one only waits for
-        // it, giving up the moment skim interrupts.
-        //
-        // A reload started while another is still running therefore does not
-        // cancel it: the first finishes into a channel nobody is reading, and
-        // the second waits its turn on whatever the caller's closure locks.
-        // Pressing the key three times means three fetches, one after another,
-        // and a selector that stays responsive throughout — which is a better
-        // trade than killing a `git fetch` halfway.
+        // `ReaderControl::kill` *busy-waits* on this counter, so the counted
+        // thread has to decrement promptly when asked. The reload itself
+        // therefore runs on a second, uncounted thread that this one waits on.
+        // A reload started while another runs does not cancel it; it queues.
         components_to_stop.fetch_add(1, Ordering::SeqCst);
         std::thread::spawn(move || {
             let (tx_rows, rx_rows) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let rows = (reload.lock().expect("reload closure poisoned"))();
-                // The receiver is gone if skim gave up waiting; the work is
-                // finished either way and its result is simply dropped.
                 let _ = tx_rows.send(rows);
             });
 
@@ -355,8 +307,8 @@ impl CommandCollector for ReloadCollector {
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
-            // Dropping `tx_item` here is what tells skim the read is over and
-            // stops its spinner, so it must happen before the count drops.
+            // Dropping this is what stops skim's spinner, so it has to happen
+            // before the count drops.
             drop(tx_item);
             components_to_stop.fetch_sub(1, Ordering::SeqCst);
         });
@@ -373,15 +325,9 @@ pub enum Choice {
     Query(String),
 }
 
-/// Select one item, or accept what the user typed when nothing matched.
-///
-/// For lists that are suggestions rather than the whole truth. scriv knows the
-/// GitHub owners you have already cloned from and the ones in your config, but
-/// it cannot know the one you are about to clone from for the first time — and
-/// a selector that refuses to accept an unlisted answer would make the common
-/// case convenient by making the uncommon case impossible.
-///
-/// An empty query with no selection is a cancel, not an empty answer.
+/// Select one item, or accept what the user typed when nothing matched — for
+/// lists that are suggestions rather than the whole truth. An empty query with
+/// no selection is a cancel, not an empty answer.
 pub fn select_one_or_query(
     items: Vec<SelectItem>,
     prompt: &str,
@@ -407,12 +353,9 @@ pub fn select_many(
     run(Feed::batch(items), prompt, true, cfg)
 }
 
-/// [`select_one`] over rows that arrive as they are found.
-///
-/// The selector opens immediately and fills in as `items` yields, so the user can
-/// type against the first rows while the rest are still being discovered.
-/// Because no row exists yet when the pane is configured, whether previews are
-/// offered has to be stated up front in `preview`.
+/// [`select_one`] over rows that arrive as they are found. No row exists when
+/// the pane is configured, so whether previews are offered is stated up front
+/// in `preview`.
 pub fn select_one_streamed(
     items: impl IntoIterator<Item = SelectItem, IntoIter: Send + 'static>,
     prompt: &str,
@@ -454,9 +397,8 @@ enum Rows {
 }
 
 /// How many rows to accumulate before handing a batch to skim, and how long to
-/// let one sit unsent. Sending each row on its own would put a million channel
-/// round-trips in front of a walk; 15ms is under a frame, so the selector still
-/// fills in as fast as the eye reads it.
+/// let one sit unsent. The interval is under a frame, so batching costs nothing
+/// visible.
 const FEED_BATCH: usize = 512;
 const FEED_INTERVAL: Duration = Duration::from_millis(15);
 
@@ -501,9 +443,8 @@ impl Feed {
                             continue;
                         }
                         let full = std::mem::replace(&mut batch, Vec::with_capacity(FEED_BATCH));
-                        // A closed channel means the user has selected or
-                        // cancelled: stop walking rather than spend the rest of
-                        // the tree on a selector that is no longer there.
+                        // A closed channel means the selector is gone; stop
+                        // walking rather than finish the tree for nobody.
                         if tx.send(full).is_err() {
                             return;
                         }
@@ -572,18 +513,15 @@ fn run_with_query(
 /// Drive skim over `feed`.
 fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     let (prompt, multi) = (run.prompt, run.multi);
-    // skim needs a terminal for its UI. Fail with a clear message rather than
-    // skim's raw "Device not configured" when there is none (e.g. in a pipe
-    // with no controlling tty). Command substitution — `cd (scriv repo sel)` —
-    // still has a tty on stdin/stderr, so it is allowed.
+    // A clearer message than skim's raw "Device not configured". Command
+    // substitution still has a tty on stdin/stderr, so it is allowed.
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() && !std::io::stderr().is_terminal() {
         anyhow::bail!("interactive selection needs a terminal");
     }
 
     // skim does not stop when its input ends, so a selector whose terminal has
-    // gone spins at 100% CPU for as long as the process is left alive. Held for
-    // exactly as long as the selector is open.
+    // gone spins at 100% CPU until something kills the process.
     let _watch = crate::term::watch_for_hangup();
 
     let mut builder = SkimOptionsBuilder::default();
@@ -593,10 +531,8 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         .reverse(true)
         .multi(multi);
 
-    // The pane only exists when skim has a preview command; the per-item
-    // `preview()` above supplies the actual content, so an empty string is
-    // enough to turn it on. Skipped entirely when no item has a preview, so
-    // selectors without one keep the full width.
+    // The per-item `preview()` supplies the content, so an empty command
+    // string is all it takes to turn the pane on.
     if cfg.preview && feed.preview {
         builder
             .preview("")
@@ -607,16 +543,8 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         builder.query(run.query.to_string());
     }
 
-    // skim's own `reload` action, pointed at a collector that calls a closure
-    // instead of running a shell command.
-    //
-    // `no_clear_if_empty` keeps skim from blanking the displayed rows the
-    // instant the key is pressed, which is all it can do: a reload empties the
-    // item pool by definition, so once the matcher runs again the list is empty
-    // until the new rows land. A reload that returns quickly therefore never
-    // flickers, and a slow one shows an empty list — which is what the busy
-    // header is for, since "still fetching" and "no branches" look identical
-    // otherwise.
+    // `no_clear_if_empty` keeps a quick reload from flickering; a slow one
+    // still empties the list, which is what the busy header is for.
     if let Some(reload) = run.reload {
         let collector = ReloadCollector {
             reload: Arc::new(Mutex::new(reload)),
@@ -632,13 +560,9 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         .build()
         .map_err(|e| anyhow!("configuring selector: {e}"))?;
 
-    // Feed the items through a channel; the sender is dropped when they run
-    // out, which is how skim stops waiting for more.
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
     feed.send(tx)?;
 
-    // Held until the selector is done with the terminal, however it ends —
-    // selection, cancel, or an error out of skim.
     let _room = room_for(&cfg.height);
     let output = Skim::run_with(options, Some(rx)).map_err(|e| anyhow!("running selector: {e}"))?;
 
@@ -656,17 +580,7 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
 }
 
 /// The row an inline selector opens on, so it never draws over the prompt.
-///
-/// skim's inline viewport starts on the row the cursor is on — and when the
-/// selector is opened from a key binding, that is the last row of the shell's
-/// prompt. skim draws over it and clears it on the way out, which a one-line
-/// prompt survives because the shell redraws the whole thing afterwards. A
-/// two-line prompt does not: only its last row is taken, so the selector appears
-/// welded to the middle of a prompt whose first row is still sitting above it.
-/// A [`term::ScratchRow`] moves the whole selector one row down, clear of it.
-///
-/// A full-screen selector takes the alternate screen and gives the display back
-/// untouched, so it needs no row of its own.
+/// A full-screen selector takes the alternate screen and needs no row.
 fn room_for(height: &str) -> term::ScratchRow {
     if draws_inline(height) {
         term::ScratchRow::take()
@@ -692,18 +606,12 @@ fn draws_inline(height: &str) -> bool {
 const IDLE_HEADER: &str = "ctrl-r to refresh";
 
 /// The header while a reload is in flight. skim empties the list for the
-/// duration of a reload — that is what `reload` means — so the header is what
-/// distinguishes "fetching, one moment" from "there are no branches". Its
-/// spinner keeps turning beside the row count throughout.
+/// duration, so this is what distinguishes fetching from "there are none".
 const BUSY_HEADER: &str = "⟳ refreshing…";
 
 /// The skim bindings that turn [`REFRESH_KEY`] into a reload of the item list.
-///
-/// `reload` with no command of its own is skim's "read the source again"; the
-/// source here is [`ReloadCollector`], so this is what calls the closure. The
-/// second binding is skim's `load` event, which fires when a read finishes —
-/// including the first one — and puts the idle header back without scriv having
-/// to know when the reload landed.
+/// The second is skim's `load` event, which restores the idle header when a
+/// read finishes.
 fn refresh_binds() -> Vec<String> {
     vec![
         format!("{REFRESH_KEY}:reload+set-header({BUSY_HEADER})"),
@@ -739,8 +647,6 @@ mod tests {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
-    /// The prefix is drawn ahead of the label in the terminal's grey, so a date
-    /// reads as context beside the command rather than competing with it.
     #[test]
     fn a_prefix_is_drawn_dim_before_the_label() {
         let item = SelectItem::plain("git status").prefix("2026-07-30 13:57  ");
@@ -750,10 +656,6 @@ mod tests {
         assert_eq!(line.spans[0].style.fg, Some(Color::Indexed(PREFIX_COLOR)));
     }
 
-    /// Match highlighting has to land on the label. skim reports match
-    /// positions as indices into the text it matched — the label — so folding
-    /// the prefix into that text instead would shift every highlight right by
-    /// the width of the date.
     #[test]
     fn highlighting_lands_on_the_label_not_the_prefix() {
         // Character 0 of the label: the `g` of `git`.
@@ -771,7 +673,6 @@ mod tests {
         assert_eq!(hit, "g", "highlight slid off the label: {with:?}");
     }
 
-    /// A row with no prefix renders exactly as it did before there was one.
     #[test]
     fn an_item_without_a_prefix_is_unchanged() {
         let line = rendered(SelectItem::plain("git status"), vec![]);
@@ -784,10 +685,6 @@ mod tests {
         assert_eq!(quote("/home/u/my repo"), "'/home/u/my repo'");
     }
 
-    /// Only a full-height selector takes the alternate screen, and only that one
-    /// leaves the display untouched on its own. Get this wrong in the generous
-    /// direction and scriv reserves a row a full-screen selector never draws in,
-    /// leaving a stray blank line above every prompt.
     #[test]
     fn only_a_full_height_selector_keeps_off_the_display() {
         assert!(!draws_inline("100%"));
@@ -797,41 +694,28 @@ mod tests {
         }
     }
 
-    /// A row count of 100 is a hundred rows, not a hundred per cent — the `%`
-    /// is what makes it full-screen.
     #[test]
     fn a_bare_hundred_is_not_full_height() {
         assert!(draws_inline("100"));
     }
 
-    /// Taking a row means writing to the terminal, so it must not happen when
-    /// there is no terminal there: a redirected run would otherwise emit a
-    /// stray newline and a cursor-up escape into whatever is reading it.
     #[test]
     fn a_row_is_taken_only_when_there_is_a_terminal() {
         use std::io::IsTerminal;
         assert_eq!(room_for("50%").is_taken(), std::io::stderr().is_terminal());
     }
 
-    /// A full-screen selector restores the display itself, so there is nothing
-    /// to take however the run was launched.
     #[test]
     fn a_full_height_selector_takes_no_row() {
         assert!(!room_for("100%").is_taken());
     }
 
-    /// A single quote in a branch name or path must not end the quoted string
-    /// and let the rest be read as shell syntax.
     #[test]
     fn quotes_escape_embedded_single_quotes() {
         assert_eq!(quote("it's"), r"'it'\''s'");
         assert_eq!(quote("'; rm -rf /; '"), r"''\''; rm -rf /; '\'''");
     }
 
-    /// The binding has to be skim's own `reload`, not an `accept`: an accept
-    /// closes the selector, which is the behaviour this exists to avoid. It also
-    /// has to parse — a binding skim cannot read is dropped, and the key would
-    /// silently do nothing.
     #[test]
     fn the_refresh_key_is_bound_to_a_reload() {
         let binds = refresh_binds();
@@ -846,9 +730,6 @@ mod tests {
         assert!(actions.contains(BUSY_HEADER), "no busy header: {actions}");
     }
 
-    /// The busy header has to be taken down again, or a selector sits there
-    /// claiming to be refreshing long after it finished. skim's `load` event
-    /// is what says a read is over.
     #[test]
     fn finishing_a_read_restores_the_idle_header() {
         let restore = refresh_binds()
@@ -858,9 +739,7 @@ mod tests {
         assert!(restore.contains(IDLE_HEADER), "{restore}");
     }
 
-    /// Neither the parenthesis nor the comma may appear inside a binding's
-    /// argument: skim splits bindings on `,` and ends an argument at `)`, so a
-    /// header containing either would be parsed as something else entirely.
+    /// skim splits bindings on `,` and ends an argument at `)`.
     #[test]
     fn header_text_cannot_break_the_binding_syntax() {
         for header in [IDLE_HEADER, BUSY_HEADER] {
@@ -869,9 +748,6 @@ mod tests {
         }
     }
 
-    /// The reload closure runs on a thread of the collector's making, and its
-    /// rows have to come back through the channel skim is reading. Driving the
-    /// collector directly is the only way to see that without a terminal.
     #[test]
     fn the_collector_hands_reloaded_rows_to_skim() {
         let calls = Arc::new(AtomicUsize::new(0));
@@ -891,19 +767,14 @@ mod tests {
         assert_eq!(batch[0].text(), "fresh");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        // The channel closing is how skim learns the read is over and stops
-        // its spinner; the counter reaching zero is how it learns the
-        // collector has stopped. Both have to happen, or the selector is left
-        // looking like it is still loading.
+        // The closed channel stops skim's spinner; the zeroed counter tells it
+        // the collector has stopped. Both have to happen.
         assert!(rx.recv().is_err(), "the source channel was left open");
         while components.load(Ordering::SeqCst) != 0 {
             std::thread::yield_now();
         }
     }
 
-    /// skim busy-waits on the component count when it kills a reader, so an
-    /// interrupted reload has to give it up promptly rather than after the
-    /// network has answered.
     #[test]
     fn an_interrupted_reload_stops_without_waiting_for_the_work() {
         let (release, blocked) = std::sync::mpsc::channel::<()>();
@@ -919,9 +790,6 @@ mod tests {
         let (_rx, interrupt) = collector.invoke("", Arc::clone(&components));
         interrupt.send(1).expect("interrupt not delivered");
 
-        // Without the uncounted worker thread this would hang until the
-        // reload finished — exactly the freeze skim's spin would turn into a
-        // pegged core.
         let start = Instant::now();
         while components.load(Ordering::SeqCst) != 0 {
             assert!(

@@ -24,47 +24,26 @@ const WALKER_SKIP: &[&str] = &[
 ];
 
 /// How many discovered paths may sit between the walk and whatever is reading
-/// it.
-///
-/// The walk runs on its own threads, so results the selector has not taken yet
-/// need somewhere to wait. Bounded, not unbounded: a walk of `$HOME` finds
-/// files faster than a selector consumes them, and an unbounded queue would hold
-/// the whole tree in memory to no purpose. A full queue blocks the walker
-/// threads, and that backpressure is what keeps the footprint flat however
-/// large the tree is.
+/// it. Bounded so a full queue blocks the walker threads, which is what keeps
+/// the footprint flat however large the tree.
 const QUEUE_BOUND: usize = 1024;
 
 /// Files under `root`, as paths relative to `root`.
 ///
-/// Streamed: rows are handed over as they are found, so a selector fed from this
-/// opens on the first filename rather than the last, and memory stays bounded
-/// by [`QUEUE_BOUND`] however large the tree. Dotfiles are included — config
-/// files are common targets — while ignore files and [`WALKER_SKIP`] are
+/// Streamed as they are found, so a selector opens on the first filename rather
+/// than the last. Dotfiles are included; ignore files and [`WALKER_SKIP`] are
 /// respected.
 ///
-/// **The order is not specified.** The walk runs on several threads, which is
-/// worth roughly a threefold speedup on a large tree and costs the
-/// directory-at-a-time ordering a single-threaded walk gave for free. Nothing
-/// downstream depends on it: skim ranks rows by the query the moment one is
-/// typed, and the untyped order is arrival order either way.
-///
-/// **Unreadable paths are skipped, not reported.** This is `fzf`'s
-/// `find … 2>/dev/null`: a walk of `$HOME` on macOS crosses directories that
-/// only an app with Full Disk Access can read (`~/Library/CallHistory…` and
-/// friends), and failing the whole selector over one of them — or printing at a
-/// terminal skim is drawing on — is worse than leaving them out. There is
-/// nothing to grant from in here either: Full Disk Access is given to the
-/// terminal application, not to a process that asks for it.
+/// **The order is not specified** — the walk runs on several threads.
+/// **Unreadable paths are skipped, not reported**, as `find … 2>/dev/null`
+/// does: a walk of `$HOME` on macOS crosses directories only an app with Full
+/// Disk Access can read.
 pub fn files(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
     walk(root, Kind::File)
 }
 
-/// Directories under `root`, as paths relative to `root`.
-///
-/// [`files`] in every other respect — same ignore rules, same streaming, same
-/// silence about what it could not read. `root` itself is not offered: `scriv
-/// edit dir` is for going somewhere else, and the editor is already being run
-/// from here.
+/// Directories under `root`, as paths relative to `root`. [`files`] in every
+/// other respect. `root` itself is not offered.
 pub fn dirs(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
     walk(root, Kind::Dir)
 }
@@ -101,8 +80,7 @@ fn walk(root: &Path, kind: Kind) -> impl Iterator<Item = String> + Send + 'stati
         })
         .build_parallel();
 
-    // Detached: `run` blocks until the tree is exhausted, and the consumer has
-    // no reason to wait on it — dropping the receiver is how it is called off.
+    // Detached: dropping the receiver is how the walk is called off.
     std::thread::spawn(move || {
         walker.run(|| {
             let tx = tx.clone();
@@ -116,17 +94,13 @@ fn walk(root: &Path, kind: Kind) -> impl Iterator<Item = String> + Send + 'stati
                 }
                 let path = entry.path();
                 let rel = path.strip_prefix(&root).unwrap_or(path);
-                // The walk starts at `root`, which strips to nothing. A blank
-                // row is not a choice, and "here" is where the editor already
-                // is.
+                // The walk starts at `root`, which strips to nothing.
                 if rel.as_os_str().is_empty() {
                     return WalkState::Continue;
                 }
                 match tx.send(rel.to_string_lossy().into_owned()) {
                     Ok(()) => WalkState::Continue,
-                    // The receiver is gone: the user has selected or cancelled,
-                    // so stop walking rather than spend the rest of the tree on
-                    // a selector that is no longer there.
+                    // The receiver is gone; stop walking.
                     Err(_) => WalkState::Quit,
                 }
             })
@@ -174,9 +148,6 @@ mod tests {
         );
     }
 
-    /// `edit dir` walks the same tree under the same rules and yields only the
-    /// directories — including the ones holding no files at all, which is
-    /// exactly the case a file walk could never surface.
     #[test]
     fn dirs_yields_directories_under_the_same_rules() {
         let dir = TempDir::new().unwrap();
@@ -207,9 +178,6 @@ mod tests {
         );
     }
 
-    /// The walk starts at the root, which strips to an empty path. A blank row
-    /// is not something anyone can select, and "here" is where the editor is
-    /// already running.
     #[test]
     fn the_root_itself_is_not_offered() {
         let dir = TempDir::new().unwrap();
@@ -218,8 +186,6 @@ mod tests {
         assert_eq!(got, vec!["inner".to_string()]);
     }
 
-    /// fd reads `.fdignore` in addition to `.gitignore`; a user who keeps one
-    /// expects the same paths to stay out of scriv's selectors.
     #[test]
     fn files_honours_fdignore() {
         let dir = TempDir::new().unwrap();
@@ -237,9 +203,6 @@ mod tests {
         );
     }
 
-    /// A directory the user cannot read must cost its own subtree and nothing
-    /// else — on macOS a walk of `$HOME` hits several, and losing the whole
-    /// selector to one is what this replaced.
     #[cfg(unix)]
     #[test]
     fn files_skips_unreadable_directories() {
@@ -265,15 +228,10 @@ mod tests {
         assert!(!got.iter().any(|f| f.contains("hidden.txt")));
     }
 
-    /// The walk hands rows over as it finds them, through a queue bounded by
-    /// [`QUEUE_BOUND`] — so a tree several times that size only finishes if the
-    /// walker threads block when the queue fills and resume as the consumer
-    /// drains it.
-    ///
-    /// This is the test that earns the bounded queue. An unbounded one would
-    /// hold the whole tree in memory and still pass every other test here; a
-    /// mis-wired bounded one deadlocks, and deadlocks in front of a selector that
-    /// has already taken over the terminal.
+    /// A tree several times [`QUEUE_BOUND`] only finishes if the walker threads
+    /// block when the queue fills and resume as the consumer drains it. A
+    /// mis-wired bounded queue deadlocks; an unbounded one passes every other
+    /// test here.
     #[test]
     fn files_streams_a_tree_larger_than_its_queue() {
         let dir = TempDir::new().unwrap();
