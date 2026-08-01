@@ -21,9 +21,19 @@ in the PR body which ones you touched, or why none needed it.
 command or flag, and the `EXAMPLES` block are the only documentation most
 users read, and clap ships them straight to the terminal. A new command or
 flag is not done until it has a doc comment; a renamed or re-scoped one is not
-done until the old wording is gone. `EXAMPLES` covers the common entry point
-of each command group — add a line when you add a group, not when you add
-every flag.
+done until the old wording is gone.
+
+`EXAMPLES` is three lines and stays three lines. It once carried one per
+command group, which was thirteen lines of identical shape sitting directly
+below the list of commands that already named every one of them — a wall to
+scroll past rather than something read. What it shows now is one of each
+*kind*: what to run first, how a `sel` composes into the shell, and a verb
+acting on its own. A new command group does not earn a line; it earns one only
+by being a kind of thing none of the three already demonstrates.
+
+Aliases are declared `visible_alias`, never `alias`. clap hides the latter, and
+a name the binary accepts but the help does not mention is exactly the drift
+this section exists to prevent.
 
 **2. README.md.** It is deliberately short — a page, not a manual — and it stays
 that way. Three things in it can go stale: the command table, which must list

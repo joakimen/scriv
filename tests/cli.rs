@@ -200,6 +200,48 @@ fn an_unknown_command_is_a_usage_error() {
     assert!(run.stdout.is_empty(), "usage errors belong on stderr");
 }
 
+/// An alias the binary accepts and the help does not mention is a name only
+/// its author knows about. clap hides `alias` and shows `visible_alias`, and
+/// the two are one keyword apart, so nothing but reading the rendered help
+/// proves which one was written.
+#[test]
+fn help_names_the_aliases_the_binary_accepts() {
+    let sandbox = Sandbox::new();
+    let top = sandbox.run(&["--help"]);
+    top.ok();
+    for alias in ["r", "f", "e", "b", "pc", "h", "c"] {
+        assert!(
+            top.stdout.contains(&format!("[aliases: {alias}]")),
+            "`{alias}` is accepted but unmentioned:\n{}",
+            top.stdout
+        );
+    }
+
+    let branch = sandbox.run(&["branch", "--help"]);
+    branch.ok();
+    assert!(
+        branch.stdout.contains("[aliases: co, switch]"),
+        "{}",
+        branch.stdout
+    );
+}
+
+/// The examples are a fixed three, one of each kind rather than one per command
+/// group — the group list is directly above them and already names every one.
+#[test]
+fn the_help_examples_stay_at_three() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["--help"]);
+    run.ok();
+    let examples = run
+        .stdout
+        .split_once("Examples:")
+        .expect("no examples block")
+        .1;
+    let lines = examples.lines().filter(|l| !l.trim().is_empty()).count();
+    assert_eq!(lines, 3, "the examples block has grown:{examples}");
+}
+
 /// Abbreviations are part of the surface people actually type. They are aliases
 /// in clap, so nothing but a run of the binary proves they resolve.
 #[test]
