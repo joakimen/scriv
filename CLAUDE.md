@@ -224,6 +224,17 @@ test that allocated a pty would be testing skim.
   thing; a two-line prompt is left cut in half. Take a row, draw on that, and
   step back up on the way out so the cursor is where the shell's repaint expects
   it. Never draw on the row scriv was invoked on.
+- **The picker watches for its terminal disappearing.** skim's input loop does
+  not stop when its event stream ends: on a pty whose other end has closed,
+  `crossterm` reports end-of-stream immediately and forever and skim's `select!`
+  treats that as nothing to do, so the process pins a core until something kills
+  it — one was found here having done so for over a day. Normally `SIGHUP` ends
+  scriv first; `term::watch_for_hangup` is for when it does not, and it probes
+  with a *zero-length write* so it can neither disturb what skim has drawn nor
+  take a keystroke skim was going to act on. On macOS that is the only probe
+  that works: `poll` reports no hangup and `tcgetattr`, `TIOCGWINSZ` and
+  `tcgetpgrp` all keep answering normally on a slave whose master is gone. Take
+  the guard out only once skim's loop terminates on its own.
 - **Only `cd` needs the shell.** A child cannot change its parent's directory,
   which is why `repo pick` prints a path for a fish function to consume. Running
   an editor needs no such help: `scriv edit` spawns it directly and skim restores

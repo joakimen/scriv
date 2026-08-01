@@ -7,6 +7,8 @@
 //! side: they touch the display only when there is one to touch.
 
 use std::io::{IsTerminal, Write};
+
+use rustix::fd::AsFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -181,6 +183,123 @@ impl Confirm {
     /// [`Confirm::decide`] against this process's stdin.
     pub fn resolve(yes: bool) -> Self {
         Self::decide(yes, std::io::stdin().is_terminal())
+    }
+}
+
+/// The status scriv exits with when its terminal disappears underneath it.
+///
+/// 128 + SIGHUP, which is what the shell would have reported had the signal
+/// been delivered and taken its default action. Nothing is waiting to read it —
+/// the terminal is gone — but a status that means something is still cheaper
+/// than one that does not.
+pub const EXIT_HANGUP: u8 = 129;
+
+/// How often the terminal is probed while a picker is open. Twice a second is
+/// far below anything measurable and still notices a hangup promptly.
+const HANGUP_POLL: Duration = Duration::from_millis(500);
+
+/// How many probes in a row must fail before the terminal is called gone.
+///
+/// More than one because the consequence is ending the process: a single odd
+/// answer from a terminal that is still there would take down a picker somebody
+/// was reading.
+const HANGUP_STRIKES: u32 = 2;
+
+/// Whether a failed probe means the terminal has gone, rather than that the
+/// probe itself was interrupted.
+///
+/// `EIO` is what a pty whose other end has closed answers with, and `ENXIO` is
+/// the same answer from a device that is no longer attached. `EBADF` means the
+/// descriptor is not there at all. `EINTR` and `EAGAIN` are ordinary and say
+/// nothing about the terminal.
+pub fn is_hangup(err: rustix::io::Errno) -> bool {
+    use rustix::io::Errno;
+    matches!(err, Errno::IO | Errno::NXIO | Errno::BADF | Errno::PIPE)
+}
+
+/// Ask the terminal whether it is still there, without writing to it.
+///
+/// A zero-length write runs the driver's checks and then writes no bytes, so it
+/// cannot disturb what the picker has drawn — and unlike a read, it cannot take
+/// a keystroke that skim was going to act on.
+fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
+    match rustix::io::write(fd, &[]) {
+        Ok(_) => true,
+        Err(e) => !is_hangup(e),
+    }
+}
+
+/// Ends the process if the terminal goes away while a picker is open.
+///
+/// The picker is skim, and skim's input loop does not stop when its event
+/// stream ends: on a pty whose other end has closed, `crossterm`'s
+/// `EventStream` yields end-of-stream immediately and forever, and skim's
+/// `select!` treats that as nothing to do and asks again. The result is a
+/// process pinning a core for as long as it is left alone — one was found here
+/// having done so for over a day.
+///
+/// Normally the kernel prevents this: closing the other end of a pty sends
+/// `SIGHUP` to the foreground process group and the default action ends scriv
+/// before skim can spin. This is for when that does not happen — an orphaned
+/// process group, a terminal that never hung up the group scriv was in — which
+/// is the state the spinning process had reached.
+///
+/// The real fix belongs in skim, whose loop should stop when its input ends.
+/// Until it does, scriv declines to be the process left behind.
+#[must_use]
+pub struct HangupWatch {
+    stop: Arc<AtomicBool>,
+    /// `None` when there was no terminal to watch, which makes this a no-op
+    /// rather than a check at the call site.
+    thread: Option<JoinHandle<()>>,
+}
+
+/// Watch the terminal for as long as the returned guard is held.
+///
+/// Bind it — `let _watch = term::watch_for_hangup()`. A bare statement drops it
+/// immediately and watches nothing.
+pub fn watch_for_hangup() -> HangupWatch {
+    let stop = Arc::new(AtomicBool::new(false));
+    // stderr is what the picker draws on, so it is the terminal whose loss
+    // matters. Without one there is nothing to watch and nothing to protect.
+    if !std::io::stderr().is_terminal() {
+        return HangupWatch { stop, thread: None };
+    }
+
+    let flag = Arc::clone(&stop);
+    let thread = std::thread::spawn(move || {
+        let mut strikes = 0;
+        while !flag.load(Ordering::Relaxed) {
+            std::thread::sleep(HANGUP_POLL);
+            if flag.load(Ordering::Relaxed) {
+                return;
+            }
+            if still_attached(std::io::stderr().as_fd()) {
+                strikes = 0;
+                continue;
+            }
+            strikes += 1;
+            if strikes >= HANGUP_STRIKES {
+                // Nothing to unwind: the terminal that skim's state describes is
+                // gone, and every destructor between here and `main` would be
+                // writing to it. Leaving by the shortest route is the point.
+                std::process::exit(EXIT_HANGUP as i32);
+            }
+        }
+    });
+    HangupWatch {
+        stop,
+        thread: Some(thread),
+    }
+}
+
+impl Drop for HangupWatch {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        // Not joined: the thread sleeps in half-second steps, and making every
+        // picker's exit wait for one would be paying for the watch on the path
+        // where nothing went wrong.
+        drop(self.thread.take());
     }
 }
 
@@ -479,6 +598,48 @@ mod tests {
     fn always_colours_a_pipe_too() {
         assert!(ColorChoice::Always.resolve(false, false));
         assert!(!ColorChoice::Never.resolve(false, false));
+    }
+
+    /// `EIO` is what a pty answers once the other end has closed, and it is the
+    /// answer the spinning picker was getting. `ENXIO` is a device that is no
+    /// longer attached, `EBADF` a descriptor that is not there at all.
+    #[test]
+    fn the_errors_that_mean_the_terminal_has_gone() {
+        use rustix::io::Errno;
+        for err in [Errno::IO, Errno::NXIO, Errno::BADF, Errno::PIPE] {
+            assert!(is_hangup(err), "{err:?} was not read as a hangup");
+        }
+    }
+
+    /// Ending the process is the consequence, so anything that merely means
+    /// "ask again" must not reach it. An interrupted or would-block write says
+    /// nothing at all about whether the terminal is still there.
+    #[test]
+    fn an_interrupted_probe_is_not_a_hangup() {
+        use rustix::io::Errno;
+        for err in [Errno::INTR, Errno::AGAIN, Errno::NOSPC, Errno::PERM] {
+            assert!(!is_hangup(err), "{err:?} would have killed a live picker");
+        }
+    }
+
+    /// Without a terminal there is nothing to watch and nothing that could go
+    /// wrong, so no thread is started — and nothing can call `exit` on a run
+    /// that was only ever a pipe.
+    #[test]
+    fn no_terminal_means_nothing_is_watched() {
+        // The test harness captures stderr, so this is the redirected case.
+        let watch = watch_for_hangup();
+        assert!(
+            watch.thread.is_none(),
+            "watched a terminal that was not there"
+        );
+    }
+
+    /// 128 + SIGHUP: the status the shell would have reported had the signal
+    /// been delivered and taken its default action.
+    #[test]
+    fn the_hangup_exit_status_is_the_one_a_signal_would_have_given() {
+        assert_eq!(EXIT_HANGUP, 128 + 1);
     }
 
     /// scriv reads its own variable, not the cross-tool `NO_COLOR`

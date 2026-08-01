@@ -561,6 +561,11 @@ fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
         anyhow::bail!("interactive selection needs a terminal");
     }
 
+    // skim does not stop when its input ends, so a picker whose terminal has
+    // gone spins at 100% CPU for as long as the process is left alive. Held for
+    // exactly as long as the picker is open.
+    let _watch = crate::term::watch_for_hangup();
+
     let mut builder = SkimOptionsBuilder::default();
     builder
         .height(cfg.height.clone())
