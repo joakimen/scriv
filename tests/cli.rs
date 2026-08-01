@@ -18,9 +18,9 @@
 //! write to them. A test that passed only on a machine with a particular
 //! `~/.config/scriv` would be worse than no test.
 //!
-//! Nothing here opens a picker: the interactive paths need a terminal, and a
+//! Nothing here opens a selector: the interactive paths need a terminal, and a
 //! test that allocated a pty would be testing skim. The commands exercised are
-//! the ones a script can call — `ls`, `add`, `remove`, `config`, `init`.
+//! the ones a script can call — `ls`, `add`, `rm`, `config`, `init`.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -206,13 +206,28 @@ fn an_unknown_command_is_a_usage_error() {
 fn the_documented_abbreviations_resolve() {
     let sandbox = Sandbox::new();
     for args in [
-        &["br", "--help"][..],
-        &["hist", "--help"][..],
+        &["c", "--help"][..],
+        &["r", "--help"][..],
         &["e", "--help"][..],
+        &["b", "--help"][..],
+        &["f", "--help"][..],
+        &["h", "--help"][..],
+        &["pc", "--help"][..],
         &["branch", "co", "--help"][..],
         &["repo", "list", "--help"][..],
     ] {
         sandbox.run(args).ok();
+    }
+}
+
+/// Every registry offers `sel` under that name. The command itself needs a
+/// terminal, but whether the verb exists at all is answerable without one — and
+/// a group that missed the rename would only show up as a broken key binding.
+#[test]
+fn every_registry_exposes_sel() {
+    let sandbox = Sandbox::new();
+    for group in ["repo", "file", "branch", "pr", "proc", "history"] {
+        sandbox.run(&[group, "sel", "--help"]).ok();
     }
 }
 
@@ -463,7 +478,7 @@ fn repo_ls_skips_ignored_directories() {
 #[test]
 fn repo_ls_without_a_root_says_what_to_do() {
     let sandbox = Sandbox::new();
-    sandbox.write_config("[picker]\nheight = \"40%\"\n");
+    sandbox.write_config("[selector]\nheight = \"40%\"\n");
 
     let run = sandbox.run(&["repo", "ls"]);
     run.code(1);
@@ -503,7 +518,7 @@ fn file_add_ls_and_remove_round_trip() {
     ls.ok();
     assert_eq!(ls.lines(), vec![note.to_str().unwrap()]);
 
-    let removed = sandbox.run(&["file", "remove", note.to_str().unwrap()]);
+    let removed = sandbox.run(&["file", "rm", note.to_str().unwrap()]);
     removed.ok();
     assert!(removed.stdout.contains("Removed"), "{}", removed.stdout);
     assert!(sandbox.run(&["file", "ls"]).ok().lines().is_empty());
@@ -581,7 +596,7 @@ fn file_prune_drops_the_entries_whose_files_are_gone() {
 
 /// Deleting on an assumed yes is the failure mode worth guarding: a run with
 /// nothing on stdin cannot ask, so it says so and names the flag instead of
-/// picking an answer.
+/// selecting an answer.
 #[test]
 fn file_prune_refuses_to_assume_an_answer_it_could_not_ask_for() {
     let sandbox = Sandbox::new();
@@ -821,11 +836,11 @@ fn proc_ls_status_is_pipe_safe_by_default() {
     assert!(forced.stdout.contains('\x1b'), "--color always did nothing");
 }
 
-/// The signal is checked before anything is picked. Discovering that `HUPP` is
+/// The signal is checked before anything is selected. Discovering that `HUPP` is
 /// not a signal *after* choosing what to kill would waste the one decision the
 /// command exists to take.
 #[test]
-fn proc_kill_refuses_an_unknown_signal_before_picking() {
+fn proc_kill_refuses_an_unknown_signal_before_selecting() {
     let sandbox = Sandbox::new();
     let run = sandbox.run(&["proc", "kill", "--signal", "HUPP"]);
     run.code(1);
@@ -1063,7 +1078,7 @@ fn init_fish_emits_functions_bindings_and_completions() {
     run.ok();
     for needle in [
         "function scriv-repo-cd",
-        "function scriv-history-pick",
+        "function scriv-history-select",
         "function fe",
         "function scriv_key_bindings",
         "complete -c scriv",
@@ -1072,7 +1087,7 @@ fn init_fish_emits_functions_bindings_and_completions() {
     }
 }
 
-/// The other shells get completions only — the pick-and-`cd` helpers are
+/// The other shells get completions only — the select-and-`cd` helpers are
 /// fish-specific — but they still have to emit something sourceable.
 #[test]
 fn init_emits_completions_for_the_other_shells() {

@@ -1,4 +1,4 @@
-//! `scriv pr` — list, pick, check out, open, and merge GitHub pull requests.
+//! `scriv pr` — list, select, check out, open, and merge GitHub pull requests.
 //!
 //! Everything here goes through the `gh` CLI (see [`crate::gh`]), so scriv
 //! inherits whatever authentication `gh auth login` set up — including SSO and
@@ -10,7 +10,7 @@ use anyhow::{Result, bail};
 
 use crate::Ctx;
 use crate::gh::{self, MergeMethod, PullRequest};
-use crate::pick::{self, PickItem, Preview};
+use crate::select::{self, Preview, SelectItem};
 use crate::term;
 
 /// Fetch pull requests, failing with a useful message when there are none.
@@ -18,7 +18,7 @@ use crate::term;
 /// The spinner covers the whole `gh` call — a second or two of network on a
 /// good day, more on a large repository — which is otherwise a dead terminal.
 /// It draws on stderr and only when that is a terminal, so `pr ls | …` and
-/// `gh pr view (scriv pr pick)` are untouched by it.
+/// `gh pr view (scriv pr sel)` are untouched by it.
 fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
     let prs = {
         let _spinner = term::spinner("loading pull requests", ctx.color());
@@ -76,7 +76,7 @@ impl StatusColumns {
     /// `back` is the colour of the row these cells sit in: given one, each
     /// glyph is painted green/red/yellow and hands the row's colour back, so a
     /// listing shows a green `✓` without losing the tint of the rest of the
-    /// line. Given `None` the glyphs are bare, which is what the picker needs —
+    /// line. Given `None` the glyphs are bare, which is what the selector needs —
     /// skim renders a row through ratatui and does not interpret ANSI in it, so
     /// an escape in a label would show up as literal rubbish.
     fn cells(self, pr: &PullRequest, back: Option<u8>) -> String {
@@ -235,7 +235,7 @@ fn preview(pr: &PullRequest) -> Preview {
     Preview::Text(out)
 }
 
-/// What tints a picker row.
+/// What tints a selector row.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tint {
     /// By pull request state — green open, grey draft, magenta merged, red
@@ -257,15 +257,15 @@ impl Tint {
     }
 }
 
-/// Build picker rows. The check and conflict glyphs and the source branch are
+/// Build selector rows. The check and conflict glyphs and the source branch are
 /// part of the label, so a glance down the list says what is green without
 /// reading a word of it.
 ///
 /// The glyphs go in bare: skim renders a row through ratatui and tints it from
-/// [`PickItem::color`], with no ANSI parsing along the way, so an escape in the
+/// [`SelectItem::color`], with no ANSI parsing along the way, so an escape in the
 /// label would appear as literal rubbish. The shapes carry the meaning, and the
 /// row's own tint carries the colour.
-fn items(prs: &[PullRequest], tint: Tint) -> Vec<PickItem> {
+fn items(prs: &[PullRequest], tint: Tint) -> Vec<SelectItem> {
     let width = number_width(prs);
     let columns = StatusColumns::of(prs);
     prs.iter()
@@ -278,7 +278,7 @@ fn items(prs: &[PullRequest], tint: Tint) -> Vec<PickItem> {
                 author = pr.author_login(),
                 head = pr.head_ref_name,
             );
-            PickItem::new(label, pr.number.to_string())
+            SelectItem::new(label, pr.number.to_string())
                 .color(tint.color(pr))
                 .preview(preview(pr))
         })
@@ -286,23 +286,23 @@ fn items(prs: &[PullRequest], tint: Tint) -> Vec<PickItem> {
 }
 
 /// Fuzzy-select one pull request and return its number, with
-/// [`REFRESH_KEY`](pick::REFRESH_KEY) asking `gh` again in place.
+/// [`REFRESH_KEY`](select::REFRESH_KEY) asking `gh` again in place.
 ///
 /// A pull request list is stale the moment it is drawn — a check finishes, a
-/// review lands, someone merges — and a picker over it is exactly where you
+/// review lands, someone merges — and a selector over it is exactly where you
 /// notice. The reload is the same `gh pr list` the command opened with, run on
 /// skim's reader thread so the rows on screen stay put while it is in flight.
 ///
 /// A `gh` that fails — rate limit, expired token, no network — leaves the rows
-/// as they were and says so after the picker closes. Losing a list you were
+/// as they were and says so after the selector closes. Losing a list you were
 /// halfway through choosing from would be a worse answer than a slightly old
 /// one.
 fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Result<u64> {
     let prs = collect(ctx, state, limit)?;
     // The opening rows are built before the shared list exists, and deliberately
-    // so: a `known.lock()` written inline in the `pick_one_reloading` call below
+    // so: a `known.lock()` written inline in the `select_one_reloading` call below
     // would hold its guard for the whole statement — the entire lifetime of the
-    // picker — and the reload would block on it forever.
+    // selector — and the reload would block on it forever.
     let rows = items(&prs, tint);
     let known = Arc::new(Mutex::new(prs));
     let failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -324,25 +324,25 @@ fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Res
         })
     };
 
-    let choice = pick::pick_one_reloading(rows, prompt, &ctx.config.picker, reload)?;
+    let choice = select::select_one_reloading(rows, prompt, &ctx.config.selector, reload)?;
 
     if let Some(err) = failure.lock().expect("failure slot poisoned").take() {
         eprintln!("warning: could not refresh pull requests: {err}");
     }
     choice
         .parse()
-        .map_err(|_| anyhow::anyhow!("unexpected picker result: {choice}"))
+        .map_err(|_| anyhow::anyhow!("unexpected selector result: {choice}"))
 }
 
-/// `scriv pr pick` — fuzzy-select a pull request and print its number, so it
-/// composes with `gh`: `gh pr view (scriv pr pick)`.
-pub fn pick(ctx: &Ctx, state: &str, limit: usize) -> Result<()> {
-    let number = select(ctx, state, limit, "Pick a pull request", Tint::State)?;
+/// `scriv pr sel` — fuzzy-select a pull request and print its number, so it
+/// composes with `gh`: `gh pr view (scriv pr sel)`.
+pub fn sel(ctx: &Ctx, state: &str, limit: usize) -> Result<()> {
+    let number = select(ctx, state, limit, "Select a pull request", Tint::State)?;
     println!("{number}");
     Ok(())
 }
 
-/// Resolve the pull request to act on: the number given, or one the user picks.
+/// Resolve the pull request to act on: the number given, or one the user selects.
 fn resolve(
     ctx: &Ctx,
     number: Option<u64>,
@@ -357,7 +357,7 @@ fn resolve(
     }
 }
 
-/// `scriv pr checkout [number]` — check out a pull request's branch, picking
+/// `scriv pr checkout [number]` — check out a pull request's branch, selecting
 /// one when no number is given. The checkout itself is `gh pr checkout`, which
 /// handles fork PRs and sets the upstream.
 pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result<()> {
@@ -372,10 +372,10 @@ pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Re
     gh::checkout(number)
 }
 
-/// `scriv pr open [number]` — open a pull request in the browser, picking one
+/// `scriv pr open [number]` — open a pull request in the browser, selecting one
 /// when no number is given.
 ///
-/// The picker is the point: it is the step between "one of these forty" and a
+/// The selector is the point: it is the step between "one of these forty" and a
 /// URL, and the preview means you can read the description before deciding
 /// which one to open.
 pub fn open(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result<()> {
@@ -390,10 +390,10 @@ pub fn open(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result
     gh::view_web(number)
 }
 
-/// `scriv pr merge [number]` — merge a pull request, picking one when no number
+/// `scriv pr merge [number]` — merge a pull request, selecting one when no number
 /// is given.
 ///
-/// This is the one picker tinted by [`Tint::Readiness`] rather than by state.
+/// This is the one selector tinted by [`Tint::Readiness`] rather than by state.
 /// It defaults to open pull requests, where a state colouring would make every
 /// row the same green and say nothing; what you want to see at the moment you
 /// choose one to merge is which of them is actually ready, so the whole row
@@ -428,13 +428,13 @@ mod tests {
     fn prs() -> Vec<PullRequest> {
         gh::parse_prs(
             r#"[
-            {"number":7,"title":"Add branch picker","author":{"login":"joakimen"},
+            {"number":7,"title":"Add branch selector","author":{"login":"joakimen"},
              "headRefName":"feat/branches","isDraft":false,"state":"OPEN",
              "updatedAt":"2026-07-27T09:12:33Z","mergeable":"MERGEABLE",
              "statusCheckRollup":[
                 {"name":"build","workflowName":"ci","status":"COMPLETED","conclusion":"SUCCESS"}
              ],
-             "body":"Adds a picker.\r\n\r\nSecond paragraph."},
+             "body":"Adds a selector.\r\n\r\nSecond paragraph."},
             {"number":123,"title":"WIP","author":{"login":"someone"},
              "headRefName":"wip","isDraft":true,"state":"OPEN",
              "updatedAt":"2026-07-20T11:00:00Z","mergeable":"CONFLICTING",
@@ -472,7 +472,7 @@ mod tests {
     fn rows_show_title_author_and_branch() {
         let label = &items(&prs(), Tint::State)[0].label;
         assert!(label.contains("#7"));
-        assert!(label.contains("Add branch picker"));
+        assert!(label.contains("Add branch selector"));
         assert!(label.contains("@joakimen"));
         assert!(label.contains("[feat/branches]"), "{label}");
     }
@@ -491,10 +491,10 @@ mod tests {
             panic!("a PR preview must not spawn a command");
         };
         assert!(text.contains("#7"), "{text}");
-        assert!(text.contains("Add branch picker"), "{text}");
+        assert!(text.contains("Add branch selector"), "{text}");
         assert!(text.contains("@joakimen"), "{text}");
         assert!(text.contains("[feat/branches]"), "{text}");
-        assert!(text.contains("Adds a picker"), "the body is the preview");
+        assert!(text.contains("Adds a selector"), "the body is the preview");
     }
 
     #[test]
@@ -531,13 +531,13 @@ mod tests {
     fn number_column_aligns() {
         let items = items(&prs(), Tint::State);
         assert_eq!(
-            title_column(&items[0].label, "Add branch picker"),
+            title_column(&items[0].label, "Add branch selector"),
             title_column(&items[1].label, "WIP"),
         );
     }
 
     /// The check rollup is in the label, not only the preview, so a glance down
-    /// the picker tells you what is green without reading a word.
+    /// the selector tells you what is green without reading a word.
     #[test]
     fn rows_carry_the_check_rollup() {
         let items = items(&prs(), Tint::State);
@@ -564,7 +564,7 @@ mod tests {
         use unicode_width::UnicodeWidthStr;
         let items = items(&prs(), Tint::State);
         assert_eq!(
-            title_column(&items[0].label, "Add branch picker"),
+            title_column(&items[0].label, "Add branch selector"),
             title_column(&items[1].label, "WIP"),
         );
         let columns = StatusColumns::of(&prs());
@@ -590,17 +590,17 @@ mod tests {
     /// green is the thing the plain listing is read for.
     #[test]
     fn the_bare_listing_carries_the_glyphs() {
-        // `ls` builds its bare row from the same cells the picker uses.
+        // `ls` builds its bare row from the same cells the selector uses.
         let columns = StatusColumns::of(&prs());
         assert!(columns.cells(&prs()[0], None).contains('✓'));
         assert!(columns.cells(&prs()[1], None).contains('✗'));
     }
 
-    /// The merge picker is tinted by readiness, not state: a list of open pull
+    /// The merge selector is tinted by readiness, not state: a list of open pull
     /// requests is one shade of green under a state colouring, exactly when the
     /// colour would be most useful.
     #[test]
-    fn the_merge_picker_tints_by_readiness() {
+    fn the_merge_selector_tints_by_readiness() {
         let prs = prs();
         let state = items(&prs, Tint::State);
         let readiness = items(&prs, Tint::Readiness);

@@ -2,7 +2,7 @@
 
 scriv scans the paths you configure for Git repositories, tracks files you
 return to, opens files in your editor, switches branches and pull requests, and
-searches your shell history — all through one built-in fuzzy picker (skim).
+searches your shell history — all through one built-in fuzzy selector (skim).
 
 ## Before opening a pull request
 
@@ -38,13 +38,13 @@ Every one of those is closer to the code and cannot drift from it the way a
 paragraph here can. A new flag does not belong in the README; a new *command
 group* does, as one table row.
 
-**3. `docs/demo.gif`.** If anything changed what a picker shows on screen —
+**3. `docs/demo.gif`.** If anything changed what a selector shows on screen —
 row layout, colours, preview contents, the commands or flags in
 `demo/demo.tape` — re-record with `make demo` and commit the GIF. CI only
 plays the tape (`make demo-check`); it never commits a GIF, so a stale demo is
 invisible until someone looks at the README. Recording needs `vhs`
 (`brew install vhs`) and takes about 30 seconds. A change that adds a command
-without altering any existing picker's output does not need a re-record — say
+without altering any existing selector's output does not need a re-record — say
 so in the PR rather than leaving it unmentioned.
 
 ## Shipping without being asked
@@ -156,7 +156,7 @@ is expected to follow it:
 | `history.rs` | fish history file location, parsing and row rendering, no I/O |
 | `repo.rs` | discovery traversal rules |
 | `walk.rs` | the `ignore`-crate file walk shared by `edit` and `file add` |
-| `pick.rs` | the skim wrapper: rows, colours, previews |
+| `select.rs` | the skim wrapper: rows, colours, previews |
 | `cmd/*.rs` | the imperative shell — reads the environment, spawns processes, drives selection |
 | `shell.rs` | the fish integration and completions that `scriv init` emits |
 | `tests/cli.rs` | end-to-end runs of the built binary — the wiring the unit tests cannot see |
@@ -187,20 +187,30 @@ test that allocated a pty would be testing skim.
 - **git commands in previews pass `--no-optional-locks`.** A plain `git status`
   rewrites the index, so scrolling a list would take the repository's index
   lock and contend with whatever the user is running in it.
-- **Preview commands are built through `pick::quote`.** A branch name or path
+- **Preview commands are built through `select::quote`.** A branch name or path
   containing a quote must not be able to alter the command that runs.
 - **`git`, `gh` and the editor explain their own failures.** When a spawned
   child fails, return `Reported(code)` so the process exits with the child's
   status instead of printing a second, vaguer error line on top of git's.
 - **The top-level commands are registries; `edit` is the exception.**
   `repo`/`file`/`branch`/`pr`/`history` are each a set scriv knows about, with
-  `ls`/`pick` and a verb over that set. `edit` acts on the directory the user is
+  `ls`/`sel` and a verb over that set. `edit` acts on the directory the user is
   standing in, so it is a verb at the top level rather than one more noun — and
   it has no `ls`. Resist filing ambient-directory work under a noun group.
   `repo open` is the one place a registry verb reads the ambient directory, and
   only to skip a question it can already answer: in a repository it opens that
-  one, `--pick` asks anyway, and outside one it is the ordinary picker. The set
-  it picks over is unchanged.
+  one, `--select` asks anyway, and outside one it is the ordinary selector. The set
+  it selects over is unchanged.
+- **A verb is abbreviated in its own name, not in an alias beside it.** `ls`,
+  `sel` and `rm` are already as short as they are going to get, so none of them
+  carries a long form to alias back to — a second spelling is another row in the
+  help text, another completion, and another thing to remember, for a name that
+  was not long enough to be worth shortening. (`list`, `co` and `switch` predate
+  the rule and are kept for the fingers already trained on them; they are not a
+  pattern to extend.) Command *groups* are the exception, because a group name
+  is a noun and `repository` does not abbreviate to itself: each carries one
+  letter — `r`, `f`, `b`, `e`, `h`, `c`, and `pc` for `proc`, since `p` would
+  collide with `pr`, which is short already.
 - **`$PWD` is preferred over `getcwd`, but only when it is still true.** A shell
   sets `$PWD` to the path the user walked, symlinks intact, which is what they
   expect to see back; `getcwd` resolves those away. But nothing keeps the
@@ -213,18 +223,18 @@ test that allocated a pty would be testing skim.
   path scriv reads, tool it spawns, or environment variable it needs is
   something a user can have wrong, and `scriv config check` is the one place
   that says so without them having to trip over it one command at a time. Add
-  the row in `cmd/config.rs`, and pick the status honestly: `Fail` only when
+  the row in `cmd/config.rs`, and choose the status honestly: `Fail` only when
   scriv is genuinely broken without it, since the exit status is what makes the
   command usable in a setup script. A check that repeats what an earlier one
   already said is not a second problem — skip it, as `discovery_check` does.
-- **Anything drawn inline takes a `term::ScratchRow` first.** The picker and the
+- **Anything drawn inline takes a `term::ScratchRow` first.** The selector and the
   spinner both start on the row the cursor is on, which from a key binding is
-  the last row of the shell's prompt — the picker draws over it, the spinner
+  the last row of the shell's prompt — the selector draws over it, the spinner
   erases it. A one-line prompt hides that, because the shell redraws the whole
   thing; a two-line prompt is left cut in half. Take a row, draw on that, and
   step back up on the way out so the cursor is where the shell's repaint expects
   it. Never draw on the row scriv was invoked on.
-- **The picker watches for its terminal disappearing.** skim's input loop does
+- **The selector watches for its terminal disappearing.** skim's input loop does
   not stop when its event stream ends: on a pty whose other end has closed,
   `crossterm` reports end-of-stream immediately and forever and skim's `select!`
   treats that as nothing to do, so the process pins a core until something kills
@@ -236,7 +246,7 @@ test that allocated a pty would be testing skim.
   `tcgetpgrp` all keep answering normally on a slave whose master is gone. Take
   the guard out only once skim's loop terminates on its own.
 - **Only `cd` needs the shell.** A child cannot change its parent's directory,
-  which is why `repo pick` prints a path for a fish function to consume. Running
+  which is why `repo sel` prints a path for a fish function to consume. Running
   an editor needs no such help: `scriv edit` spawns it directly and skim restores
   the terminal on its way out. Add a fish wrapper only for what genuinely cannot
   work from a child process.
@@ -248,16 +258,16 @@ test that allocated a pty would be testing skim.
   for this one, and sharing the name would leave no way to keep scriv coloured
   in an environment that had turned everything else plain. Printing code reads
   `ctx.color()` and never asks the terminal itself; one run must not colour one
-  command's output and not another's. The picker is out of scope: it is a
+  command's output and not another's. The selector is out of scope: it is a
   terminal UI that only ever draws on a terminal.
 - **Key bindings prefer `ctrl-<letter>`, and never use `alt-`.** ctrl is the
-  modifier people put under a pinky, so it is where a picker worth a keystroke
+  modifier people put under a pinky, so it is where a selector worth a keystroke
   belongs. fish leaves only `ctrl-o` and `ctrl-q` unbound, so anything further
   has to displace a preset binding deliberately and say which one in the comment
   above `scriv_key_bindings` — and some presets are not worth displacing:
   `ctrl-p`/`ctrl-n` are `up-line`/`down-line`, the last way left to walk history
-  one entry at a time now that `ctrl-r` and `up` open a picker instead. Taking a
-  key people press all day is only justified when the picker does that key's own
+  one entry at a time now that `ctrl-r` and `up` open a selector instead. Taking a
+  key people press all day is only justified when the selector does that key's own
   job better, on the same data, and hands control back everywhere it would not —
   which is what `scriv-history-up` is: it checks for the completion pager and
   for a cursor past line 1, and calls fish's `up-line` there. Hand back with

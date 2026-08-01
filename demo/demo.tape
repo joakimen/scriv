@@ -4,17 +4,17 @@
 #
 # Keep this under ~25 seconds: it is a GIF that autoplays on the project page.
 #
-# It opens on branch switching rather than on `cd "$(scriv repo pick)"`. That
+# It opens on branch switching rather than on `cd "$(scriv repo sel)"`. That
 # composition is worth knowing, but a subshell in the first frame asks the
 # viewer to read shell syntax before they have seen what scriv does; the
-# README's "Every `pick` prints one line" section is where it belongs.
+# README's "Every `sel` prints one line" section is where it belongs.
 
 Output "docs/demo.gif"
 
 Set Shell bash
 Set FontSize 15
 Set Width 1200
-# Just tall enough for the longest list plus the commands above it. The picker
+# Just tall enough for the longest list plus the commands above it. The selector
 # fills the terminal, so extra height is dead space in the GIF.
 Set Height 280
 Set Padding 20
@@ -47,12 +47,12 @@ Sleep 500ms
 Down
 Sleep 1200ms
 
-# Picking the cyan one creates the local branch and sets its upstream.
+# Selecting the cyan one creates the local branch and sets its upstream.
 Enter
 Sleep 2s
 
 # --- 2. Find a file where you are standing and open it -----------------------
-# The walk honours .gitignore and streams into the picker; the preview is the
+# The walk honours .gitignore and streams into the selector; the preview is the
 # file itself. $EDITOR is cat in the sandbox, so the file lands on screen.
 Type "scriv edit"
 Sleep 350ms

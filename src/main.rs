@@ -16,7 +16,7 @@ use clap_complete::Shell;
 
 use scriv::gh::MergeMethod;
 use scriv::git::Filter;
-use scriv::pick::Cancelled;
+use scriv::select::Cancelled;
 use scriv::term::ColorChoice;
 use scriv::{Ctx, Reported, cmd, shell};
 
@@ -24,16 +24,16 @@ use scriv::{Ctx, Reported, cmd, shell};
 const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv config init            Write a starter configuration
   scriv config check           Check your setup and report what is wrong
-  scriv repo pick              Fuzzy-pick a repository, print its path
-  cd (scriv repo pick)         Jump to a repository (fish)
-  scriv repo clone             Pick an owner, then repositories to clone
+  scriv repo sel               Fuzzy-select a repository, print its path
+  cd (scriv repo sel)          Jump to a repository (fish)
+  scriv repo clone             Select an owner, then repositories to clone
   scriv file add <path>        Track a file you visit often
-  scriv edit                   Pick a file under the current directory, edit it
-  scriv edit --tracked         Pick one of your tracked files and edit it
-  scriv branch checkout        Pick a local or remote branch and switch to it
-  scriv pr checkout            Pick a GitHub pull request and check it out
-  scriv proc kill              Pick running processes and signal them
-  scriv history pick           Fuzzy-search your fish history for a command
+  scriv edit                   Select a file under the current directory, edit it
+  scriv edit --tracked         Select one of your tracked files and edit it
+  scriv branch checkout        Select a local or remote branch and switch to it
+  scriv pr checkout            Select a GitHub pull request and check it out
+  scriv proc kill              Select running processes and signal them
+  scriv history sel            Fuzzy-search your fish history for a command
   scriv init fish | source     Load shell integration + completions";
 
 /// Help styling matching cargo: bright-green bold headers and usage,
@@ -69,7 +69,7 @@ struct Cli {
     ///
     /// `auto` colours a terminal and honours `SCRIV_NO_COLOR`. `always` colours
     /// a pipe or a file too, for a pager such as `less -R`. Either explicit
-    /// value overrides `SCRIV_NO_COLOR`. The picker is unaffected — it only
+    /// value overrides `SCRIV_NO_COLOR`. The selector is unaffected — it only
     /// ever draws on a terminal.
     ///
     /// The variable is scriv's own; the cross-tool `NO_COLOR` is not read.
@@ -83,12 +83,14 @@ struct Cli {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 enum Command {
-    /// List and pick the Git repositories under your search paths
+    /// List and select the Git repositories under your search paths
+    #[command(alias = "r")]
     Repo {
         #[command(subcommand)]
         command: RepoCmd,
     },
     /// Track the files you visit regularly
+    #[command(alias = "f")]
     File {
         #[command(subcommand)]
         command: FileCmd,
@@ -100,10 +102,10 @@ enum Command {
     /// all. The editor is `$VISUAL`, then `$EDITOR`.
     #[command(alias = "e")]
     Edit {
-        /// Files to open; omit to pick interactively
+        /// Files to open; omit to select interactively
         #[arg(value_name = "FILE")]
         files: Vec<String>,
-        /// Pick from your tracked files instead of the current directory
+        /// Select from your tracked files instead of the current directory
         #[arg(short, long, conflicts_with = "files")]
         tracked: bool,
     },
@@ -111,16 +113,16 @@ enum Command {
     ///
     /// Listings lead with the current branch, then local branches, then
     /// remote-only ones, each most recently committed to first. In a branch
-    /// picker, ctrl-r fetches from every remote and reloads the list without
-    /// closing the picker.
-    #[command(alias = "br")]
+    /// selector, ctrl-r fetches from every remote and reloads the list without
+    /// closing the selector.
+    #[command(alias = "b")]
     Branch {
         #[command(subcommand)]
         command: BranchCmd,
     },
     /// Work with GitHub pull requests (via the `gh` CLI)
     ///
-    /// In a pull request picker, ctrl-r asks GitHub again and reloads the list
+    /// In a pull request selector, ctrl-r asks GitHub again and reloads the list
     /// in place, for when a check has finished while you were looking at it.
     Pr {
         #[command(subcommand)]
@@ -133,6 +135,7 @@ enum Command {
     /// it was started with rather than by its name alone. scriv's own process
     /// and everything that spawned it are never listed: killing the shell or
     /// the terminal is not a thing to be one keystroke away from.
+    #[command(alias = "pc")]
     Proc {
         #[command(subcommand)]
         command: ProcCmd,
@@ -141,18 +144,19 @@ enum Command {
     ///
     /// Reads fish's history file directly — newest first, with repeats of a
     /// command collapsed onto the one row and dated with when it was last run.
-    /// `history pick` prints the command rather than running it; the fish
+    /// `history sel` prints the command rather than running it; the fish
     /// integration puts it back on the command line, bound to ctrl-r and to
     /// `up` on the first line of a prompt.
     ///
     /// The date is shown but never searched: it is digits at the front of every
     /// row, and matching it would rank timestamps above commands.
-    #[command(alias = "hist")]
+    #[command(alias = "h")]
     History {
         #[command(subcommand)]
         command: HistoryCmd,
     },
     /// Manage the configuration
+    #[command(alias = "c")]
     Config {
         #[command(subcommand)]
         command: ConfigCmd,
@@ -177,7 +181,7 @@ enum RepoCmd {
         absolute_paths: bool,
     },
     /// Fuzzy-select a repository and print its absolute path
-    Pick,
+    Sel,
     /// Open a repository's GitHub page in the browser
     ///
     /// Inside a repository, opens that one. Anywhere else, fuzzy-selects from
@@ -185,22 +189,22 @@ enum RepoCmd {
     /// `gh repo view --web`, which resolves the page from that checkout's git
     /// remotes.
     Open {
-        /// Pick a repository even when standing in one
+        /// Select a repository even when standing in one
         #[arg(short, long)]
-        pick: bool,
+        select: bool,
     },
     /// Clone repositories from GitHub into your root
     ///
-    /// With no argument, pick an owner — suggested from your config, the owners
+    /// With no argument, select an owner — suggested from your config, the owners
     /// already under your root, and your own GitHub account — or type any other.
     /// Then fuzzy-select one or more of that owner's repositories; `tab` selects
-    /// several and they clone concurrently. `owner/repo` skips both pickers.
+    /// several and they clone concurrently. `owner/repo` skips both selectors.
     ///
     /// Everything lands at `<root>/<owner>/<repo>`, so a clone is in
-    /// `scriv repo pick` immediately afterwards. Repositories you already have
+    /// `scriv repo sel` immediately afterwards. Repositories you already have
     /// are listed but greyed, and are skipped rather than re-cloned.
     Clone {
-        /// `owner` to pick from, or `owner/repo` to clone directly
+        /// `owner` to select from, or `owner/repo` to clone directly
         #[arg(value_name = "OWNER[/REPO]")]
         target: Option<String>,
         /// Maximum number of repositories to fetch for an owner
@@ -225,15 +229,14 @@ enum FileCmd {
         exists: bool,
     },
     /// Fuzzy-select a known file and print its absolute path
-    Pick,
-    /// Add a file; omit the path to pick one from the current directory
+    Sel,
+    /// Add a file; omit the path to select one from the current directory
     Add {
         /// File path to add
         file: Option<String>,
     },
     /// Remove a file; omit the path to choose interactively
-    #[command(alias = "forget")]
-    Remove {
+    Rm {
         /// File path to remove
         file: Option<String>,
     },
@@ -282,11 +285,11 @@ enum BranchCmd {
         scope: BranchScope,
     },
     /// Fuzzy-select a branch and print its name
-    Pick {
+    Sel {
         #[command(flatten)]
         scope: BranchScope,
     },
-    /// Check out a branch; omit the name to pick one
+    /// Check out a branch; omit the name to select one
     ///
     /// Checking out a remote-only branch creates the matching local branch and
     /// sets its upstream.
@@ -352,11 +355,11 @@ enum PrCmd {
         scope: PrScope,
     },
     /// Fuzzy-select a pull request and print its number
-    Pick {
+    Sel {
         #[command(flatten)]
         scope: PrScope,
     },
-    /// Check out a pull request's branch; omit the number to pick one
+    /// Check out a pull request's branch; omit the number to select one
     #[command(alias = "co")]
     Checkout {
         /// Pull request number
@@ -364,16 +367,16 @@ enum PrCmd {
         #[command(flatten)]
         scope: PrScope,
     },
-    /// Open a pull request in the browser; omit the number to pick one
+    /// Open a pull request in the browser; omit the number to select one
     Open {
         /// Pull request number
         number: Option<u64>,
         #[command(flatten)]
         scope: PrScope,
     },
-    /// Merge a pull request; omit the number to pick one
+    /// Merge a pull request; omit the number to select one
     ///
-    /// The picker colours each row by whether it can actually be merged — green
+    /// The selector colours each row by whether it can actually be merged — green
     /// ready, yellow waiting on checks, red blocked, grey draft or closed — so
     /// you see what you are merging as you choose it. With no merge method
     /// given, `gh` asks for one.
@@ -406,15 +409,15 @@ enum ProcCmd {
         status: bool,
     },
     /// Fuzzy-select a process and print its pid
-    Pick,
-    /// Signal processes; omit the pids to pick them
+    Sel,
+    /// Signal processes; omit the pids to select them
     ///
-    /// `tab` selects several in the picker and they are signalled together.
+    /// `tab` selects several in the selector and they are signalled together.
     /// The default signal is `TERM`, which a process can catch to flush its
     /// buffers and clean up after itself; `--force` sends `KILL`, which it
     /// cannot.
     Kill {
-        /// Processes to signal, by pid; omit to pick interactively
+        /// Processes to signal, by pid; omit to select interactively
         #[arg(value_name = "PID")]
         pids: Vec<i32>,
         /// Signal to send, by name or number — `TERM`, `HUP`, `9`
@@ -438,7 +441,7 @@ enum HistoryCmd {
         status: bool,
     },
     /// Fuzzy-select a past command and print it
-    Pick {
+    Sel {
         /// Text to open the search box with
         #[arg(short, long, value_name = "TEXT")]
         query: Option<String>,
@@ -485,7 +488,7 @@ fn main() -> ExitCode {
 
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
-        // A cancelled picker is a silent, conventional exit, not an error.
+        // A cancelled selector is a silent, conventional exit, not an error.
         Err(err) if err.is::<Cancelled>() => ExitCode::from(130),
         // git and gh explain their own failures; pass their status through
         // rather than printing a second, vaguer line on top.
@@ -506,8 +509,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Command::Repo { command } => match command {
             RepoCmd::Ls { absolute_paths } => cmd::repo::ls(&ctx, absolute_paths),
-            RepoCmd::Pick => cmd::repo::pick(&ctx),
-            RepoCmd::Open { pick } => cmd::repo::open(&ctx, pick),
+            RepoCmd::Sel => cmd::repo::sel(&ctx),
+            RepoCmd::Open { select } => cmd::repo::open(&ctx, select),
             RepoCmd::Clone { target, limit } => cmd::repo::clone(&ctx, target.as_deref(), limit),
         },
         Command::File { command } => match command {
@@ -516,9 +519,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 missing,
                 exists,
             } => cmd::file::ls(&ctx, status, missing, exists),
-            FileCmd::Pick => cmd::file::pick(&ctx),
+            FileCmd::Sel => cmd::file::sel(&ctx),
             FileCmd::Add { file } => cmd::file::add(&ctx, file.as_deref()),
-            FileCmd::Remove { file } => cmd::file::remove(&ctx, file.as_deref()),
+            FileCmd::Rm { file } => cmd::file::remove(&ctx, file.as_deref()),
             FileCmd::Prune { yes } => cmd::file::prune(&ctx, yes),
         },
         Command::Edit { files, tracked } => cmd::edit::run(&ctx, &files, tracked),
@@ -526,14 +529,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             BranchCmd::Ls { status, scope } => {
                 cmd::branch::ls(&ctx, scope.filter(), status, scope.fetch)
             }
-            BranchCmd::Pick { scope } => cmd::branch::pick(&ctx, scope.filter(), scope.fetch),
+            BranchCmd::Sel { scope } => cmd::branch::sel(&ctx, scope.filter(), scope.fetch),
             BranchCmd::Checkout { branch, scope } => {
                 cmd::branch::checkout(&ctx, branch.as_deref(), scope.filter(), scope.fetch)
             }
         },
         Command::Pr { command } => match command {
             PrCmd::Ls { status, scope } => cmd::pr::ls(&ctx, &scope.state, scope.limit, status),
-            PrCmd::Pick { scope } => cmd::pr::pick(&ctx, &scope.state, scope.limit),
+            PrCmd::Sel { scope } => cmd::pr::sel(&ctx, &scope.state, scope.limit),
             PrCmd::Checkout { number, scope } => {
                 cmd::pr::checkout(&ctx, number, &scope.state, scope.limit)
             }
@@ -556,7 +559,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         },
         Command::Proc { command } => match command {
             ProcCmd::Ls { status } => cmd::proc::ls(&ctx, status),
-            ProcCmd::Pick => cmd::proc::pick(&ctx),
+            ProcCmd::Sel => cmd::proc::sel(&ctx),
             ProcCmd::Kill {
                 pids,
                 signal,
@@ -574,9 +577,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         },
         Command::History { command } => match command {
             HistoryCmd::Ls { status } => cmd::history::ls(&ctx, status),
-            HistoryCmd::Pick { query, print0 } => {
-                cmd::history::pick(&ctx, query.as_deref(), print0)
-            }
+            HistoryCmd::Sel { query, print0 } => cmd::history::sel(&ctx, query.as_deref(), print0),
         },
         Command::Config { command } => match command {
             ConfigCmd::Init { force } => cmd::config::init(&ctx, force),

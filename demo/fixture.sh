@@ -60,12 +60,12 @@ HOUR=3600
 DAY=86400
 
 # --- acme/billing-api: the repository the demo drives ------------------------
-# Carries one branch of each kind, so the picker shows all three colours.
+# Carries one branch of each kind, so the selector shows all three colours.
 API=$FIX/dev/github.com/acme/billing-api
 new_repo "$API"
 
 # A few real files, because `scriv edit` walks the working tree and previews
-# what it finds — an empty repository would show an empty picker. Small enough
+# what it finds — an empty repository would show an empty selector. Small enough
 # that a preview pane holds the whole file.
 mkdir -p "$API/src"
 cat > "$API/Cargo.toml" <<'EOF'
@@ -125,7 +125,7 @@ commit "$API" $HOUR 'fix: off-by-one window'
 git -C "$API" push -q -u origin fix/off-by-one
 git -C "$API" checkout -q main
 
-# --- a handful of other repositories, so `repo pick` has something to filter --
+# --- a handful of other repositories, so `repo sel` has something to filter --
 for repo in checkout-web invoice-worker; do
     R=$FIX/dev/github.com/acme/$repo
     new_repo "$R"
@@ -147,10 +147,10 @@ root = "~/dev/github.com"
 ignore = ["node_modules", "target"]
 display = "relative"
 
-# Labels name owners, so the picker colours acme's repos as work.
+# Labels name owners, so the selector colours acme's repos as work.
 labels = { work = ["acme"], personal = ["personal"] }
 
-[picker]
+[selector]
 height = "100%"
 preview = true
 preview_window = "right:38%"
@@ -228,7 +228,7 @@ if [ "$1" = "pr" ] && [ "$2" = "checkout" ]; then
 fi
 
 # `open` and `merge` reach the network for real, so the stub only says what it
-# would have done — enough to try the pickers by hand without a GitHub account.
+# would have done — enough to try the selectors by hand without a GitHub account.
 if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
     echo "demo stub: would open https://github.com/acme/billing-api/pull/$4"
     exit 0
@@ -261,7 +261,7 @@ export PATH='$FIX/bin':'$SCRIV_BIN_DIR':"\$PATH"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 # scriv runs \$EDITOR and hands it the terminal. A recording cannot drive a real
 # editor deterministically — and does not need to, since what is being shown is
-# the picking, not the editing — so the sandbox points it at cat: the file lands
+# the selecting, not the editing — so the sandbox points it at cat: the file lands
 # on screen and the prompt comes straight back.
 export EDITOR=cat
 export PS1='❯ '

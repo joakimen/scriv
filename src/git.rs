@@ -35,7 +35,7 @@ pub enum BranchKind {
 }
 
 impl BranchKind {
-    /// ANSI 256-colour index used for this kind, in both the picker and `ls`.
+    /// ANSI 256-colour index used for this kind, in both the selector and `ls`.
     /// Standard hues so they follow the terminal theme.
     pub fn color(self) -> u8 {
         match self {
@@ -412,9 +412,9 @@ pub fn branches() -> Result<Vec<Branch>> {
 /// Captured rather than passed through, which is the one place scriv silences
 /// git on purpose. `git fetch --all` narrates itself — `Fetching origin`,
 /// per-remote progress — and neither half of that is wanted here. The line goes
-/// to stdout, where `scriv branch pick` is writing a branch name for a shell to
+/// to stdout, where `scriv branch sel` is writing a branch name for a shell to
 /// read; the progress goes to stderr, where it would scribble over the spinner
-/// the caller draws and leave the terminal to be redrawn underneath the picker.
+/// the caller draws and leave the terminal to be redrawn underneath the selector.
 ///
 /// A failure still speaks: [`capture`] returns git's stderr as the error, so
 /// "could not read from remote repository" arrives as scriv's error message

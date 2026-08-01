@@ -5,9 +5,9 @@ use std::path::Path;
 use anyhow::{Result, bail};
 
 use crate::path::{display_path, expand_tilde, sanitize_file_path};
-use crate::pick::{PickItem, Preview, file_preview};
+use crate::select::{Preview, SelectItem, file_preview};
 use crate::term;
-use crate::{Ctx, files, pick, walk};
+use crate::{Ctx, files, select, walk};
 
 /// `scriv file ls` — print known files, optionally with existence status.
 pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
@@ -129,13 +129,13 @@ pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
 /// `scriv file add [path]` — record a file, canonicalising the path first.
 ///
 /// With no `file`, a file is chosen interactively from the current directory
-/// tree via the configured picker.
+/// tree via the configured selector.
 pub fn add(ctx: &Ctx, file: Option<&str>) -> Result<()> {
     ctx.ensure_files_migrated()?;
 
     let file = match file {
         Some(file) => file.to_string(),
-        None => match pick_from_cwd(ctx)? {
+        None => match select_from_cwd(ctx)? {
             Some(file) => file,
             None => return Ok(()),
         },
@@ -191,18 +191,19 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
 
     // Show a `~`-collapsed label; the returned value is the stored line so it
     // matches the list for removal.
-    let items: Vec<PickItem> = lines
+    let items: Vec<SelectItem> = lines
         .iter()
         .map(|line| {
             let expanded = expand_tilde(line, ctx.home_str());
             let shown = display_path(&expanded, ctx.home_str(), false);
-            PickItem::new(shown, line.clone()).preview(file_preview(&expanded))
+            SelectItem::new(shown, line.clone()).preview(file_preview(&expanded))
         })
         .collect();
 
-    let selected = match pick::pick_many(items, "Select files to remove", &ctx.config.picker) {
+    let selected = match select::select_many(items, "Select files to remove", &ctx.config.selector)
+    {
         Ok(selected) => selected,
-        Err(e) if e.is::<pick::Cancelled>() => return Ok(()),
+        Err(e) if e.is::<select::Cancelled>() => return Ok(()),
         Err(e) => return Err(e),
     };
 
@@ -218,41 +219,41 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// `scriv file pick` — fuzzy-select a known file and print its absolute path.
+/// `scriv file sel` — fuzzy-select a known file and print its absolute path.
 ///
-/// The picker shows `~`-collapsed paths; the printed path is absolute.
-pub fn pick(ctx: &Ctx) -> Result<()> {
+/// The selector shows `~`-collapsed paths; the printed path is absolute.
+pub fn sel(ctx: &Ctx) -> Result<()> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
     if lines.is_empty() {
         bail!("no known files yet — add one with `scriv file add <path>`");
     }
 
-    let items: Vec<PickItem> = lines
+    let items: Vec<SelectItem> = lines
         .iter()
         .map(|line| {
             let abs = expand_tilde(line, ctx.home_str());
             let shown = display_path(&abs, ctx.home_str(), false);
-            PickItem::new(shown, abs.clone()).preview(file_preview(&abs))
+            SelectItem::new(shown, abs.clone()).preview(file_preview(&abs))
         })
         .collect();
 
-    let choice = pick::pick_one(items, "Pick a file", &ctx.config.picker)?;
+    let choice = select::select_one(items, "Select a file", &ctx.config.selector)?;
     println!("{choice}");
     Ok(())
 }
 
 /// Interactively choose a file from the current directory tree to add.
 ///
-/// The walk is streamed into the picker, so it opens on the first filename
+/// The walk is streamed into the selector, so it opens on the first filename
 /// rather than the last — see [`crate::cmd::edit`]. Returns `Ok(None)` when the
-/// user cancels the picker.
-fn pick_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
+/// user cancels the selector.
+fn select_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
     let items =
-        walk::files(Path::new(".")).map(|file| PickItem::plain(file).preview(Preview::File));
-    match pick::pick_one_streamed(items, "Add a file", true, &ctx.config.picker) {
+        walk::files(Path::new(".")).map(|file| SelectItem::plain(file).preview(Preview::File));
+    match select::select_one_streamed(items, "Add a file", true, &ctx.config.selector) {
         Ok(choice) => Ok(Some(choice)),
-        Err(e) if e.is::<pick::Cancelled>() => Ok(None),
+        Err(e) if e.is::<select::Cancelled>() => Ok(None),
         Err(e) => Err(e),
     }
 }

@@ -1,4 +1,4 @@
-//! `scriv repo` — list and pick the Git repositories found under the
+//! `scriv repo` — list and select the Git repositories found under the
 //! configured search paths.
 
 use std::collections::BTreeSet;
@@ -11,9 +11,9 @@ use anyhow::{Context, Result, bail};
 use crate::config::{Labels, RepoDisplay};
 use crate::gh::{self, Repo};
 use crate::path::{display_path, expand_home_dir, relative_label};
-use crate::pick::{Choice, PickItem, Preview};
 use crate::repo::FoundRepo;
-use crate::{Ctx, git, pick, repo, term};
+use crate::select::{Choice, Preview, SelectItem};
+use crate::{Ctx, git, repo, select, term};
 
 /// Discover repositories, label-tagged and sorted by path.
 fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
@@ -123,7 +123,7 @@ fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
 /// rewrites the index, so merely scrolling past a repository would take its
 /// index lock and contend with whatever the user is running in it.
 fn preview(path: &str) -> Preview {
-    let repo = pick::quote(path);
+    let repo = select::quote(path);
     Preview::Command(format!(
         "git --no-optional-locks -C {repo} -c color.status=always status --short --branch \
          | head -n 10; \
@@ -132,7 +132,7 @@ fn preview(path: &str) -> Preview {
     ))
 }
 
-/// The picker rows for the discovered repositories.
+/// The selector rows for the discovered repositories.
 ///
 /// Each row is prefixed with its label, coloured per label so a `work`
 /// checkout is distinguishable from a personal one at a glance — several owners
@@ -140,7 +140,7 @@ fn preview(path: &str) -> Preview {
 /// is left uncoloured. Paths render per `repo.display`. Every row's value is the
 /// absolute path, so a caller can `cd` to it or run a command in it without
 /// re-expanding `~`.
-fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<PickItem> {
+fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
     let colors = label_colors(&ctx.config.repo.labels);
 
     // Character count, not bytes: `{:<width$}` pads by characters, so a byte
@@ -162,7 +162,7 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<PickItem> {
                 RepoDisplay::Full => abs.clone(),
             };
             let row = format!("{label:<width$}  {shown}", label = repo.label);
-            let item = PickItem::new(row, abs.clone()).preview(preview(&abs));
+            let item = SelectItem::new(row, abs.clone()).preview(preview(&abs));
             match colors.get(repo.label.as_str()) {
                 Some(&color) => item.color(color),
                 None => item,
@@ -171,13 +171,13 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<PickItem> {
         .collect()
 }
 
-/// `scriv repo pick` — fuzzy-select one repository and print its absolute path.
+/// `scriv repo sel` — fuzzy-select one repository and print its absolute path.
 ///
 /// The path is printed absolute so a shell shim can `cd` to it directly.
-pub fn pick(ctx: &Ctx) -> Result<()> {
+pub fn sel(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
     let rows = repo_rows(ctx, &repos);
-    let choice = pick::pick_one(rows, "Pick a repository", &ctx.config.picker)?;
+    let choice = select::select_one(rows, "Select a repository", &ctx.config.selector)?;
     println!("{choice}");
     Ok(())
 }
@@ -187,29 +187,29 @@ pub fn pick(ctx: &Ctx) -> Result<()> {
 enum Target {
     /// The repository the shell is standing in.
     Here(PathBuf),
-    /// Whichever one the user picks.
-    Pick,
+    /// Whichever one the user selects.
+    Select,
 }
 
 /// Decide what `repo open` opens.
 ///
 /// Standing in a repository is already a statement of which one you mean, so it
-/// wins over the picker — a key binding pressed in a checkout should not ask a
-/// question it can answer. `--pick` is how you say you meant a different one.
-fn target(root: Option<PathBuf>, force_pick: bool) -> Target {
+/// wins over the selector — a key binding pressed in a checkout should not ask a
+/// question it can answer. `--select` is how you say you meant a different one.
+fn target(root: Option<PathBuf>, force_select: bool) -> Target {
     match root {
-        Some(root) if !force_pick => Target::Here(root),
-        _ => Target::Pick,
+        Some(root) if !force_select => Target::Here(root),
+        _ => Target::Select,
     }
 }
 
 /// `scriv repo open` — open a repository's GitHub page in the browser.
 ///
 /// Inside a repository that is this one, with nothing to choose. Anywhere else,
-/// or with `--pick`, it is a verb over the same set `ls` and `pick` cover and
+/// or with `--select`, it is a verb over the same set `ls` and `select` cover and
 /// fuzzy-selects from every repository scriv found.
-pub fn open(ctx: &Ctx, force_pick: bool) -> Result<()> {
-    if let Target::Here(root) = target(git::repo_root(), force_pick) {
+pub fn open(ctx: &Ctx, force_select: bool) -> Result<()> {
+    if let Target::Here(root) = target(git::repo_root(), force_select) {
         ctx.log
             .info(&format!("opening the repository at {}", root.display()));
         return gh::view_repo_web(&root);
@@ -217,7 +217,7 @@ pub fn open(ctx: &Ctx, force_pick: bool) -> Result<()> {
 
     let repos = discover(ctx)?;
     let rows = repo_rows(ctx, &repos);
-    let choice = pick::pick_one(rows, "Open a repository on GitHub", &ctx.config.picker)?;
+    let choice = select::select_one(rows, "Open a repository on GitHub", &ctx.config.selector)?;
     gh::view_repo_web(Path::new(&choice))
 }
 
@@ -247,9 +247,9 @@ fn clone_root(ctx: &Ctx) -> Result<PathBuf> {
 
 /// Where `owner/repo` belongs on disk.
 ///
-/// The inverse of the discovery walk: a clone lands exactly where `repo pick`
+/// The inverse of the discovery walk: a clone lands exactly where `repo sel`
 /// would look for it, so cloning something is the same as adding it to the
-/// picker.
+/// selector.
 fn destination(root: &Path, owner: &str, name: &str) -> PathBuf {
     root.join(owner).join(name)
 }
@@ -304,7 +304,7 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
         .info(&format!("{} owner candidates", candidates.len()));
 
     let colors = label_colors(&ctx.config.repo.labels);
-    let items: Vec<PickItem> = candidates
+    let items: Vec<SelectItem> = candidates
         .iter()
         .map(|owner| {
             let label = ctx.config.repo.label_of(owner);
@@ -312,7 +312,7 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
                 Some(l) => format!("{owner}  ({l})"),
                 None => owner.clone(),
             };
-            let item = PickItem::new(row, owner.clone());
+            let item = SelectItem::new(row, owner.clone());
             match label.and_then(|l| colors.get(l).copied()) {
                 Some(color) => item.color(color),
                 None => item,
@@ -320,7 +320,8 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
         })
         .collect();
 
-    match pick::pick_one_or_query(items, "Owner (type any GitHub owner)", &ctx.config.picker)? {
+    match select::select_one_or_query(items, "Owner (type any GitHub owner)", &ctx.config.selector)?
+    {
         Choice::Item(owner) => Ok(owner),
         Choice::Query(typed) => {
             ctx.log.info(&format!("owner typed, not listed: {typed}"));
@@ -371,7 +372,7 @@ fn repo_preview(repo: &Repo, present: Option<&Path>) -> Preview {
 /// Present repositories stay in the list rather than being filtered out: their
 /// absence would read as "this org does not have that repo", when the truth is
 /// the opposite and useful — you already have it.
-fn repo_items(repos: &[Repo], root: &Path) -> Vec<PickItem> {
+fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
     let width = repos
         .iter()
         .map(|r| r.name().chars().count())
@@ -395,7 +396,7 @@ fn repo_items(repos: &[Repo], root: &Path) -> Vec<PickItem> {
                 name = repo.name(),
                 description = repo.description.trim(),
             );
-            let item = PickItem::new(label.trim_end(), repo.name_with_owner.clone())
+            let item = SelectItem::new(label.trim_end(), repo.name_with_owner.clone())
                 .preview(repo_preview(repo, present.then_some(dest.as_path())));
             if present {
                 item.color(PRESENT_COLOR)
@@ -461,12 +462,12 @@ fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
 /// `scriv repo clone [owner | owner/repo]` — clone repositories from GitHub
 /// into the configured root.
 ///
-/// With no argument, pick an owner (from your config, your root, and `gh`, with
+/// With no argument, select an owner (from your config, your root, and `gh`, with
 /// anything you type accepted), then fuzzy-select one or more of that owner's
-/// repositories. `owner/repo` skips both pickers.
+/// repositories. `owner/repo` skips both selectors.
 ///
 /// Everything lands at `<root>/<owner>/<repo>`, which is where discovery looks,
-/// so a clone is in `repo pick` immediately afterwards.
+/// so a clone is in `repo sel` immediately afterwards.
 pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
     let root = clone_root(ctx)?;
 
@@ -492,10 +493,10 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
         );
     }
 
-    let chosen = pick::pick_many(
+    let chosen = select::select_many(
         repo_items(&repos, &root),
         "Repositories to clone (tab to select several)",
-        &ctx.config.picker,
+        &ctx.config.selector,
     )?;
     if chosen.is_empty() {
         return Ok(());
@@ -594,19 +595,19 @@ mod tests {
         assert_eq!(target(Some(here.clone()), false), Target::Here(here));
     }
 
-    /// Outside a repository there is nothing ambient to open, so the picker is
-    /// the only answer — and `--pick` asks for it from inside one, which is how
+    /// Outside a repository there is nothing ambient to open, so the selector is
+    /// the only answer — and `--select` asks for it from inside one, which is how
     /// you reach a repository other than the one you are working in.
     #[test]
-    fn open_picks_outside_a_repository_or_on_request() {
-        assert_eq!(target(None, false), Target::Pick);
-        assert_eq!(target(None, true), Target::Pick);
+    fn open_selects_outside_a_repository_or_on_request() {
+        assert_eq!(target(None, false), Target::Select);
+        assert_eq!(target(None, true), Target::Select);
         let here = PathBuf::from("/home/u/dev/github.com/acme/billing-api");
-        assert_eq!(target(Some(here), true), Target::Pick);
+        assert_eq!(target(Some(here), true), Target::Select);
     }
 
     /// A clone must land exactly where discovery looks for it, or cloning
-    /// something would not put it in the picker.
+    /// something would not put it in the selector.
     #[test]
     fn destination_matches_the_discovery_layout() {
         let root = Path::new("/home/u/dev/github.com");
