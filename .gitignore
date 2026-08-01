@@ -1,3 +1,11 @@
 /target
 .idea
-.claude
+
+# Claude Code's per-project directory holds three different things:
+# `settings.json` and `hooks/` are the repository's own configuration and are
+# checked in; `settings.local.json` is personal, and `worktrees/` is where
+# feature branches are checked out. Ignore the directory and name the
+# exceptions, so a new kind of local state defaults to being ignored.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/

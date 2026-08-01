@@ -6,10 +6,31 @@ searches your shell history — all through one built-in fuzzy selector (skim).
 
 ## Before opening a pull request
 
-- `make` — fmt check, clippy (`-D warnings`), tests, release build. All four
-  must pass; CI runs the same set.
+- `make check` while working — fmt check, clippy (`-D warnings`), tests. A few
+  seconds, and it is what to run between edits.
+- `make` before the pull request — the same three plus the release build. CI
+  runs `make`, the same target, not a copy of what it expands to.
 - Keep commits logical and self-contained: each one should build and test
   green on its own.
+
+### What is automated, and what still is not
+
+`.claude/settings.json` is checked in, and two hooks come with it. Both are
+guards, not conveniences — each one removes a mistake that was actually made
+here rather than one that seemed possible:
+
+- **`hooks/rustfmt.sh`** runs `cargo fmt` on every Rust file as it is written.
+  `fmt-check` is the *first* thing `make` runs, so an unformatted edit used to
+  cost a full gate — clippy, tests and a release build never starting — to be
+  told about indentation.
+- **`hooks/no-commit-on-main.sh`** refuses a `git commit` whose HEAD is `main`.
+  It errs toward blocking: a command that merely quotes `git commit` at the
+  start of a line is refused too, which costs a reword, where the other
+  direction costs a reset and a force-push over a branch others may have
+  pulled.
+
+Nothing checks that each commit is green on its own, and nothing checks the
+three docs below. Both are still read by hand, and both have gone wrong here.
 
 ### The three docs that go stale silently
 

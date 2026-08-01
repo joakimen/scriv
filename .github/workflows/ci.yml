@@ -16,10 +16,11 @@ jobs:
       - name: Install toolchain (pinned by rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-      - run: cargo build --release
+      # The same target run locally, rather than the four commands it happens
+      # to expand to today. Spelling them out here meant CI could keep passing
+      # a gate the Makefile no longer described — the two agreed only as long
+      # as somebody remembered to edit both.
+      - run: make
 
   # The demo is re-recorded by hand (`make demo`), because the render depends on
   # the fonts installed on the machine. CI only plays the tape, to catch one

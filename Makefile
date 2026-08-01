@@ -1,7 +1,18 @@
 .DEFAULT_GOAL := build
 
+# Everything that can fail on correctness, and nothing that cannot.
+#
+# The inner loop: a handful of seconds, against `build`'s minute, almost all of
+# which is the release build. That build is worth running before a pull request
+# — release settings turn on optimisations and `lto`, and a crate can compile in
+# debug and fail there — but it is not worth running between two edits to a
+# test, and waiting out a minute for that answer is how a fast loop becomes a
+# slow one.
+.PHONY: check
+check: fmt-check lint test
+
 .PHONY: build
-build: fmt-check lint test
+build: check
 	cargo build --release
 
 .PHONY: test
