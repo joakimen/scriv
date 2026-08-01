@@ -6,16 +6,16 @@
 //!
 //! - `config.toml` — hand-edited settings, grouped by the command that reads
 //!   them: `[repo]` for discovery and labelling, `[history]` for the shell
-//!   history to search, `[picker]` for the finder every command shares. A
+//!   history to search, `[selector]` for the finder every command shares. A
 //!   legacy `config.json` is still read when no TOML file is present.
 //! - `files` — the known-files list, rewritten programmatically by
-//!   `scriv file add`/`forget`/`prune`. Kept separate so machine writes never
+//!   `scriv file add`/`rm`/`prune`. Kept separate so machine writes never
 //!   clobber hand-written settings or comments.
 //!
 //! A key belongs in a command's table when exactly one command reads it;
-//! anything genuinely shared stays at the top level. That is why `[picker]`
+//! anything genuinely shared stays at the top level. That is why `[selector]`
 //! sits beside `[repo]` rather than inside it, and why `display` — a repo
-//! path-rendering choice no other picker has — sits in `[repo]`.
+//! path-rendering choice no other selector has — sits in `[repo]`.
 
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
@@ -51,7 +51,7 @@ pub type Labels = IndexMap<String, Vec<String>>;
 pub struct Config {
     pub repo: RepoConfig,
     pub history: HistoryConfig,
-    pub picker: PickerConfig,
+    pub selector: SelectorConfig,
 }
 
 impl Config {
@@ -84,7 +84,7 @@ pub struct RepoConfig {
     pub labels: Labels,
     /// Directory names skipped while searching for repositories.
     pub ignore: Vec<String>,
-    /// How repository paths are rendered in `repo ls`/`pick`. See
+    /// How repository paths are rendered in `repo ls`/`sel`. See
     /// [`RepoDisplay`].
     pub display: RepoDisplay,
 }
@@ -134,7 +134,7 @@ pub struct HistoryConfig {
     pub file: Option<String>,
 }
 
-/// Pick the editor `scriv edit` launches: `$VISUAL`, then `$EDITOR` — the order
+/// Select the editor `scriv edit` launches: `$VISUAL`, then `$EDITOR` — the order
 /// every other terminal tool uses.
 ///
 /// There is deliberately no config key on top. An editor is a property of the
@@ -170,22 +170,22 @@ pub struct PathEntry {
     pub depth: usize,
 }
 
-/// Settings for the built-in fuzzy picker (skim), shared by every command that
+/// Settings for the built-in fuzzy selector (skim), shared by every command that
 /// opens one.
 ///
-/// The picker is compiled in — there is no external `fzf` dependency.
+/// The selector is compiled in — there is no external `fzf` dependency.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PickerConfig {
+pub struct SelectorConfig {
     /// Finder height, e.g. `"50%"` or `"20"`. Passed through to skim.
     pub height: String,
-    /// Whether the picker shows a preview pane for the highlighted row.
+    /// Whether the selector shows a preview pane for the highlighted row.
     pub preview: bool,
     /// Preview pane layout in skim's syntax, e.g. `"right:50%"`, `"down:40%"`,
     /// or `"right:50%:hidden"` to start collapsed.
     pub preview_window: String,
 }
 
-/// How `repo ls`/`pick` renders each repository's path.
+/// How `repo ls`/`sel` renders each repository's path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RepoDisplay {
@@ -210,7 +210,7 @@ impl RepoDisplay {
     }
 }
 
-impl Default for PickerConfig {
+impl Default for SelectorConfig {
     fn default() -> Self {
         Self {
             height: "50%".to_string(),
@@ -233,7 +233,7 @@ struct RawToml {
     #[serde(default)]
     history: HistoryConfig,
     #[serde(default)]
-    picker: RawPicker,
+    selector: RawSelector,
 
     // Superseded top-level keys, present for detection only.
     root: Option<String>,
@@ -243,15 +243,19 @@ struct RawToml {
     editor: Option<String>,
     /// The `paths` key from the layout before that. See [`migration_hint`].
     paths: Option<LegacyPaths>,
+    /// `[picker]`, renamed to `[selector]`. Present for detection only, so a
+    /// config written under the old name is explained rather than silently
+    /// ignored back to the defaults.
+    picker: Option<RawSelector>,
 }
 
-/// `[picker]` as written, including the `display` key that moved to `[repo]`.
+/// `[selector]` as written, including the `display` key that moved to `[repo]`.
 ///
-/// Every field is optional so an absent one takes [`PickerConfig`]'s default
+/// Every field is optional so an absent one takes [`SelectorConfig`]'s default
 /// while an explicitly written one is preserved.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct RawPicker {
+struct RawSelector {
     height: Option<String>,
     preview: Option<bool>,
     preview_window: Option<String>,
@@ -259,8 +263,8 @@ struct RawPicker {
     display: Option<RepoDisplay>,
 }
 
-impl From<RawPicker> for PickerConfig {
-    fn from(raw: RawPicker) -> Self {
+impl From<RawSelector> for SelectorConfig {
+    fn from(raw: RawSelector) -> Self {
         let default = Self::default();
         Self {
             height: raw.height.unwrap_or(default.height),
@@ -289,7 +293,10 @@ impl RawToml {
             extra: self.extra.clone().unwrap_or_default(),
             labels: self.owners.clone().unwrap_or_default(),
             ignore: self.ignore.clone(),
-            display: self.picker.display,
+            display: self
+                .selector
+                .display
+                .or_else(|| self.picker.as_ref().and_then(|p| p.display)),
             editor: self.editor.is_some(),
         };
         let used = flat.root.is_some()
@@ -443,8 +450,50 @@ fn legacy_flat_error(flat: &FlatLayout) -> anyhow::Error {
         "this config uses the old flat layout, which scriv no longer reads.\n\n\
          Settings are now grouped by the command that reads them: repository \
          discovery under `[repo]`, and `owners` renamed to `labels`. Rewrite as:\n\n{}\n\n\
-         `[picker]` keeps `height`, `preview` and `preview_window`.{}",
+         `[selector]` keeps `height`, `preview` and `preview_window`.{}",
         indent(&replacement),
+        note
+    )
+}
+
+/// The `[selector]` table replacing a `[picker]` one, carrying over the keys
+/// that were actually written — an absent key means the default, and writing
+/// one out would freeze today's default into the user's file.
+fn renamed_picker_table(picker: &RawSelector) -> String {
+    let mut table = String::from("[selector]\n");
+    if let Some(height) = &picker.height {
+        table.push_str(&format!("height = {height:?}\n"));
+    }
+    if let Some(preview) = picker.preview {
+        table.push_str(&format!("preview = {preview}\n"));
+    }
+    if let Some(window) = &picker.preview_window {
+        table.push_str(&format!("preview_window = {window:?}\n"));
+    }
+    table
+}
+
+/// The error raised for a config whose finder settings are still under
+/// `[picker]`.
+///
+/// Silently reading them under both names would leave the old spelling working
+/// forever, and silently ignoring them would reset a customised height to the
+/// default without a word — so the table is named back to the user with the
+/// keys they wrote already in it.
+fn renamed_picker_error(picker: &RawSelector) -> anyhow::Error {
+    let table = renamed_picker_table(picker);
+
+    let note = if picker.display.is_some() {
+        "\n\n`display` is not one of its keys: it moved to `[repo]`."
+    } else {
+        ""
+    };
+
+    anyhow::anyhow!(
+        "this config has a `[picker]` table, which scriv no longer reads.\n\n\
+         The finder is the selector now — `scriv <group> sel` — and its settings \
+         are spelled the same way. Rewrite as:\n\n{}{}",
+        indent(&table),
         note
     )
 }
@@ -468,13 +517,16 @@ fn parse_toml(data: &str) -> Result<Config> {
     if let Some(paths) = &raw.paths {
         return Err(legacy_paths_error(paths));
     }
+    if let Some(picker) = &raw.picker {
+        return Err(renamed_picker_error(picker));
+    }
     if let Some(flat) = raw.flat_layout() {
         return Err(legacy_flat_error(&flat));
     }
     Ok(Config {
         repo: raw.repo,
         history: raw.history,
-        picker: raw.picker.into(),
+        selector: raw.selector.into(),
     })
 }
 
@@ -725,7 +777,7 @@ depth = 1
 
     /// The root is the one shared by most entries, not whichever came first.
     #[test]
-    fn migration_picks_the_most_common_root() {
+    fn migration_selects_the_most_common_root() {
         let paths = LegacyPaths::Grouped(
             [
                 (
@@ -782,7 +834,7 @@ editor = "nvim"
 [owners]
 work = ["acme"]
 
-[picker]
+[selector]
 height = "30%"
 display = "tilde"
 "#,
@@ -798,6 +850,42 @@ display = "tilde"
         assert!(err.contains(r#"display = "tilde""#), "{err}");
         assert!(err.contains(r#"labels = { work = ["acme"] }"#), "{err}");
         assert!(err.contains("$EDITOR"), "{err}");
+    }
+
+    /// `[picker]` is the name `[selector]` used to have. Reading it anyway would
+    /// keep the old spelling alive forever, and ignoring it would silently reset
+    /// a customised height — so it is refused, with the keys that were written
+    /// handed back under the new heading.
+    #[test]
+    fn a_picker_table_is_rejected_with_its_new_name() {
+        let err = parse_toml(
+            r#"
+[picker]
+height = "30%"
+preview = false
+preview_window = "down:40%"
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("`[picker]`"), "{err}");
+        assert!(err.contains("[selector]"), "{err}");
+        assert!(err.contains(r#"height = "30%""#), "{err}");
+        assert!(err.contains("preview = false"), "{err}");
+        assert!(err.contains(r#"preview_window = "down:40%""#), "{err}");
+    }
+
+    /// A `[picker]` carrying `display` has two things wrong with it. Reporting
+    /// only the table name would send the user back for a second error the
+    /// moment they fixed it.
+    #[test]
+    fn a_picker_table_carrying_display_says_where_display_went() {
+        let err = parse_toml("[picker]\ndisplay = \"tilde\"\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`[picker]`"), "{err}");
+        assert!(err.contains("[repo]"), "{err}");
     }
 
     /// Advice that does not parse is not advice. Whatever either migration
@@ -831,7 +919,7 @@ ignore = ["target"]
 [owners]
 work = ["acme"]
 
-[picker]
+[selector]
 display = "tilde"
 "#;
         let raw: RawToml = toml::from_str(old).unwrap();
@@ -842,6 +930,19 @@ display = "tilde"
         assert_eq!(cfg.repo.ignore, vec!["target".to_string()]);
         assert_eq!(cfg.repo.display, RepoDisplay::Tilde);
         assert_eq!(cfg.repo.label_of("acme"), Some("work"));
+
+        let renamed = r#"
+[picker]
+height = "30%"
+preview = false
+preview_window = "down:40%"
+"#;
+        let raw: RawToml = toml::from_str(renamed).unwrap();
+        let table = renamed_picker_table(raw.picker.as_ref().unwrap());
+        let cfg = parse_toml(&table).unwrap_or_else(|e| panic!("{e:#}\n\n{table}"));
+        assert_eq!(cfg.selector.height, "30%");
+        assert!(!cfg.selector.preview);
+        assert_eq!(cfg.selector.preview_window, "down:40%");
     }
 
     /// Every superseded key is detected on its own — a config that only set
@@ -854,14 +955,14 @@ display = "tilde"
             "ignore = [\"target\"]",
             "editor = \"nvim\"",
             "[owners]\nwork = [\"acme\"]",
-            "[picker]\ndisplay = \"tilde\"",
+            "[selector]\ndisplay = \"tilde\"",
         ] {
             let err = parse_toml(old).unwrap_err().to_string();
             assert!(err.contains("old flat layout"), "{old} accepted: {err}");
         }
     }
 
-    /// Only the superseded keys trigger it: a `[picker]` with no `display` is
+    /// Only the superseded keys trigger it: a `[selector]` with no `display` is
     /// exactly what the current format asks for.
     #[test]
     fn the_current_layout_is_not_mistaken_for_the_old_one() {
@@ -871,21 +972,21 @@ display = "tilde"
 root = "~/src"
 display = "tilde"
 
-[picker]
+[selector]
 height = "30%"
 preview = false
 "#,
         )
         .unwrap();
         assert_eq!(cfg.repo.display, RepoDisplay::Tilde);
-        assert_eq!(cfg.picker.height, "30%");
-        assert!(!cfg.picker.preview);
+        assert_eq!(cfg.selector.height, "30%");
+        assert!(!cfg.selector.preview);
     }
 
     #[test]
-    fn parses_picker_height() {
-        let cfg = parse_toml("[picker]\nheight = \"30%\"\n").unwrap();
-        assert_eq!(cfg.picker.height, "30%");
+    fn parses_selector_height() {
+        let cfg = parse_toml("[selector]\nheight = \"30%\"\n").unwrap();
+        assert_eq!(cfg.selector.height, "30%");
     }
 
     #[test]
@@ -905,31 +1006,32 @@ preview = false
 
     #[test]
     fn parses_preview_settings() {
-        let cfg = parse_toml("[picker]\npreview = false\npreview_window = \"down:40%\"\n").unwrap();
-        assert!(!cfg.picker.preview);
-        assert_eq!(cfg.picker.preview_window, "down:40%");
+        let cfg =
+            parse_toml("[selector]\npreview = false\npreview_window = \"down:40%\"\n").unwrap();
+        assert!(!cfg.selector.preview);
+        assert_eq!(cfg.selector.preview_window, "down:40%");
     }
 
     #[test]
     fn preview_defaults_to_on_at_the_right() {
         let cfg = parse_toml("").unwrap();
-        assert!(cfg.picker.preview);
-        assert_eq!(cfg.picker.preview_window, "right:50%");
+        assert!(cfg.selector.preview);
+        assert_eq!(cfg.selector.preview_window, "right:50%");
     }
 
     #[test]
-    fn picker_height_defaults_to_50pct() {
-        assert_eq!(parse_toml("").unwrap().picker.height, "50%");
-        // A `[picker]` table with no height still gets the default.
-        assert_eq!(parse_toml("[picker]\n").unwrap().picker.height, "50%");
+    fn selector_height_defaults_to_50pct() {
+        assert_eq!(parse_toml("").unwrap().selector.height, "50%");
+        // A `[selector]` table with no height still gets the default.
+        assert_eq!(parse_toml("[selector]\n").unwrap().selector.height, "50%");
     }
 
-    /// Unknown picker keys from older configs (e.g. `backend`) are ignored, not
+    /// Unknown selector keys from older configs (e.g. `backend`) are ignored, not
     /// an error.
     #[test]
-    fn picker_ignores_unknown_keys() {
-        let cfg = parse_toml("[picker]\nbackend = \"fzf\"\nheight = \"10\"\n").unwrap();
-        assert_eq!(cfg.picker.height, "10");
+    fn selector_ignores_unknown_keys() {
+        let cfg = parse_toml("[selector]\nbackend = \"fzf\"\nheight = \"10\"\n").unwrap();
+        assert_eq!(cfg.selector.height, "10");
     }
 
     #[test]

@@ -1,8 +1,8 @@
-//! `scriv branch` — list, pick, and check out git branches.
+//! `scriv branch` — list, select, and check out git branches.
 //!
 //! Local and remote branches are shown in one list, coloured by where they
 //! live, so switching to a branch you have and checking out one you do not are
-//! the same gesture. Picking a remote-only branch creates the local branch and
+//! the same gesture. Selecting a remote-only branch creates the local branch and
 //! sets its upstream, which is the step that otherwise has to be typed by hand.
 //!
 //! Every listing arrives ordered by [`git::by_relevance`] — current branch,
@@ -14,9 +14,9 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, bail};
 
 use crate::git::{self, Branch, Filter};
-use crate::pick::{PickItem, Preview};
+use crate::select::{Preview, SelectItem};
 use crate::term;
-use crate::{Ctx, pick};
+use crate::{Ctx, select};
 
 /// Every branch in the current repository, optionally refreshing remotes first.
 ///
@@ -78,7 +78,7 @@ fn date_width(branches: &[Branch]) -> usize {
 ///
 /// Bare names by default so the output pipes cleanly; `--status` adds the
 /// current-branch marker, the local/both/remote tag, and the last commit.
-/// Colour follows the same kind mapping as the picker and is dropped when
+/// Colour follows the same kind mapping as the selector and is dropped when
 /// stdout is not a terminal.
 pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
     let branches = collect(ctx, filter, fetch)?;
@@ -126,14 +126,14 @@ fn preview(branch: &Branch) -> Preview {
     Preview::Command(format!(
         "git --no-optional-locks log --color=always --max-count=30 --date=relative \
          --format='%C(auto)%h%C(reset)  %C(blue)%an%C(reset)  %C(green)%ad%C(reset)  %s' {} --",
-        pick::quote(&branch.name)
+        select::quote(&branch.name)
     ))
 }
 
-/// Build picker rows: current-branch marker, name, last commit date, subject,
+/// Build selector rows: current-branch marker, name, last commit date, subject,
 /// each row tinted by [`BranchKind`](crate::git::BranchKind) — yellow
 /// local-only, green local+remote, cyan remote-only.
-fn items(branches: &[Branch]) -> Vec<PickItem> {
+fn items(branches: &[Branch]) -> Vec<SelectItem> {
     let width = name_width(branches);
     let date_width = date_width(branches);
     branches
@@ -146,25 +146,25 @@ fn items(branches: &[Branch]) -> Vec<PickItem> {
                 date = branch.date,
                 subject = branch.subject,
             );
-            PickItem::new(label.trim_end(), branch.name.clone())
+            SelectItem::new(label.trim_end(), branch.name.clone())
                 .color(branch.kind.color())
                 .preview(preview(branch))
         })
         .collect()
 }
 
-/// Fuzzy-select one branch, with [`REFRESH_KEY`](pick::REFRESH_KEY) fetching
-/// and rebuilding the list without closing the picker.
+/// Fuzzy-select one branch, with [`REFRESH_KEY`](select::REFRESH_KEY) fetching
+/// and rebuilding the list without closing the selector.
 ///
 /// Returns the chosen name (`main`, or `origin/main` for a branch that only
 /// exists on a remote) together with the branch list as it stood at that
 /// moment: a refresh replaces that list, and [`git::resolve`] must not decide
-/// what a checkout means from the one the picker opened with. That is what the
+/// what a checkout means from the one the selector opened with. That is what the
 /// shared `known` is for — the reload closure runs on skim's reader thread, so
 /// the two need somewhere to meet.
 ///
 /// A failed fetch leaves the rows exactly as they were and is reported once the
-/// picker is out of the way. Interrupting a branch list to say the network is
+/// selector is out of the way. Interrupting a branch list to say the network is
 /// down helps nobody: the list on screen is still perfectly usable, and it is
 /// almost certainly the branch you wanted.
 fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Result<Selection> {
@@ -186,7 +186,7 @@ fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Res
         })
     };
 
-    let name = pick::pick_one_reloading(items(&offered), prompt, &ctx.config.picker, reload)?;
+    let name = select::select_one_reloading(items(&offered), prompt, &ctx.config.selector, reload)?;
 
     if let Some(err) = failure.lock().expect("failure slot poisoned").take() {
         eprintln!("warning: could not refresh branches: {err}");
@@ -201,22 +201,22 @@ struct Selection {
     branches: Vec<Branch>,
 }
 
-/// `scriv branch pick` — fuzzy-select a branch and print its name.
-pub fn pick(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
+/// `scriv branch sel` — fuzzy-select a branch and print its name.
+pub fn sel(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
     let branches = load(ctx, fetch)?;
-    let chosen = select(ctx, branches, filter, "Pick a branch")?;
+    let chosen = select(ctx, branches, filter, "Select a branch")?;
     println!("{}", chosen.name);
     Ok(())
 }
 
-/// `scriv branch checkout [name]` — switch to a branch, picking one when no
+/// `scriv branch checkout [name]` — switch to a branch, selecting one when no
 /// name is given.
 ///
 /// A remote-only branch is checked out as a new local branch tracking it, so
 /// `git push`/`git pull` work immediately afterwards. git's own output is left
 /// alone, so the familiar "Switched to branch …" line still appears.
 ///
-/// `filter` narrows what the picker offers, but a name given on the command
+/// `filter` narrows what the selector offers, but a name given on the command
 /// line always resolves against every branch — `--local` is about choosing, not
 /// about what `origin/feature` is allowed to mean.
 pub fn checkout(ctx: &Ctx, name: Option<&str>, filter: Filter, fetch: bool) -> Result<()> {

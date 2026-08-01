@@ -1,4 +1,4 @@
-//! Walking a directory tree for files to offer in a picker.
+//! Walking a directory tree for files to offer in a selector.
 //!
 //! Built on the [`ignore`] crate — the same walker [fd] is — so `.gitignore`,
 //! `.ignore` and `.fdignore` are honoured in-process, with no `fd` subprocess
@@ -26,9 +26,9 @@ const WALKER_SKIP: &[&str] = &[
 /// How many discovered paths may sit between the walk and whatever is reading
 /// it.
 ///
-/// The walk runs on its own threads, so results the picker has not taken yet
+/// The walk runs on its own threads, so results the selector has not taken yet
 /// need somewhere to wait. Bounded, not unbounded: a walk of `$HOME` finds
-/// files faster than a picker consumes them, and an unbounded queue would hold
+/// files faster than a selector consumes them, and an unbounded queue would hold
 /// the whole tree in memory to no purpose. A full queue blocks the walker
 /// threads, and that backpressure is what keeps the footprint flat however
 /// large the tree is.
@@ -36,7 +36,7 @@ const QUEUE_BOUND: usize = 1024;
 
 /// Files under `root`, as paths relative to `root`.
 ///
-/// Streamed: rows are handed over as they are found, so a picker fed from this
+/// Streamed: rows are handed over as they are found, so a selector fed from this
 /// opens on the first filename rather than the last, and memory stays bounded
 /// by [`QUEUE_BOUND`] however large the tree. Dotfiles are included — config
 /// files are common targets — while ignore files and [`WALKER_SKIP`] are
@@ -51,7 +51,7 @@ const QUEUE_BOUND: usize = 1024;
 /// **Unreadable paths are skipped, not reported.** This is `fzf`'s
 /// `find … 2>/dev/null`: a walk of `$HOME` on macOS crosses directories that
 /// only an app with Full Disk Access can read (`~/Library/CallHistory…` and
-/// friends), and failing the whole picker over one of them — or printing at a
+/// friends), and failing the whole selector over one of them — or printing at a
 /// terminal skim is drawing on — is worse than leaving them out. There is
 /// nothing to grant from in here either: Full Disk Access is given to the
 /// terminal application, not to a process that asks for it.
@@ -90,7 +90,7 @@ pub fn files(root: &Path) -> impl Iterator<Item = String> + Send + 'static {
                     Ok(()) => WalkState::Continue,
                     // The receiver is gone: the user has selected or cancelled,
                     // so stop walking rather than spend the rest of the tree on
-                    // a picker that is no longer there.
+                    // a selector that is no longer there.
                     Err(_) => WalkState::Quit,
                 }
             })
@@ -139,7 +139,7 @@ mod tests {
     }
 
     /// fd reads `.fdignore` in addition to `.gitignore`; a user who keeps one
-    /// expects the same paths to stay out of scriv's pickers.
+    /// expects the same paths to stay out of scriv's selectors.
     #[test]
     fn files_honours_fdignore() {
         let dir = TempDir::new().unwrap();
@@ -159,7 +159,7 @@ mod tests {
 
     /// A directory the user cannot read must cost its own subtree and nothing
     /// else — on macOS a walk of `$HOME` hits several, and losing the whole
-    /// picker to one is what this replaced.
+    /// selector to one is what this replaced.
     #[cfg(unix)]
     #[test]
     fn files_skips_unreadable_directories() {
@@ -192,7 +192,7 @@ mod tests {
     ///
     /// This is the test that earns the bounded queue. An unbounded one would
     /// hold the whole tree in memory and still pass every other test here; a
-    /// mis-wired bounded one deadlocks, and deadlocks in front of a picker that
+    /// mis-wired bounded one deadlocks, and deadlocks in front of a selector that
     /// has already taken over the terminal.
     #[test]
     fn files_streams_a_tree_larger_than_its_queue() {

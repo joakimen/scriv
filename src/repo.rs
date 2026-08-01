@@ -128,7 +128,7 @@ pub fn find_all_repos(cfg: &Config, home: &Path, log: &Logger) -> Result<Vec<Fou
 /// The searches are independent, so nothing stops two of them from reaching the
 /// same checkout: an `extra` path that also sits under the root, the same path
 /// listed twice, or two spellings of one directory. Every one of those used to
-/// put the repository in the list twice, which in a picker is two identical
+/// put the repository in the list twice, which in a selector is two identical
 /// rows where selecting either does the same thing.
 ///
 /// The first occurrence wins because the jobs are ordered root-first, and only
@@ -223,7 +223,7 @@ fn visit_level(
         handles
             .into_iter()
             // Re-raise rather than dropping a chunk: silently returning fewer
-            // repositories than exist is the one failure a picker cannot show.
+            // repositories than exist is the one failure a selector cannot show.
             // `find_all_repos` turns this into "discovery worker panicked".
             .flat_map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
             .collect()
@@ -420,7 +420,7 @@ mod tests {
 
     /// The root search and each `extra` path run independently, so nothing
     /// stops two of them reaching the same checkout — an `extra` entry that is
-    /// also under the root is the ordinary way it happens. Two identical picker
+    /// also under the root is the ordinary way it happens. Two identical selector
     /// rows, where selecting either does the same thing, is not a list.
     #[test]
     fn a_repository_found_twice_is_listed_once() {

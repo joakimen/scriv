@@ -49,7 +49,7 @@ impl Process {
 ///
 /// Unparseable lines are skipped rather than failing the listing: `ps` prints a
 /// process whose command it cannot read as a blank or truncated line, and one
-/// of those must not take the whole picker down with it.
+/// of those must not take the whole selector down with it.
 pub fn parse(text: &str) -> Vec<Process> {
     text.lines().filter_map(parse_line).collect()
 }
@@ -157,12 +157,12 @@ pub fn user_width(procs: &[Process]) -> usize {
         .min(MAX_USER_WIDTH)
 }
 
-/// The row `--status` prints and the picker shows: pid, user, cpu, elapsed
+/// The row `--status` prints and the selector shows: pid, user, cpu, elapsed
 /// running time, then the command. `user_width` comes from [`user_width`] over
 /// the whole listing.
 ///
 /// Everything before the command is drawn grey when `color` is on — the same
-/// treatment [`crate::pick`] gives a context column, so the eye lands on the
+/// treatment [`crate::select`] gives a context column, so the eye lands on the
 /// command, which is what anyone is reading the row for.
 pub fn status_row(p: &Process, user_width: usize, color: bool) -> String {
     let head = format!(
@@ -204,7 +204,7 @@ pub fn preview(p: &Process) -> String {
 /// A signal `scriv proc kill` can send, named as `kill` names it.
 ///
 /// A closed set rather than an arbitrary string so an unusable signal is
-/// rejected before the picker opens, instead of after the user has chosen what
+/// rejected before the selector opens, instead of after the user has chosen what
 /// to kill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signal(&'static str);
@@ -467,7 +467,7 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         }
     }
 
-    /// Rejected here, before the picker opens — not after the user has chosen
+    /// Rejected here, before the selector opens — not after the user has chosen
     /// what to kill and `kill` turns it down.
     #[test]
     fn an_unusable_signal_is_refused_up_front() {

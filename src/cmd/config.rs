@@ -12,14 +12,14 @@ use crate::{Ctx, files, history, repo, term};
 /// A commented starter config. Settings are grouped by the command that reads
 /// them; users edit it to taste.
 const TEMPLATE: &str = r#"# scriv configuration. Settings are grouped by the command that reads them,
-# with `[picker]` — shared by every picker — at the end.
+# with `[selector]` — shared by every selector — at the end.
 
 # `scriv repo`: where your repositories are, and how they are labelled.
 [repo]
 
 # Every repository lives under one root, laid out as <owner>/<repo> — the same
 # shape as GitHub itself. `repo clone` writes here, so a clone always lands
-# somewhere `repo pick` will find it.
+# somewhere `repo sel` will find it.
 root = "~/dev/github.com"
 
 # Repositories outside the root, listed one at a time. An escape hatch for
@@ -33,7 +33,7 @@ ignore = ["node_modules", "target"]
 # display = "relative"
 
 # Labels name owners, one label to many owners, so everything you touch for work
-# colours as one group in the picker however many orgs it spans. An owner with
+# colours as one group in the selector however many orgs it spans. An owner with
 # no label still shows up — just uncoloured.
 #
 # Written inline, on one line, so it stays an ordinary `[repo]` key: a
@@ -49,8 +49,8 @@ ignore = ["node_modules", "target"]
 # does not export that variable for scriv to find.
 # file = "~/.local/share/fish/work_history"
 
-# The built-in fuzzy picker, shared by every command that opens one.
-[picker]
+# The built-in fuzzy selector, shared by every command that opens one.
+[selector]
 height = "50%"        # finder height, e.g. "50%" or "20"
 # preview = true       # show a preview pane for the highlighted row
 # preview_window = "right:50%" # preview layout: [up|down|left|right][:SIZE][:hidden]
@@ -338,7 +338,7 @@ fn root_checks(ctx: &Ctx) -> Vec<Check> {
             Check::ok("repo extra", format!("{total} path(s), all present"))
         } else {
             // A hard error, because discovery treats a missing search path as
-            // one: the whole picker fails rather than quietly listing less.
+            // one: the whole selector fails rather than quietly listing less.
             Check::fail("repo extra", format!("missing: {}", missing.join(", ")))
         });
     }
@@ -346,7 +346,7 @@ fn root_checks(ctx: &Ctx) -> Vec<Check> {
     checks
 }
 
-/// How many repositories discovery actually finds — the number the picker will
+/// How many repositories discovery actually finds — the number the selector will
 /// show, which is the only figure that answers "is my root right".
 ///
 /// Skipped when a search path has already been reported missing. Discovery
@@ -528,7 +528,7 @@ mod tests {
             vec!["node_modules".to_string(), "target".to_string()]
         );
         assert_eq!(cfg.repo.display, RepoDisplay::Relative);
-        assert_eq!(cfg.picker.height, "50%");
+        assert_eq!(cfg.selector.height, "50%");
     }
 
     /// Every commented-out key is advice, and advice that does not parse is
@@ -563,7 +563,7 @@ mod tests {
         assert_eq!(cfg.repo.extra, vec!["~/bin".to_string()]);
         assert_eq!(cfg.repo.display, RepoDisplay::Relative);
         assert_eq!(cfg.repo.label_of("acme"), Some("work"));
-        assert!(!cfg.picker.preview_window.is_empty());
+        assert!(!cfg.selector.preview_window.is_empty());
     }
 
     // --- check ---

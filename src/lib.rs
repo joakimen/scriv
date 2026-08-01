@@ -1,4 +1,4 @@
-//! `scriv` — pick repositories, files, git branches, GitHub pull requests and
+//! `scriv` — select repositories, files, git branches, GitHub pull requests and
 //! running processes from one fuzzy finder.
 //!
 //! The crate is split into an I/O-free core ([`config`], [`path`], [`files`]'s
@@ -17,9 +17,9 @@ pub mod git;
 pub mod history;
 pub mod logger;
 pub mod path;
-pub mod pick;
 pub mod proc;
 pub mod repo;
+pub mod select;
 pub mod shell;
 pub mod term;
 pub mod walk;
@@ -154,7 +154,7 @@ impl Ctx {
 
     /// Whether printed output should carry ANSI colour.
     ///
-    /// The picker is not governed by this: it is a full terminal UI that only
+    /// The selector is not governed by this: it is a full terminal UI that only
     /// ever draws on a terminal, and `--color` is about what scriv *prints* —
     /// the same scope ripgrep and fd give it.
     pub fn color(&self) -> bool {

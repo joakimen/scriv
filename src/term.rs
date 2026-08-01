@@ -194,14 +194,14 @@ impl Confirm {
 /// than one that does not.
 pub const EXIT_HANGUP: u8 = 129;
 
-/// How often the terminal is probed while a picker is open. Twice a second is
+/// How often the terminal is probed while a selector is open. Twice a second is
 /// far below anything measurable and still notices a hangup promptly.
 const HANGUP_POLL: Duration = Duration::from_millis(500);
 
 /// How many probes in a row must fail before the terminal is called gone.
 ///
 /// More than one because the consequence is ending the process: a single odd
-/// answer from a terminal that is still there would take down a picker somebody
+/// answer from a terminal that is still there would take down a selector somebody
 /// was reading.
 const HANGUP_STRIKES: u32 = 2;
 
@@ -220,7 +220,7 @@ pub fn is_hangup(err: rustix::io::Errno) -> bool {
 /// Ask the terminal whether it is still there, without writing to it.
 ///
 /// A zero-length write runs the driver's checks and then writes no bytes, so it
-/// cannot disturb what the picker has drawn — and unlike a read, it cannot take
+/// cannot disturb what the selector has drawn — and unlike a read, it cannot take
 /// a keystroke that skim was going to act on.
 fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
     match rustix::io::write(fd, &[]) {
@@ -229,9 +229,9 @@ fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
     }
 }
 
-/// Ends the process if the terminal goes away while a picker is open.
+/// Ends the process if the terminal goes away while a selector is open.
 ///
-/// The picker is skim, and skim's input loop does not stop when its event
+/// The selector is skim, and skim's input loop does not stop when its event
 /// stream ends: on a pty whose other end has closed, `crossterm`'s
 /// `EventStream` yields end-of-stream immediately and forever, and skim's
 /// `select!` treats that as nothing to do and asks again. The result is a
@@ -260,7 +260,7 @@ pub struct HangupWatch {
 /// immediately and watches nothing.
 pub fn watch_for_hangup() -> HangupWatch {
     let stop = Arc::new(AtomicBool::new(false));
-    // stderr is what the picker draws on, so it is the terminal whose loss
+    // stderr is what the selector draws on, so it is the terminal whose loss
     // matters. Without one there is nothing to watch and nothing to protect.
     if !std::io::stderr().is_terminal() {
         return HangupWatch { stop, thread: None };
@@ -297,14 +297,14 @@ impl Drop for HangupWatch {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         // Not joined: the thread sleeps in half-second steps, and making every
-        // picker's exit wait for one would be paying for the watch on the path
+        // selector's exit wait for one would be paying for the watch on the path
         // where nothing went wrong.
         drop(self.thread.take());
     }
 }
 
 /// Wrap `text` in an ANSI 256-colour sequence when `on`, so the same colour
-/// indices the picker uses also drive plain listings.
+/// indices the selector uses also drive plain listings.
 pub fn paint(text: &str, color: u8, on: bool) -> String {
     if on {
         format!("\x1b[38;5;{color}m{text}\x1b[0m")
@@ -329,7 +329,7 @@ pub fn paint_within(text: &str, color: u8, back: u8, on: bool) -> String {
 
 /// A row of the terminal to draw on that is not the shell's.
 ///
-/// Everything scriv draws inline — the spinner, the picker's viewport — starts
+/// Everything scriv draws inline — the spinner, the selector's viewport — starts
 /// on the row the cursor is on, and when scriv is invoked from a key binding
 /// that is the last row of the shell's prompt. Drawing there overwrites it, and
 /// erasing there leaves it blank. A one-line prompt survives either, because
@@ -408,13 +408,13 @@ const CLEAR_LINE: &str = "\r\x1b[2K";
 ///
 /// For the waits scriv cannot make shorter — a `git fetch`, a `gh` round trip —
 /// where the alternative is a frozen terminal that looks like a hang. It draws
-/// on stderr because stdout is a result: `scriv branch pick` writes a branch
+/// on stderr because stdout is a result: `scriv branch sel` writes a branch
 /// name there for a shell to read, and an animation in the middle of it would
 /// be read as part of the name.
 ///
 /// It takes a [`ScratchRow`] to turn on, because each frame erases the whole
 /// row it is drawn on: on the prompt's row that would wipe the prompt, and
-/// unlike the picker that follows it, a spinner is not big enough to hide what
+/// unlike the selector that follows it, a spinner is not big enough to hide what
 /// it destroyed.
 ///
 /// Nothing is drawn at all when stderr is not a terminal, so a redirected or
@@ -458,7 +458,7 @@ pub fn spinner(label: &str, color: bool) -> Spinner {
         while !flag.load(Ordering::Relaxed) {
             let frame = frames.next().unwrap_or(&FRAMES[0]);
             let mut err = std::io::stderr().lock();
-            // Cyan matches the "not here yet" hue the pickers already use for
+            // Cyan matches the "not here yet" hue the selectors already use for
             // things that come from a remote.
             let _ = write!(err, "{CLEAR_LINE}{} {label}", paint(frame, 6, color));
             let _ = err.flush();
@@ -481,7 +481,7 @@ pub fn spinner(label: &str, color: bool) -> Spinner {
 
 impl Drop for Spinner {
     /// Stop the animation and erase its line before the row it was drawn on
-    /// goes back, leaving the terminal exactly as it was found — the picker
+    /// goes back, leaving the terminal exactly as it was found — the selector
     /// that opens next draws over nothing.
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -601,7 +601,7 @@ mod tests {
     }
 
     /// `EIO` is what a pty answers once the other end has closed, and it is the
-    /// answer the spinning picker was getting. `ENXIO` is a device that is no
+    /// answer the spinning selector was getting. `ENXIO` is a device that is no
     /// longer attached, `EBADF` a descriptor that is not there at all.
     #[test]
     fn the_errors_that_mean_the_terminal_has_gone() {
@@ -618,7 +618,7 @@ mod tests {
     fn an_interrupted_probe_is_not_a_hangup() {
         use rustix::io::Errno;
         for err in [Errno::INTR, Errno::AGAIN, Errno::NOSPC, Errno::PERM] {
-            assert!(!is_hangup(err), "{err:?} would have killed a live picker");
+            assert!(!is_hangup(err), "{err:?} would have killed a live selector");
         }
     }
 

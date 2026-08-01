@@ -27,7 +27,7 @@ use crate::Reported;
 const FIELDS: &str =
     "number,title,author,headRefName,isDraft,state,updatedAt,body,statusCheckRollup,mergeable";
 
-/// A pull request, as much of it as the picker needs.
+/// A pull request, as much of it as the selector needs.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequest {
@@ -454,7 +454,7 @@ impl PullRequest {
         self.updated_at.split('T').next().unwrap_or_default()
     }
 
-    /// ANSI 256-colour index for this PR, used in both the picker and `ls`.
+    /// ANSI 256-colour index for this PR, used in both the selector and `ls`.
     pub fn color(&self) -> u8 {
         color_for(self.is_draft, &self.state)
     }
@@ -572,13 +572,13 @@ pub fn merge(
 
 /// JSON fields requested from `gh repo list`.
 ///
-/// Only what a picker row and its preview can use. `gh` will happily return
+/// Only what a selector row and its preview can use. `gh` will happily return
 /// license, topics, and fork parentage; none of it helps choose between two
 /// repositories, and all of it costs response size on an org with hundreds.
 const REPO_FIELDS: &str =
     "nameWithOwner,description,isPrivate,isArchived,isFork,primaryLanguage,pushedAt";
 
-/// A repository on GitHub, as much of it as the clone picker needs.
+/// A repository on GitHub, as much of it as the clone selector needs.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Repo {
@@ -745,7 +745,7 @@ fn run(args: &[&str]) -> Result<()> {
 ///
 /// Most `gh` subcommands resolve which repository they are about from the git
 /// remotes of the directory they run in, which is the whole reason `dir` exists:
-/// a command about a repository the user picked has to run *there*, not here.
+/// a command about a repository the user selected has to run *there*, not here.
 fn run_at(dir: Option<&Path>, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("gh");
     cmd.args(args);
@@ -804,7 +804,7 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = r#"[
-        {"number":12,"title":"Add branch picker","author":{"login":"joakimen"},
+        {"number":12,"title":"Add branch selector","author":{"login":"joakimen"},
          "headRefName":"feat/branches","isDraft":false,"state":"OPEN",
          "updatedAt":"2026-07-27T09:12:33Z"},
         {"number":9,"title":"WIP","author":null,"headRefName":"wip",

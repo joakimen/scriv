@@ -4,13 +4,13 @@
 //! and no external dependency. Every place that asks the user to choose a path
 //! goes through here, so selection looks and behaves the same everywhere.
 //!
-//! Items carry a separate [`PickItem::label`] (shown and fuzzy-matched) and
-//! value (returned on selection), so the picker can show a `~`-collapsed path
+//! Items carry a separate [`SelectItem::label`] (shown and fuzzy-matched) and
+//! value (returned on selection), so the selector can show a `~`-collapsed path
 //! or a group tag while still returning an absolute path.
 //!
-//! Rows can arrive either all at once ([`pick_one`], [`pick_many`]) or as they
-//! are discovered ([`pick_one_streamed`], [`pick_many_streamed`]) — the latter
-//! is what makes a walk of a large tree usable, since the picker opens on the
+//! Rows can arrive either all at once ([`select_one`], [`select_many`]) or as they
+//! are discovered ([`select_one_streamed`], [`select_many_streamed`]) — the latter
+//! is what makes a walk of a large tree usable, since the selector opens on the
 //! first rows instead of the last.
 
 use std::sync::Mutex;
@@ -21,7 +21,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use skim::prelude::*;
 
-use crate::config::PickerConfig;
+use crate::config::SelectorConfig;
 use crate::term;
 
 /// A user-cancelled selection (Esc / Ctrl-C). Distinct from "nothing matched"
@@ -83,11 +83,11 @@ fn file_preview_cmd(path: &str) -> String {
     )
 }
 
-/// One choice in the picker: `label` is displayed and matched against,
-/// [`PickItem::value`] is returned when it is selected, `color` optionally
+/// One choice in the selector: `label` is displayed and matched against,
+/// [`SelectItem::value`] is returned when it is selected, `color` optionally
 /// tints the row (an ANSI 256-colour index, so it respects the terminal
 /// theme), and `preview` fills the preview pane while the row is highlighted.
-pub struct PickItem {
+pub struct SelectItem {
     pub label: String,
     /// Drawn dim, ahead of the label, and *not* matched against.
     ///
@@ -99,13 +99,13 @@ pub struct PickItem {
     pub prefix: Option<String>,
     /// `None` when the value is the label itself, which is the common case for
     /// path rows — worth not storing twice when a walk streams in a million of
-    /// them. Read it through [`PickItem::value`].
+    /// them. Read it through [`SelectItem::value`].
     value: Option<String>,
     pub color: Option<u8>,
     pub preview: Option<Preview>,
 }
 
-impl PickItem {
+impl SelectItem {
     /// An item whose displayed label is also its returned value.
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
@@ -152,15 +152,15 @@ impl PickItem {
     }
 }
 
-/// Colour of a [`PickItem::prefix`]: ANSI 8, the terminal's own grey, so the
+/// Colour of a [`SelectItem::prefix`]: ANSI 8, the terminal's own grey, so the
 /// column reads as context beside the command rather than competing with it.
 const PREFIX_COLOR: u8 = 8;
 
-/// Bridges a [`PickItem`] to skim: `text()` drives display and matching,
+/// Bridges a [`SelectItem`] to skim: `text()` drives display and matching,
 /// `output()` is what a selection yields, `display()` tints the row, and
 /// `preview()` fills the preview pane.
 struct SkItem {
-    item: PickItem,
+    item: SelectItem,
 }
 
 impl SkimItem for SkItem {
@@ -208,24 +208,24 @@ impl SkimItem for SkItem {
     }
 }
 
-/// Pick exactly one item, returning its value. Returns [`Cancelled`] as an
+/// Select exactly one item, returning its value. Returns [`Cancelled`] as an
 /// error on cancel; the caller decides whether that is a silent exit or a
 /// failure.
-pub fn pick_one(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<String> {
+pub fn select_one(items: Vec<SelectItem>, prompt: &str, cfg: &SelectorConfig) -> Result<String> {
     one(Feed::batch(items), prompt, cfg)
 }
 
-/// [`pick_one`], opened with `query` already in the search box.
+/// [`select_one`], opened with `query` already in the search box.
 ///
-/// For a picker reached part-way through typing — ctrl-r after half a command —
+/// For a selector reached part-way through typing — ctrl-r after half a command —
 /// where retyping what is already on the line to narrow the list is precisely
-/// the work the picker was opened to save. An empty `query` is the ordinary
-/// case and starts the picker on everything.
-pub fn pick_one_queried(
-    items: Vec<PickItem>,
+/// the work the selector was opened to save. An empty `query` is the ordinary
+/// case and starts the selector on everything.
+pub fn select_one_queried(
+    items: Vec<SelectItem>,
     prompt: &str,
     query: &str,
-    cfg: &PickerConfig,
+    cfg: &SelectorConfig,
 ) -> Result<String> {
     let run = Run {
         prompt,
@@ -233,17 +233,17 @@ pub fn pick_one_queried(
         query,
         reload: None,
     };
-    run_picker(Feed::batch(items), run, cfg)?
+    run_selector(Feed::batch(items), run, cfg)?
         .values
         .into_iter()
         .next()
         .ok_or_else(|| Cancelled.into())
 }
 
-/// The key that asks a reloadable picker to go and get fresher rows.
+/// The key that asks a reloadable selector to go and get fresher rows.
 ///
 /// This displaces skim's own `ctrl-r` (rotate between matching modes), which is
-/// why only the pickers over remote data offer it: those are the lists that go
+/// why only the selectors over remote data offer it: those are the lists that go
 /// stale while you look at them, and re-reading them is worth more there than
 /// switching to regex matching.
 pub const REFRESH_KEY: &str = "ctrl-r";
@@ -254,11 +254,11 @@ pub const REFRESH_KEY: &str = "ctrl-r";
 /// Infallible by construction: a reload that fails is the caller's to explain,
 /// and the useful answer is almost always "keep showing what we had", which
 /// only the caller can rebuild. Hand back the old rows and remember the error.
-pub type Reload = Box<dyn FnMut() -> Vec<PickItem> + Send>;
+pub type Reload = Box<dyn FnMut() -> Vec<SelectItem> + Send>;
 
-/// [`pick_one`], with [`REFRESH_KEY`] bound to reloading the list in place.
+/// [`select_one`], with [`REFRESH_KEY`] bound to reloading the list in place.
 ///
-/// The picker does not close and reopen: `reload` runs on a background thread
+/// The selector does not close and reopen: `reload` runs on a background thread
 /// while skim keeps drawing, with its own reading spinner turning next to the
 /// row count, and the rows already on screen stay there until the new ones
 /// arrive. The query, the cursor and the preview pane are never disturbed —
@@ -269,10 +269,10 @@ pub type Reload = Box<dyn FnMut() -> Vec<PickItem> + Send>;
 /// source; the stock collector runs a shell command, and this one calls
 /// `reload` instead. So the refresh rides skim's real reload path — including
 /// the spinner and the "still reading" state — without a shell in sight.
-pub fn pick_one_reloading(
-    items: Vec<PickItem>,
+pub fn select_one_reloading(
+    items: Vec<SelectItem>,
     prompt: &str,
-    cfg: &PickerConfig,
+    cfg: &SelectorConfig,
     reload: Reload,
 ) -> Result<String> {
     let run = Run {
@@ -281,14 +281,14 @@ pub fn pick_one_reloading(
         query: "",
         reload: Some(reload),
     };
-    run_picker(Feed::batch(items), run, cfg)?
+    run_selector(Feed::batch(items), run, cfg)?
         .values
         .into_iter()
         .next()
         .ok_or_else(|| Cancelled.into())
 }
 
-/// The [`CommandCollector`] behind [`pick_one_reloading`]: skim thinks it is
+/// The [`CommandCollector`] behind [`select_one_reloading`]: skim thinks it is
 /// running a command, and it is calling a closure.
 struct ReloadCollector {
     reload: Arc<Mutex<Reload>>,
@@ -318,7 +318,7 @@ impl CommandCollector for ReloadCollector {
         // cancel it: the first finishes into a channel nobody is reading, and
         // the second waits its turn on whatever the caller's closure locks.
         // Pressing the key three times means three fetches, one after another,
-        // and a picker that stays responsive throughout — which is a better
+        // and a selector that stays responsive throughout — which is a better
         // trade than killing a `git fetch` halfway.
         components_to_stop.fetch_add(1, Ordering::SeqCst);
         std::thread::spawn(move || {
@@ -354,7 +354,7 @@ impl CommandCollector for ReloadCollector {
     }
 }
 
-/// What [`pick_one_or_query`] came back with.
+/// What [`select_one_or_query`] came back with.
 pub enum Choice {
     /// A row the user selected.
     Item(String),
@@ -362,16 +362,20 @@ pub enum Choice {
     Query(String),
 }
 
-/// Pick one item, or accept what the user typed when nothing matched.
+/// Select one item, or accept what the user typed when nothing matched.
 ///
 /// For lists that are suggestions rather than the whole truth. scriv knows the
 /// GitHub owners you have already cloned from and the ones in your config, but
 /// it cannot know the one you are about to clone from for the first time — and
-/// a picker that refuses to accept an unlisted answer would make the common
+/// a selector that refuses to accept an unlisted answer would make the common
 /// case convenient by making the uncommon case impossible.
 ///
 /// An empty query with no selection is a cancel, not an empty answer.
-pub fn pick_one_or_query(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<Choice> {
+pub fn select_one_or_query(
+    items: Vec<SelectItem>,
+    prompt: &str,
+    cfg: &SelectorConfig,
+) -> Result<Choice> {
     let (values, query) = run_with_query(Feed::batch(items), prompt, false, cfg)?;
     if let Some(value) = values.into_iter().next() {
         return Ok(Choice::Item(value));
@@ -382,39 +386,43 @@ pub fn pick_one_or_query(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig)
     }
 }
 
-/// Pick zero or more items, returning their values. An empty result means the
+/// Select zero or more items, returning their values. An empty result means the
 /// user selected nothing; cancelling still yields [`Cancelled`].
-pub fn pick_many(items: Vec<PickItem>, prompt: &str, cfg: &PickerConfig) -> Result<Vec<String>> {
+pub fn select_many(
+    items: Vec<SelectItem>,
+    prompt: &str,
+    cfg: &SelectorConfig,
+) -> Result<Vec<String>> {
     run(Feed::batch(items), prompt, true, cfg)
 }
 
-/// [`pick_one`] over rows that arrive as they are found.
+/// [`select_one`] over rows that arrive as they are found.
 ///
-/// The picker opens immediately and fills in as `items` yields, so the user can
+/// The selector opens immediately and fills in as `items` yields, so the user can
 /// type against the first rows while the rest are still being discovered.
 /// Because no row exists yet when the pane is configured, whether previews are
 /// offered has to be stated up front in `preview`.
-pub fn pick_one_streamed(
-    items: impl IntoIterator<Item = PickItem, IntoIter: Send + 'static>,
+pub fn select_one_streamed(
+    items: impl IntoIterator<Item = SelectItem, IntoIter: Send + 'static>,
     prompt: &str,
     preview: bool,
-    cfg: &PickerConfig,
+    cfg: &SelectorConfig,
 ) -> Result<String> {
     one(Feed::stream(items, preview), prompt, cfg)
 }
 
-/// [`pick_many`] over rows that arrive as they are found. See
-/// [`pick_one_streamed`].
-pub fn pick_many_streamed(
-    items: impl IntoIterator<Item = PickItem, IntoIter: Send + 'static>,
+/// [`select_many`] over rows that arrive as they are found. See
+/// [`select_one_streamed`].
+pub fn select_many_streamed(
+    items: impl IntoIterator<Item = SelectItem, IntoIter: Send + 'static>,
     prompt: &str,
     preview: bool,
-    cfg: &PickerConfig,
+    cfg: &SelectorConfig,
 ) -> Result<Vec<String>> {
     run(Feed::stream(items, preview), prompt, true, cfg)
 }
 
-fn one(feed: Feed, prompt: &str, cfg: &PickerConfig) -> Result<String> {
+fn one(feed: Feed, prompt: &str, cfg: &SelectorConfig) -> Result<String> {
     run(feed, prompt, false, cfg)?
         .into_iter()
         .next()
@@ -428,21 +436,21 @@ struct Feed {
 }
 
 enum Rows {
-    /// Every row known before the picker opens.
-    Batch(Vec<PickItem>),
+    /// Every row known before the selector opens.
+    Batch(Vec<SelectItem>),
     /// Rows produced over time, drained on a background thread.
-    Stream(Box<dyn Iterator<Item = PickItem> + Send>),
+    Stream(Box<dyn Iterator<Item = SelectItem> + Send>),
 }
 
 /// How many rows to accumulate before handing a batch to skim, and how long to
 /// let one sit unsent. Sending each row on its own would put a million channel
-/// round-trips in front of a walk; 15ms is under a frame, so the picker still
+/// round-trips in front of a walk; 15ms is under a frame, so the selector still
 /// fills in as fast as the eye reads it.
 const FEED_BATCH: usize = 512;
 const FEED_INTERVAL: Duration = Duration::from_millis(15);
 
 impl Feed {
-    fn batch(items: Vec<PickItem>) -> Self {
+    fn batch(items: Vec<SelectItem>) -> Self {
         let preview = items.iter().any(|item| item.preview.is_some());
         Self {
             rows: Rows::Batch(items),
@@ -451,7 +459,7 @@ impl Feed {
     }
 
     fn stream(
-        items: impl IntoIterator<Item = PickItem, IntoIter: Send + 'static>,
+        items: impl IntoIterator<Item = SelectItem, IntoIter: Send + 'static>,
         preview: bool,
     ) -> Self {
         Self {
@@ -467,11 +475,12 @@ impl Feed {
         match self.rows {
             Rows::Batch(items) => {
                 let batch: Vec<Arc<dyn SkimItem>> = items.into_iter().map(into_skim).collect();
-                tx.send(batch).map_err(|e| anyhow!("feeding picker: {e}"))?;
+                tx.send(batch)
+                    .map_err(|e| anyhow!("feeding selector: {e}"))?;
             }
             Rows::Stream(items) => {
                 // Detached: `Skim::run_with` has returned by the time the walk
-                // notices the picker is gone, and there is nothing to join for.
+                // notices the selector is gone, and there is nothing to join for.
                 std::thread::spawn(move || {
                     let mut batch: Vec<Arc<dyn SkimItem>> = Vec::with_capacity(FEED_BATCH);
                     let mut flushed = Instant::now();
@@ -483,7 +492,7 @@ impl Feed {
                         let full = std::mem::replace(&mut batch, Vec::with_capacity(FEED_BATCH));
                         // A closed channel means the user has selected or
                         // cancelled: stop walking rather than spend the rest of
-                        // the tree on a picker that is no longer there.
+                        // the tree on a selector that is no longer there.
                         if tx.send(full).is_err() {
                             return;
                         }
@@ -499,11 +508,11 @@ impl Feed {
     }
 }
 
-fn into_skim(item: PickItem) -> Arc<dyn SkimItem> {
+fn into_skim(item: SelectItem) -> Arc<dyn SkimItem> {
     Arc::new(SkItem { item }) as Arc<dyn SkimItem>
 }
 
-/// Everything about one run of the picker except its rows.
+/// Everything about one run of the selector except its rows.
 struct Run<'a> {
     prompt: &'a str,
     /// Whether several rows can be selected.
@@ -525,7 +534,7 @@ impl<'a> Run<'a> {
     }
 }
 
-/// What one run of the picker came back with.
+/// What one run of the selector came back with.
 struct Outcome {
     values: Vec<String>,
     /// What the user had typed — the answer itself when the list is a set of
@@ -534,7 +543,7 @@ struct Outcome {
 }
 
 /// Drive skim over `feed` and return the selected values.
-fn run(feed: Feed, prompt: &str, multi: bool, cfg: &PickerConfig) -> Result<Vec<String>> {
+fn run(feed: Feed, prompt: &str, multi: bool, cfg: &SelectorConfig) -> Result<Vec<String>> {
     run_with_query(feed, prompt, multi, cfg).map(|(values, _)| values)
 }
 
@@ -543,27 +552,27 @@ fn run_with_query(
     feed: Feed,
     prompt: &str,
     multi: bool,
-    cfg: &PickerConfig,
+    cfg: &SelectorConfig,
 ) -> Result<(Vec<String>, String)> {
-    let out = run_picker(feed, Run::new(prompt, multi), cfg)?;
+    let out = run_selector(feed, Run::new(prompt, multi), cfg)?;
     Ok((out.values, out.query))
 }
 
 /// Drive skim over `feed`.
-fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
+fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     let (prompt, multi) = (run.prompt, run.multi);
     // skim needs a terminal for its UI. Fail with a clear message rather than
     // skim's raw "Device not configured" when there is none (e.g. in a pipe
-    // with no controlling tty). Command substitution — `cd (scriv repo pick)` —
+    // with no controlling tty). Command substitution — `cd (scriv repo sel)` —
     // still has a tty on stdin/stderr, so it is allowed.
     use std::io::IsTerminal;
     if !std::io::stdin().is_terminal() && !std::io::stderr().is_terminal() {
         anyhow::bail!("interactive selection needs a terminal");
     }
 
-    // skim does not stop when its input ends, so a picker whose terminal has
+    // skim does not stop when its input ends, so a selector whose terminal has
     // gone spins at 100% CPU for as long as the process is left alive. Held for
-    // exactly as long as the picker is open.
+    // exactly as long as the selector is open.
     let _watch = crate::term::watch_for_hangup();
 
     let mut builder = SkimOptionsBuilder::default();
@@ -576,7 +585,7 @@ fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
     // The pane only exists when skim has a preview command; the per-item
     // `preview()` above supplies the actual content, so an empty string is
     // enough to turn it on. Skipped entirely when no item has a preview, so
-    // pickers without one keep the full width.
+    // selectors without one keep the full width.
     if cfg.preview && feed.preview {
         builder
             .preview("")
@@ -610,17 +619,17 @@ fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
 
     let options = builder
         .build()
-        .map_err(|e| anyhow!("configuring picker: {e}"))?;
+        .map_err(|e| anyhow!("configuring selector: {e}"))?;
 
     // Feed the items through a channel; the sender is dropped when they run
     // out, which is how skim stops waiting for more.
     let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
     feed.send(tx)?;
 
-    // Held until the picker is done with the terminal, however it ends —
+    // Held until the selector is done with the terminal, however it ends —
     // selection, cancel, or an error out of skim.
     let _room = room_for(&cfg.height);
-    let output = Skim::run_with(options, Some(rx)).map_err(|e| anyhow!("running picker: {e}"))?;
+    let output = Skim::run_with(options, Some(rx)).map_err(|e| anyhow!("running selector: {e}"))?;
 
     if output.is_abort {
         return Err(Cancelled.into());
@@ -635,17 +644,17 @@ fn run_picker(feed: Feed, run: Run, cfg: &PickerConfig) -> Result<Outcome> {
     })
 }
 
-/// The row an inline picker opens on, so it never draws over the prompt.
+/// The row an inline selector opens on, so it never draws over the prompt.
 ///
 /// skim's inline viewport starts on the row the cursor is on — and when the
-/// picker is opened from a key binding, that is the last row of the shell's
+/// selector is opened from a key binding, that is the last row of the shell's
 /// prompt. skim draws over it and clears it on the way out, which a one-line
 /// prompt survives because the shell redraws the whole thing afterwards. A
-/// two-line prompt does not: only its last row is taken, so the picker appears
+/// two-line prompt does not: only its last row is taken, so the selector appears
 /// welded to the middle of a prompt whose first row is still sitting above it.
-/// A [`term::ScratchRow`] moves the whole picker one row down, clear of it.
+/// A [`term::ScratchRow`] moves the whole selector one row down, clear of it.
 ///
-/// A full-screen picker takes the alternate screen and gives the display back
+/// A full-screen selector takes the alternate screen and gives the display back
 /// untouched, so it needs no row of its own.
 fn room_for(height: &str) -> term::ScratchRow {
     if draws_inline(height) {
@@ -668,7 +677,7 @@ fn draws_inline(height: &str) -> bool {
         != Some(100)
 }
 
-/// The picker's header when it is showing what it has.
+/// The selector's header when it is showing what it has.
 const IDLE_HEADER: &str = "ctrl-r to refresh";
 
 /// The header while a reload is in flight. skim empties the list for the
@@ -697,7 +706,7 @@ mod tests {
 
     /// Render an item the way skim would, with `matches` standing in for a
     /// query that hit the given characters of the *label*.
-    fn rendered(item: PickItem, matches: Vec<usize>) -> Line<'static> {
+    fn rendered(item: SelectItem, matches: Vec<usize>) -> Line<'static> {
         let sk = SkItem { item };
         let context = DisplayContext {
             score: 0,
@@ -723,7 +732,7 @@ mod tests {
     /// reads as context beside the command rather than competing with it.
     #[test]
     fn a_prefix_is_drawn_dim_before_the_label() {
-        let item = PickItem::plain("git status").prefix("2026-07-30 13:57  ");
+        let item = SelectItem::plain("git status").prefix("2026-07-30 13:57  ");
         let line = rendered(item, vec![]);
         assert_eq!(text_of(&line), "2026-07-30 13:57  git status");
         assert_eq!(line.spans[0].content, "2026-07-30 13:57  ");
@@ -739,7 +748,7 @@ mod tests {
         // Character 0 of the label: the `g` of `git`.
         let matched = Style::default().fg(Color::Indexed(1));
         let with = rendered(
-            PickItem::plain("git status").prefix("2026-07-30 13:57  "),
+            SelectItem::plain("git status").prefix("2026-07-30 13:57  "),
             vec![0],
         );
         let hit: String = with
@@ -754,7 +763,7 @@ mod tests {
     /// A row with no prefix renders exactly as it did before there was one.
     #[test]
     fn an_item_without_a_prefix_is_unchanged() {
-        let line = rendered(PickItem::plain("git status"), vec![]);
+        let line = rendered(SelectItem::plain("git status"), vec![]);
         assert_eq!(text_of(&line), "git status");
     }
 
@@ -764,12 +773,12 @@ mod tests {
         assert_eq!(quote("/home/u/my repo"), "'/home/u/my repo'");
     }
 
-    /// Only a full-height picker takes the alternate screen, and only that one
+    /// Only a full-height selector takes the alternate screen, and only that one
     /// leaves the display untouched on its own. Get this wrong in the generous
-    /// direction and scriv reserves a row a full-screen picker never draws in,
+    /// direction and scriv reserves a row a full-screen selector never draws in,
     /// leaving a stray blank line above every prompt.
     #[test]
-    fn only_a_full_height_picker_keeps_off_the_display() {
+    fn only_a_full_height_selector_keeps_off_the_display() {
         assert!(!draws_inline("100%"));
         assert!(!draws_inline(" 100% "));
         for height in ["50%", "99%", "20", "-2", "", "garbage"] {
@@ -793,10 +802,10 @@ mod tests {
         assert_eq!(room_for("50%").is_taken(), std::io::stderr().is_terminal());
     }
 
-    /// A full-screen picker restores the display itself, so there is nothing
+    /// A full-screen selector restores the display itself, so there is nothing
     /// to take however the run was launched.
     #[test]
-    fn a_full_height_picker_takes_no_row() {
+    fn a_full_height_selector_takes_no_row() {
         assert!(!room_for("100%").is_taken());
     }
 
@@ -809,7 +818,7 @@ mod tests {
     }
 
     /// The binding has to be skim's own `reload`, not an `accept`: an accept
-    /// closes the picker, which is the behaviour this exists to avoid. It also
+    /// closes the selector, which is the behaviour this exists to avoid. It also
     /// has to parse — a binding skim cannot read is dropped, and the key would
     /// silently do nothing.
     #[test]
@@ -821,12 +830,12 @@ mod tests {
         assert_eq!(key, REFRESH_KEY);
         assert!(
             actions.starts_with("reload"),
-            "an accept would close the picker: {actions}"
+            "an accept would close the selector: {actions}"
         );
         assert!(actions.contains(BUSY_HEADER), "no busy header: {actions}");
     }
 
-    /// The busy header has to be taken down again, or a picker sits there
+    /// The busy header has to be taken down again, or a selector sits there
     /// claiming to be refreshing long after it finished. skim's `load` event
     /// is what says a read is over.
     #[test]
@@ -859,7 +868,7 @@ mod tests {
         let mut collector = ReloadCollector {
             reload: Arc::new(Mutex::new(Box::new(move || {
                 counter.fetch_add(1, Ordering::SeqCst);
-                vec![PickItem::plain("fresh")]
+                vec![SelectItem::plain("fresh")]
             }))),
         };
 
@@ -873,7 +882,7 @@ mod tests {
 
         // The channel closing is how skim learns the read is over and stops
         // its spinner; the counter reaching zero is how it learns the
-        // collector has stopped. Both have to happen, or the picker is left
+        // collector has stopped. Both have to happen, or the selector is left
         // looking like it is still loading.
         assert!(rx.recv().is_err(), "the source channel was left open");
         while components.load(Ordering::SeqCst) != 0 {
@@ -891,7 +900,7 @@ mod tests {
             reload: Arc::new(Mutex::new(Box::new(move || {
                 // Stands in for a fetch that has not come back yet.
                 let _ = blocked.recv();
-                vec![PickItem::plain("late")]
+                vec![SelectItem::plain("late")]
             }))),
         };
 

@@ -1,17 +1,17 @@
-//! `scriv proc` — list, pick and signal running processes.
+//! `scriv proc` — list, select and signal running processes.
 
 use std::io::ErrorKind;
 use std::process::{Command, Stdio};
 
 use anyhow::{Result, anyhow, bail};
 
-use crate::pick::{PickItem, Preview};
 use crate::proc::{self, Process, Signal};
-use crate::{Ctx, Reported, pick, term};
+use crate::select::{Preview, SelectItem};
+use crate::{Ctx, Reported, select, term};
 
 /// The process table, minus what must never be offered.
 ///
-/// One `ps` call serves the listing, the picker rows and every preview pane —
+/// One `ps` call serves the listing, the selector rows and every preview pane —
 /// see [`proc::preview`] for why the previews are built from it rather than
 /// asking again per row.
 fn processes() -> Result<Vec<Process>> {
@@ -63,13 +63,13 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv proc pick` — fuzzy-select a process and print its pid.
-pub fn pick(ctx: &Ctx) -> Result<()> {
+/// `scriv proc sel` — fuzzy-select a process and print its pid.
+pub fn sel(ctx: &Ctx) -> Result<()> {
     let procs = processes()?;
     if procs.is_empty() {
-        bail!("no processes to pick from");
+        bail!("no processes to select from");
     }
-    let choice = pick::pick_one(rows(&procs), "Pick a process", &ctx.config.picker)?;
+    let choice = select::select_one(rows(&procs), "Select a process", &ctx.config.selector)?;
     println!("{choice}");
     Ok(())
 }
@@ -118,18 +118,18 @@ pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal) -> Result<()> {
     Ok(())
 }
 
-/// Open the picker over `procs`, returning the pids chosen, or `None` when the
-/// picker was cancelled.
+/// Open the selector over `procs`, returning the pids chosen, or `None` when the
+/// selector was cancelled.
 fn choose(ctx: &Ctx, procs: &[Process], signal: Signal) -> Result<Option<Vec<i32>>> {
     if procs.is_empty() {
-        bail!("no processes to pick from");
+        bail!("no processes to select from");
     }
     // The prompt names the signal, because `--force` is not visible once the
-    // picker has taken the screen and the two are not equally recoverable.
+    // selector has taken the screen and the two are not equally recoverable.
     let prompt = format!("Send {signal} to");
-    let selected = match pick::pick_many(rows(procs), &prompt, &ctx.config.picker) {
+    let selected = match select::select_many(rows(procs), &prompt, &ctx.config.selector) {
         Ok(selected) => selected,
-        Err(e) if e.is::<pick::Cancelled>() => return Ok(None),
+        Err(e) if e.is::<select::Cancelled>() => return Ok(None),
         Err(e) => return Err(e),
     };
     Ok(Some(
@@ -137,16 +137,16 @@ fn choose(ctx: &Ctx, procs: &[Process], signal: Signal) -> Result<Option<Vec<i32
     ))
 }
 
-/// Picker rows: the aligned listing row, returning the pid.
+/// Selector rows: the aligned listing row, returning the pid.
 ///
-/// Uncoloured whatever `--color` says — the picker is a terminal UI that only
+/// Uncoloured whatever `--color` says — the selector is a terminal UI that only
 /// ever draws on a terminal, and it tints its own rows.
-fn rows(procs: &[Process]) -> Vec<PickItem> {
+fn rows(procs: &[Process]) -> Vec<SelectItem> {
     let width = proc::user_width(procs);
     procs
         .iter()
         .map(|p| {
-            PickItem::new(proc::status_row(p, width, false), p.pid.to_string())
+            SelectItem::new(proc::status_row(p, width, false), p.pid.to_string())
                 .preview(Preview::Text(proc::preview(p)))
         })
         .collect()

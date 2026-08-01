@@ -11,9 +11,9 @@ use std::io::Write;
 use anyhow::{Context, Result};
 
 use crate::history::{self, Entry};
-use crate::pick::PickItem;
+use crate::select::SelectItem;
 use crate::term;
-use crate::{Ctx, pick};
+use crate::{Ctx, select};
 
 /// Every command in fish's history, newest first and deduplicated.
 fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
@@ -42,22 +42,22 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
-/// Build picker rows: the local date it was last run, then the command folded
+/// Build selector rows: the local date it was last run, then the command folded
 /// onto one line, returning the command as it was really typed.
 ///
-/// The date is a [`PickItem::prefix`] rather than part of the label, so it is
+/// The date is a [`SelectItem::prefix`] rather than part of the label, so it is
 /// shown without being searched. A date is digits at the front of every row;
 /// matched, a query of `3` would rank thousands of timestamps above the command
 /// being reached for.
 ///
-/// No row carries a preview, so the picker keeps the full width for the
+/// No row carries a preview, so the selector keeps the full width for the
 /// commands: a preview pane would only repeat the row it is beside, and the
 /// selected command goes back on the command line to be read before it runs.
-fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<PickItem> {
+fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<SelectItem> {
     entries
         .iter()
         .map(|entry| {
-            PickItem::new(history::one_line(&entry.cmd), entry.cmd.clone())
+            SelectItem::new(history::one_line(&entry.cmd), entry.cmd.clone())
                 .prefix(format!("{}  ", history::stamp(entry.when, offset)))
         })
         .collect()
@@ -68,7 +68,7 @@ fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<PickItem> {
 /// A multi-line command is folded onto its one line like everywhere else, so
 /// the output stays one entry per line and pipes into `wc -l` or `grep`
 /// meaning what it looks like it means. `--status` prefixes the local date and
-/// time each was last run — the same column the picker shows, in a fixed-width
+/// time each was last run — the same column the selector shows, in a fixed-width
 /// sortable form, so `awk` and `grep` can both work on it.
 pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     let entries = load(ctx)?;
@@ -89,20 +89,20 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv history pick` — fuzzy-select a past command and print it.
+/// `scriv history sel` — fuzzy-select a past command and print it.
 ///
 /// `query` seeds the search box, so ctrl-r pressed halfway through typing a
 /// command starts narrowed to what is already there instead of throwing it
 /// away. `print0` terminates the result with a NUL rather than a newline: a
 /// command may itself contain newlines, and only a NUL tells the shell reading
 /// this where one command ends.
-pub fn pick(ctx: &Ctx, query: Option<&str>, print0: bool) -> Result<()> {
+pub fn sel(ctx: &Ctx, query: Option<&str>, print0: bool) -> Result<()> {
     let entries = load(ctx)?;
-    let chosen = pick::pick_one_queried(
+    let chosen = select::select_one_queried(
         items(&entries, ctx.utc_offset()),
-        "Pick a command",
+        "Select a command",
         query.unwrap_or_default(),
-        &ctx.config.picker,
+        &ctx.config.selector,
     )?;
 
     if !print0 {

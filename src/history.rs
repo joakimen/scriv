@@ -1,5 +1,5 @@
 //! fish shell history: where the file lives, what is in it, and how one
-//! recorded command reads as a single picker row.
+//! recorded command reads as a single selector row.
 //!
 //! fish writes each command to its history file as it is entered, so reading
 //! that file *is* reading the live history — there is no shell to ask, and
@@ -7,7 +7,7 @@
 //! which session it belongs to: fish keeps that in `$fish_history`, which it
 //! does not export, so a non-default session is named in the config instead.
 //!
-//! Everything here is pure. The file read, the clock and the picker live in
+//! Everything here is pure. The file read, the clock and the selector live in
 //! [`cmd::history`](crate::cmd::history).
 
 use std::collections::HashSet;
@@ -114,7 +114,7 @@ fn unescape(text: &str) -> String {
 /// is tens of thousands of entries and this runs on every ctrl-r, so cloning
 /// each command into the set — only to throw the clone away — was a second copy
 /// of the whole history built and dropped on the path where the user is waiting
-/// for a picker to open.
+/// for a selector to open.
 pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
     // Scoped so the borrows end before the entries are consumed below.
     let keep = {
@@ -137,7 +137,7 @@ pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
     out
 }
 
-/// Render a command as a single line, for a picker row or a listing.
+/// Render a command as a single line, for a selector row or a listing.
 ///
 /// A row is one line by construction, so a multi-line command has to be folded
 /// into one — and the folding has to be visible, since `git commit -m 'first`
@@ -223,7 +223,7 @@ mod tests {
         );
     }
 
-    /// The config names the whole file, not a directory: `$fish_history` picks
+    /// The config names the whole file, not a directory: `$fish_history` selects
     /// a session by name (`work_history`), and scriv cannot see that variable.
     #[test]
     fn a_configured_file_wins_and_expands_home() {

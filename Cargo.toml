@@ -2,7 +2,7 @@
 name = "scriv"
 version = "0.2.1"
 edition = "2024"
-description = "One fuzzy picker for your Git repositories, files, branches, pull requests and shell history."
+description = "Provides fuzzy-completion for various local and remote resources."
 license = "MIT"
 repository = "https://github.com/joakimen/scriv"
 # Artwork, the demo recording and CI config belong to the repository, not the
@@ -21,7 +21,7 @@ indexmap = { version = "2.14.0", features = ["serde"] }
 # text/style modules only.
 ratatui = { version = "0.30", default-features = false }
 # A zero-length write to the terminal, to notice when it has gone away while a
-# picker is open — see `term::watch_for_hangup`. Already in the tree via tokio
+# selector is open — see `term::watch_for_hangup`. Already in the tree via tokio
 # and the `ignore` walk, so this compiles nothing new, and it is what keeps that
 # probe out of an `unsafe` block: this crate has none.
 rustix = { version = "1", default-features = false, features = ["std"] }
