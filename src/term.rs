@@ -183,9 +183,13 @@ pub struct HangupWatch {
 /// Bind it — `let _watch = term::watch_for_hangup()`. A bare statement drops it
 /// immediately and watches nothing.
 pub fn watch_for_hangup() -> HangupWatch {
-    let stop = Arc::new(AtomicBool::new(false));
     // stderr is what the selector draws on, so it is the terminal that matters.
-    if !std::io::stderr().is_terminal() {
+    watch_for_hangup_on(std::io::stderr().is_terminal())
+}
+
+fn watch_for_hangup_on(on_terminal: bool) -> HangupWatch {
+    let stop = Arc::new(AtomicBool::new(false));
+    if !on_terminal {
         return HangupWatch { stop, thread: None };
     }
 
@@ -300,7 +304,10 @@ pub struct ScratchRow {
 impl ScratchRow {
     /// Move to a fresh row below the cursor, giving it back when dropped.
     pub fn take() -> Self {
-        let taken = std::io::stderr().is_terminal();
+        Self::take_on(std::io::stderr().is_terminal())
+    }
+
+    fn take_on(taken: bool) -> Self {
         if taken {
             let mut err = std::io::stderr().lock();
             // An explicit carriage return: whether a bare newline returns to
@@ -367,15 +374,19 @@ pub struct Spinner {
 /// spins for nothing.
 #[must_use]
 pub fn spinner(label: &str, color: bool) -> Spinner {
+    spinner_on(label, color, std::io::stderr().is_terminal())
+}
+
+fn spinner_on(label: &str, color: bool, on_terminal: bool) -> Spinner {
     let stop = Arc::new(AtomicBool::new(false));
-    if !std::io::stderr().is_terminal() {
+    if !on_terminal {
         return Spinner {
             stop,
             thread: None,
             _row: ScratchRow::none(),
         };
     }
-    let row = ScratchRow::take();
+    let row = ScratchRow::take_on(true);
 
     let label = label.to_string();
     let flag = Arc::clone(&stop);
@@ -561,10 +572,8 @@ mod tests {
 
     #[test]
     fn no_terminal_means_nothing_is_watched() {
-        // The test harness captures stderr, so this is the redirected case.
-        let watch = watch_for_hangup();
         assert!(
-            watch.thread.is_none(),
+            watch_for_hangup_on(false).thread.is_none(),
             "watched a terminal that was not there"
         );
     }
@@ -648,14 +657,14 @@ mod tests {
 
     #[test]
     fn no_terminal_means_no_animation() {
-        // The test harness captures stderr, so this is the redirected case.
-        let spinner = spinner("fetching", true);
+        let spinner = spinner_on("fetching", true, false);
         assert!(spinner.thread.is_none(), "spun without a terminal");
+        assert!(!spinner._row.is_taken(), "took a row it could not draw on");
     }
 
     #[test]
     fn the_spinner_draws_on_a_row_of_its_own() {
-        let spinner = spinner("fetching", true);
+        let spinner = spinner_on("fetching", true, true);
         assert_eq!(
             spinner._row.is_taken(),
             spinner.thread.is_some(),
@@ -665,10 +674,7 @@ mod tests {
 
     #[test]
     fn no_terminal_means_no_row_taken() {
-        assert_eq!(
-            ScratchRow::take().is_taken(),
-            std::io::stderr().is_terminal()
-        );
+        assert!(!ScratchRow::take_on(false).is_taken());
         assert!(!ScratchRow::none().is_taken());
     }
 
