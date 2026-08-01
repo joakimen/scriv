@@ -46,7 +46,7 @@ const STYLES: Styles = Styles::styled()
 #[derive(Parser)]
 #[command(
     name = "scriv",
-    version,
+    version = scriv::VERSION,
     about = "Provides fuzzy-completion for various local and remote resources.",
     after_help = EXAMPLES,
     styles = STYLES,

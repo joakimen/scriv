@@ -176,17 +176,41 @@ fn help_lists_every_top_level_command() {
 }
 
 /// `--version` has to print the version cargo built, not a hardcoded string
-/// that stops being true at the next release.
+/// that stops being true at the next release — and it has to say when the
+/// binary is *not* the release of that name.
+///
+/// The shape is asserted rather than the exact string, because both forms are
+/// correct depending on where the build happened: exactly the crate version
+/// when the commit is a clean tag or there is no repository to ask, and
+/// `<version>-dev.<sha>[.dirty]` from any checkout that is neither. A test
+/// demanding one of them would fail in CI or on a release runner.
 #[test]
-fn version_reports_the_crate_version() {
+fn version_reports_the_crate_version_and_flags_a_development_build() {
     let sandbox = Sandbox::new();
     let run = sandbox.run(&["--version"]);
     run.ok();
+
+    let version = run
+        .stdout
+        .trim()
+        .strip_prefix("scriv ")
+        .unwrap_or_else(|| panic!("unexpected --version output: {}", run.stdout));
+    let crate_version = env!("CARGO_PKG_VERSION");
+
+    let Some(dev) = version.strip_prefix(crate_version) else {
+        panic!("`{version}` does not start with the crate version {crate_version}");
+    };
     assert!(
-        run.stdout.contains(env!("CARGO_PKG_VERSION")),
-        "{}",
-        run.stdout
+        dev.is_empty() || dev.starts_with("-dev."),
+        "`{version}` is neither the release version nor a development build",
     );
+    if let Some(rest) = dev.strip_prefix("-dev.") {
+        let sha = rest.strip_suffix(".dirty").unwrap_or(rest);
+        assert!(
+            !sha.is_empty() && sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "`{version}` names no commit",
+        );
+    }
 }
 
 /// A mistyped command is a usage error, and the conventional status for one is

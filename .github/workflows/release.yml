@@ -37,7 +37,14 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # `fetch-depth: 0` is load-bearing, not thoroughness. `build.rs` decides
+      # whether this is a release by asking `git describe --tags
+      # --exact-match`, and the default shallow checkout fetches no tags at
+      # all — so every released binary would answer `--version` with a
+      # development string naming the commit it was built from.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
       # `rustup show` installs the pinned toolchain; the target is added
       # explicitly rather than trusted to rust-toolchain.toml's `targets`, which
       # is honoured only when the toolchain is first installed from that file.
