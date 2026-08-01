@@ -10,6 +10,8 @@ use std::collections::HashSet;
 
 use anyhow::{Result, bail};
 
+use crate::term;
+
 /// The `ps` field list scriv reads, in the order [`parse`] expects.
 ///
 /// The trailing `=` on each field suppresses its header, so every line is a
@@ -50,6 +52,11 @@ impl Process {
 /// Unparseable lines are skipped rather than failing the listing: `ps` prints a
 /// process whose command it cannot read as a blank or truncated line, and one
 /// of those must not take the whole selector down with it.
+///
+/// A command line is the least trustworthy text scriv handles: every process on
+/// the machine chooses its own argv, and `proc ls` writes it to a terminal. It
+/// is made safe here rather than at each of the three places that draw it — see
+/// [`term::one_row`].
 pub fn parse(text: &str) -> Vec<Process> {
     text.lines().filter_map(parse_line).collect()
 }
@@ -67,13 +74,13 @@ fn parse_line(line: &str) -> Option<Process> {
         return None;
     }
     Some(Process {
-        user: fields[0].to_string(),
+        user: term::one_row(fields[0]),
         pid: fields[1].parse().ok()?,
         ppid: fields[2].parse().ok()?,
         cpu: fields[3].parse().ok()?,
         mem: fields[4].parse().ok()?,
-        elapsed: fields[5].to_string(),
-        command: command.to_string(),
+        elapsed: term::one_row(fields[5]),
+        command: term::one_row(command),
     })
 }
 
@@ -94,6 +101,59 @@ pub fn ancestry(processes: &[Process], pid: i32) -> HashSet<i32> {
         current = parent.ppid;
     }
     chain
+}
+
+/// Why a pid given on the command line will not be signalled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// `0` or negative. To `kill(2)` these are not processes at all: `0` is the
+    /// caller's own process group, `-1` is every process the user may signal,
+    /// and any other negative number is the process group of its absolute
+    /// value. `scriv proc kill -- -1` would end the login session — from a
+    /// command whose entire premise is that the shell is not reachable by one
+    /// keystroke.
+    NotAProcess,
+    /// scriv itself, or something that spawned it — the chain that runs up
+    /// through the shell to the terminal emulator. The selector has never
+    /// offered these; naming one explicitly must not be the way around that.
+    OwnAncestry,
+}
+
+impl Refusal {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::NotAProcess => {
+                "not a process id — `0` means this process group and a negative \
+                 number means a whole process group; use `kill` directly if that \
+                 is what you meant"
+            }
+            Self::OwnAncestry => "scriv itself or a process that spawned it",
+        }
+    }
+}
+
+/// Check pids given as arguments against the rules the selector enforces by
+/// simply never offering the rows.
+///
+/// The interactive path filters its list through [`selectable`], so a pid that
+/// reaches [`crate::cmd::proc::kill`] from the selector is already known to be
+/// safe. A pid typed on the command line has been through none of that, and
+/// `kill` reads `0` and negatives as process *groups* — so the one path with no
+/// list to filter is also the one that can take out the session. Same rules,
+/// applied to the arguments.
+pub fn refuse(processes: &[Process], self_pid: i32, pids: &[i32]) -> Vec<(i32, Refusal)> {
+    let own = ancestry(processes, self_pid);
+    pids.iter()
+        .filter_map(|&pid| {
+            if pid <= 0 {
+                Some((pid, Refusal::NotAProcess))
+            } else if own.contains(&pid) {
+                Some((pid, Refusal::OwnAncestry))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// The processes worth offering, busiest first.
@@ -331,6 +391,17 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         assert_eq!(procs[2].name(), "-fish");
     }
 
+    /// Every process on the machine chooses its own argv, and `proc ls` writes
+    /// it to a terminal. An escape that reached it could erase the rows around
+    /// it, so a listing could be made to hide the very process being hunted.
+    #[test]
+    fn a_command_line_cannot_carry_an_escape_out_of_ps() {
+        let procs = parse("joakim 501 1 0.0 0.1 01:00 /bin/evil \x1b[2K\x1b[1;32mhidden\n");
+        assert_eq!(procs.len(), 1);
+        assert!(!procs[0].command.contains('\x1b'), "{:?}", procs[0].command);
+        assert_eq!(procs[0].command, "/bin/evil [2K[1;32mhidden");
+    }
+
     /// The chain scriv must never offer: itself, the shell that ran it, and on
     /// up to the terminal. `-9` on any of it ends the session.
     #[test]
@@ -342,6 +413,46 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
             chain.contains(&70100),
             "its parent, even though ps did not list it"
         );
+    }
+
+    /// `kill` reads `0` and negatives as process *groups*, not processes: `0`
+    /// is the caller's own group and `-1` is every process the user may signal.
+    /// `scriv proc kill -- -1` would end the login session, from the one command
+    /// that goes out of its way never to offer the shell.
+    #[test]
+    fn a_pid_that_is_really_a_process_group_is_refused() {
+        let procs = sample();
+        for pid in [0, -1, -70123] {
+            let refused = refuse(&procs, 501, &[pid]);
+            assert_eq!(
+                refused,
+                vec![(pid, Refusal::NotAProcess)],
+                "{pid} reached kill"
+            );
+        }
+    }
+
+    /// The selector never offers scriv's own chain, and naming a pid on the
+    /// command line must not be the way around that — it is the path with no
+    /// list to have filtered.
+    #[test]
+    fn an_ancestor_named_as_an_argument_is_refused_too() {
+        let procs = sample();
+        // 70123 is `-fish`, whose parent 70100 stands in for the terminal.
+        assert_eq!(
+            refuse(&procs, 70123, &[70123]),
+            vec![(70123, Refusal::OwnAncestry)]
+        );
+        assert_eq!(
+            refuse(&procs, 70123, &[70100]),
+            vec![(70100, Refusal::OwnAncestry)]
+        );
+    }
+
+    /// An ordinary pid is not refused, or the command would do nothing at all.
+    #[test]
+    fn an_unrelated_pid_passes() {
+        assert!(refuse(&sample(), 70123, &[501, 1]).is_empty());
     }
 
     /// A table read while processes are exiting can contain a ppid loop. The

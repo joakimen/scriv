@@ -9,12 +9,16 @@ use crate::proc::{self, Process, Signal};
 use crate::select::{Preview, SelectItem};
 use crate::{Ctx, Reported, select, term};
 
-/// The process table, minus what must never be offered.
+/// The whole process table, as `ps` reported it.
 ///
 /// One `ps` call serves the listing, the selector rows and every preview pane —
 /// see [`proc::preview`] for why the previews are built from it rather than
 /// asking again per row.
-fn processes() -> Result<Vec<Process>> {
+///
+/// Unfiltered, because the entries that must never be *offered* are exactly the
+/// ones [`proc::refuse`] has to recognise when a pid is named on the command
+/// line: filter here and the parent chain is no longer there to check against.
+fn table() -> Result<Vec<Process>> {
     let output = Command::new("ps")
         .args(proc::PS_ARGS)
         .stdin(Stdio::null())
@@ -29,13 +33,18 @@ fn processes() -> Result<Vec<Process>> {
             stderr.to_string()
         });
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    // `id()` is this process; everything above it in the parent chain runs up
-    // through the shell to the terminal, and none of it is killable material.
-    Ok(proc::selectable(
-        &proc::parse(&text),
-        std::process::id() as i32,
-    ))
+    Ok(proc::parse(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// This process, which is the root of the chain that must never be signalled.
+fn self_pid() -> i32 {
+    std::process::id() as i32
+}
+
+/// The process table, minus what must never be offered: scriv itself and
+/// everything above it in the parent chain.
+fn processes() -> Result<Vec<Process>> {
+    Ok(proc::selectable(&table()?, self_pid()))
 }
 
 fn spawn_error(err: std::io::Error) -> anyhow::Error {
@@ -81,13 +90,22 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
 /// exited between the listing and the keystroke — is reported against the row
 /// it belongs to and does not hide the others that worked.
 pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal) -> Result<()> {
-    let procs = processes()?;
+    let table = table()?;
+    let procs = proc::selectable(&table, self_pid());
+
     let targets = if pids.is_empty() {
         match choose(ctx, &procs, signal)? {
             Some(targets) => targets,
             None => return Ok(()),
         }
     } else {
+        // Nothing filtered these, so they are checked instead — refusing the
+        // whole run rather than skipping the bad ones, since a list that was
+        // partly signalled and partly not is the hardest outcome to act on.
+        let refused = proc::refuse(&table, self_pid(), pids);
+        if let Some((pid, refusal)) = refused.first() {
+            bail!("refusing to signal {pid}: {}", refusal.reason());
+        }
         pids.to_vec()
     };
     if targets.is_empty() {

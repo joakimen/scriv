@@ -14,12 +14,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::path::expand_home_dir;
+use crate::term;
 
 /// Base directory for fish's data files, per the XDG spec.
 pub const XDG_DATA_ENV_VAR: &str = "XDG_DATA_HOME";
-
-/// Stands in for a line break when a multi-line command is drawn on one row.
-const NEWLINE_GLYPH: &str = "⏎";
 
 /// One command as fish recorded it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,20 +140,12 @@ pub fn recent_first(entries: Vec<Entry>) -> Vec<Entry> {
 /// A row is one line by construction, so a multi-line command has to be folded
 /// into one — and the folding has to be visible, since `git commit -m 'first`
 /// run together with `second'` is not the command it would then appear to be.
-/// Tabs become spaces and other control characters are dropped, so a stray
-/// escape sequence in an old entry cannot repaint the terminal from a row
-/// nobody has even selected.
+///
+/// [`term::one_row`] is the whole of it: a shell history is foreign text like
+/// any other listing's, and the rule for drawing foreign text on a row belongs
+/// in one place rather than once per source.
 pub fn one_line(cmd: &str) -> String {
-    let joiner = format!(" {NEWLINE_GLYPH} ");
-    cmd.lines()
-        .map(|line| {
-            line.chars()
-                .map(|c| if c == '\t' { ' ' } else { c })
-                .filter(|c| !c.is_control())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join(&joiner)
+    term::one_row(cmd)
 }
 
 /// Width of a [`stamp`], so an entry fish recorded without a `when:` can hold
@@ -361,7 +351,7 @@ mod tests {
     /// never ran, and selecting it still yields the real multi-line text.
     #[test]
     fn folding_a_command_leaves_a_visible_mark() {
-        assert!(one_line("a\nb").contains(NEWLINE_GLYPH));
+        assert!(one_line("a\nb").contains(term::NEWLINE_GLYPH));
     }
 
     /// An escape sequence pasted into a shell years ago is still sitting in the

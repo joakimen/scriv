@@ -848,6 +848,45 @@ fn proc_kill_refuses_an_unknown_signal_before_selecting() {
     assert!(run.stderr.contains("known signals are"), "{}", run.stderr);
 }
 
+/// To `kill`, `0` and a negative number are process *groups*, not processes:
+/// `0` is the caller's own group and `-1` is every process the user may signal.
+/// clap takes them happily as `i32`, so nothing but this stands between
+/// `scriv proc kill -- -1` and the end of the login session — from the one
+/// command that deliberately never offers the shell in its selector.
+///
+/// Run for real, with a signal that would work: the point is that the refusal
+/// happens, and a test that could only pass because the signal was invalid
+/// would prove nothing about the guard.
+#[test]
+fn proc_kill_refuses_a_pid_that_is_really_a_process_group() {
+    let sandbox = Sandbox::new();
+    for pid in ["0", "-1"] {
+        let run = sandbox.run(&["proc", "kill", "--signal", "CONT", "--", pid]);
+        run.code(1);
+        assert!(
+            run.stderr.contains("refusing to signal"),
+            "{pid} was not refused: {}",
+            run.stderr
+        );
+        assert!(run.stdout.is_empty(), "{pid} was signalled: {}", run.stdout);
+    }
+}
+
+/// An ordinary pid is not caught by that guard — a check that refused
+/// everything would pass the test above and leave the command useless.
+#[test]
+fn proc_kill_still_accepts_an_ordinary_pid() {
+    let sandbox = Sandbox::new();
+    // Almost certainly not a live process, so `kill` reports it as gone; what
+    // matters is that scriv got as far as asking.
+    let run = sandbox.run(&["proc", "kill", "--signal", "CONT", "2147483646"]);
+    assert!(
+        !run.stderr.contains("refusing to signal"),
+        "an ordinary pid was refused: {}",
+        run.stderr
+    );
+}
+
 /// `--force` *is* a signal choice, so offering it alongside `--signal` would be
 /// asking which of two answers to the same question wins.
 #[test]
