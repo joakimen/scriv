@@ -28,6 +28,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+/// What `scriv --version` reports.
+///
+/// The crate version when this commit is a release — sitting exactly on a tag
+/// with nothing modified — and `<version>-dev.<sha>[.dirty]` otherwise, so a
+/// binary built from a checkout is never mistaken for the release of the same
+/// name. Computed at compile time by `build.rs`, which is where the reasoning
+/// lives.
+pub const VERSION: &str = env!("SCRIV_VERSION");
+
 use config::Config;
 use logger::Logger;
 
