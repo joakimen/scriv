@@ -51,7 +51,7 @@ const STYLES: Styles = Styles::styled()
 #[command(
     name = "scriv",
     version,
-    about = "One fuzzy picker for your Git repositories, files, branches, pull requests and shell history.",
+    about = "Provides fuzzy-completion for various local and remote resources.",
     after_help = EXAMPLES,
     styles = STYLES,
     disable_help_subcommand = true
