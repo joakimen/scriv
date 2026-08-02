@@ -13,6 +13,11 @@ searches your shell history — all through one built-in fuzzy selector (skim).
 - Keep commits logical and self-contained: each one should build and test
   green on its own.
 
+`bacon.toml` is checked in for anyone who wants the same two steps rerun on
+save in a split instead of invoked by hand. It is optional and nothing depends
+on it — `make` remains the entry point, and the jobs run the Makefile's exact
+commands so a green split cannot mean something looser than a green gate.
+
 ### What is automated, and what still is not
 
 `.claude/settings.json` is checked in, and two hooks come with it. Both are
