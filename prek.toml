@@ -1,0 +1,55 @@
+#:schema https://www.schemastore.org/prek.json
+# Git hooks for prek (https://prek.j178.dev). Nothing runs until `make hooks`
+# installs the shims, and the hooks are a backstop rather than a second gate:
+# `make` stays the entry point, and every hook below either calls one of its
+# targets or checks something no target does.
+
+[[repos]]
+repo = "builtin"
+hooks = [
+    # The GIF is the one tracked file that is not text; both fixers rewrite
+    # bytes and would corrupt it.
+    { id = "trailing-whitespace", stages = ["pre-commit"], exclude = "\\.gif$" },
+    { id = "end-of-file-fixer", stages = ["pre-commit"], exclude = "\\.gif$" },
+    { id = "check-merge-conflict", stages = ["pre-commit"] },
+    { id = "check-added-large-files", stages = ["pre-commit"] },
+    { id = "check-toml", stages = ["pre-commit"] },
+    { id = "check-yaml", stages = ["pre-commit"] },
+]
+
+[[repos]]
+repo = "local"
+
+# CLAUDE.md forbids committing to main, and `.claude/hooks/no-commit-on-main.sh`
+# only refuses the agent. This refuses git.
+[[repos.hooks]]
+id = "no-commit-on-main"
+name = "commits go on a branch, not main"
+entry = "sh -c 'test \"$(git branch --show-current)\" != main || { echo \"On main. Branch first: git switch -c <name>\" >&2; exit 1; }'"
+language = "system"
+stages = ["pre-commit"]
+always_run = true
+pass_filenames = false
+
+# The first thing `make` runs, and the cheapest: a fraction of a second against
+# the full gate it would otherwise fail at the top of.
+[[repos.hooks]]
+id = "fmt-check"
+name = "make fmt-check"
+entry = "make fmt-check"
+language = "system"
+stages = ["pre-commit"]
+types = ["rust"]
+pass_filenames = false
+
+# Clippy and the tests cost ten seconds, which is worth paying once per push
+# rather than once per commit. It checks the tip only — that each commit is
+# green on its own is still nobody's job but the author's.
+[[repos.hooks]]
+id = "check"
+name = "make check"
+entry = "make check"
+language = "system"
+stages = ["pre-push"]
+always_run = true
+pass_filenames = false

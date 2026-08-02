@@ -27,6 +27,12 @@ fmt-check:
 install:
 	cargo install --path . --force
 
+# Install the git hooks in prek.toml. Opt-in, and once per clone — the hooks
+# directory lives in the common `.git`, so every worktree shares it.
+.PHONY: hooks
+hooks:
+	prek install --hook-type pre-commit --hook-type pre-push
+
 # Re-record docs/demo.gif. Local only — the render depends on installed fonts.
 # Requires vhs (brew install vhs).
 .PHONY: demo

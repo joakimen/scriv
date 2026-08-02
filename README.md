@@ -52,6 +52,7 @@ repository, a tracked file and a pull request.
 
 ```sh
 make                # fmt check, clippy, tests, release build
+make hooks          # install the git hooks in prek.toml
 make demo           # re-record docs/demo.gif
 make demo-fixture   # build the demo sandbox and poke at it by hand
 ```

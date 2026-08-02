@@ -5,7 +5,7 @@ edition = "2024"
 description = "Provides fuzzy-completion for various local and remote resources."
 license = "MIT"
 repository = "https://github.com/joakimen/scriv"
-exclude = ["docs/", "demo/", ".github/", ".claude/"]
+exclude = ["docs/", "demo/", ".github/", ".claude/", "prek.toml", "mise.toml"]
 
 [dependencies]
 anyhow = "1"
