@@ -29,8 +29,19 @@ here rather than one that seemed possible:
   direction costs a reset and a force-push over a branch others may have
   pulled.
 
-Nothing checks that each commit is green on its own, and nothing checks the
-three docs below. Both are still read by hand, and both have gone wrong here.
+`prek.toml` adds a third guard, for git rather than for the agent, and unlike
+the two above it is opt-in: `make hooks` installs the shims, once per clone,
+since the hooks directory lives in the common `.git` and every worktree shares
+it. Its pre-commit stage is file hygiene, `make fmt-check`, and the same
+refusal to commit on `main` that
+`hooks/no-commit-on-main.sh` gives the agent; its pre-push stage runs `make
+check`. prek is pinned in `mise.toml`, which is the whole of that file — the
+compiler comes from `rust-toolchain.toml`.
+
+Even with the hooks installed, nothing checks that each commit is green on its
+own — the pre-push hook sees the tip, and a green tip says nothing about the
+three commits below it. Nothing checks the three docs below either. Both are
+still read by hand, and both have gone wrong here.
 
 ### The three docs that go stale silently
 

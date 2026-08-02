@@ -1,0 +1,9 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+# The one development tool nothing else here installs. Rust is absent because
+# rust-toolchain.toml pins it and rustup reads that file directly, and vhs is
+# absent because mise has no macOS build of the ttyd it shells out to — half a
+# recorder pinned in a second place is worse than the `brew install vhs` that
+# CLAUDE.md already names.
+
+[tools]
+prek = "0.4.11"
