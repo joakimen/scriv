@@ -83,7 +83,13 @@ impl Ctx {
         verbose: bool,
         color: term::ColorChoice,
     ) -> Result<Self> {
-        let home = dirs::home_dir().context("determining home directory")?;
+        // `$HOME`, not a passwd lookup: the tests and the demo fixture both
+        // apply their sandbox by setting it, and a home read from the passwd
+        // file would silently disagree with the one the shell is using.
+        let home = std::env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from)
+            .context("determining home directory: $HOME is unset")?;
         let cwd = std::env::current_dir().context("determining working directory")?;
         let pwd = path::resolve_pwd(
             std::env::var("PWD").ok().as_deref(),

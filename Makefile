@@ -27,10 +27,6 @@ fmt-check:
 install:
 	cargo install --path . --force
 
-.PHONY: run
-run:
-	cargo run -- $(ARGS)
-
 # Re-record docs/demo.gif. Local only — the render depends on installed fonts.
 # Requires vhs (brew install vhs).
 .PHONY: demo
@@ -50,7 +46,3 @@ demo-fixture:
 	@echo
 	@echo "Enter the sandbox with:"
 	@echo "  source target/demo-fixture/env.sh"
-
-.PHONY: clean
-clean:
-	cargo clean

@@ -105,7 +105,23 @@ impl Sandbox {
         self.run_full(self.home(), args, env)
     }
 
+    /// [`Sandbox::run`] with `HOME` taken away — the one variable scriv cannot
+    /// resolve a configuration path without.
+    fn run_without_home(&self, args: &[&str]) -> Run {
+        let mut cmd = self.command(self.home(), args);
+        cmd.env_remove("HOME");
+        finish(cmd)
+    }
+
     fn run_full(&self, cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> Run {
+        let mut cmd = self.command(cwd, args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        finish(cmd)
+    }
+
+    fn command(&self, cwd: &Path, args: &[&str]) -> Command {
         let mut cmd = Command::new(BIN);
         cmd.args(args)
             .current_dir(cwd)
@@ -116,16 +132,16 @@ impl Sandbox {
             .env("XDG_DATA_HOME", self.home().join(".local/share"))
             // `gh`, `git` and the editor are looked up on PATH.
             .env("PATH", std::env::var("PATH").unwrap_or_default());
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
+        cmd
+    }
+}
 
-        let out = cmd.output().expect("running scriv");
-        Run {
-            code: out.status.code(),
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-        }
+fn finish(mut cmd: Command) -> Run {
+    let out = cmd.output().expect("running scriv");
+    Run {
+        code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     }
 }
 
@@ -357,6 +373,17 @@ fn config_path_prints_one_bare_path() {
     let run = sandbox.run(&["config", "path"]);
     run.ok();
     assert_eq!(run.lines(), vec![sandbox.config_path().to_str().unwrap()]);
+}
+
+/// Every path scriv resolves hangs off the home directory, and `$HOME` is the
+/// only place it is read from. Without it the run has to stop and say so,
+/// rather than carry on against a guess from the passwd file.
+#[test]
+fn no_home_fails_by_name() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run_without_home(&["config", "path"]);
+    run.code(1);
+    assert!(run.stderr.contains("HOME"), "{}", run.stderr);
 }
 
 #[test]
