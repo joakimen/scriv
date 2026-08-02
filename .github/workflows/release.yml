@@ -35,8 +35,8 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      # The target is added explicitly: rust-toolchain.toml's `targets` is
-      # honoured only when the toolchain is first installed from that file.
+      # rust-toolchain.toml pins the channel only. This is the one job that
+      # cross-compiles, so it is the one job that adds a target.
       - name: Install toolchain (pinned by rust-toolchain.toml)
         run: |
           rustup show
