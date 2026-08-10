@@ -53,19 +53,26 @@ repository, a tracked file and a pull request.
 ```sh
 make                # fmt check, clippy, tests, release build
 make hooks          # install the git hooks in prek.toml
+make release        # bump the version and open the release PR
+make release-tag    # after the PR merges: tag main and push the tag
 make demo           # re-record docs/demo.gif
 make demo-fixture   # build the demo sandbox and poke at it by hand
 ```
 
 ## Releasing
 
-Bump `version` in `Cargo.toml`, refresh `Cargo.lock` (`cargo check`), and merge
-that as its own pull request. Then tag the merge commit on `main`:
+Releasing is two commands. The version bump lands through a PR because the
+`main` ruleset requires the `build` and `demo` checks on the branch tip, so it
+cannot be pushed straight to `main`.
 
 ```sh
-git checkout main && git pull
-git tag v0.3.0 && git push origin v0.3.0
+make release        # bump the version, open the PR, arm squash auto-merge
+# ...wait for the PR to merge...
+make release-tag    # tag the merged commit on main and push the tag
 ```
+
+`make release` prompts for a level (patch/minor/major); cargo-release shows the
+resolved version and asks before it changes anything.
 
 The tag is what releases: `.github/workflows/release.yml` builds macOS and Linux
 on x86_64 and arm64, attaches four tarballs with checksums and build
