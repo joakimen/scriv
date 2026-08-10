@@ -7,6 +7,17 @@ license = "MIT"
 repository = "https://github.com/joakimen/scriv"
 exclude = ["docs/", "demo/", ".github/", ".claude/", "prek.toml", "mise.toml"]
 
+# Config for `make release` / `make release-tag` (cargo-release). scriv ships as
+# GitHub release binaries (.github/workflows/release.yml), never to crates.io,
+# so publishing is off as a guardrail. The pushed tag is the whole release
+# trigger, named to match the `v*` that workflow listens for; releasing is
+# restricted to `main`, the branch the tag must sit on.
+[package.metadata.release]
+publish = false
+tag-name = "v{{version}}"
+tag-message = "Release v{{version}}"
+allow-branch = ["main"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
