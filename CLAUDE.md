@@ -31,6 +31,14 @@ parallel pull requests one at a time, largest first: arm, wait on `gh pr view
 `--force-with-lease`, arm the next. Two independently green commits have never
 been compiled together, which is what that sequencing buys.
 
+Cutting a release is the same standing authorisation, once `main` has moved far
+enough to earn one: something in `src/` a user would feel — a command, a flag, a
+fix — landed, green and settled. A run of pull requests that only touched docs,
+`demo/`, CI, `prek.toml` or this file is not one, and the version holds. When it
+is warranted, `make release` opens the bump pull request and arms its
+auto-merge, then `make release-tag` tags `main` once that lands. The level
+follows the change: a new command or flag is a minor while `0.x`, a fix a patch.
+
 Never commit straight to `main`. Stop and say so rather than merging when the
 change could not actually be verified, a test was deleted rather than replaced,
 a real cost is unnamed in the PR body, or the work rewrites pushed history,
