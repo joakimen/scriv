@@ -1,0 +1,37 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for `dist`, which owns releasing end to end: it creates the tag, builds
+# every target, and publishes the GitHub release. `.github/workflows/release.yml`
+# is generated from this file — never edit it by hand, run `dist init` instead.
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+# scriv ships as release binaries only. No installer scripts, no crates.io.
+installers = []
+# Do not add a `macos-13` runner back for x86_64-apple-darwin. GitHub retired
+# that label, and a job asking for it does not fail — it queues until it
+# expires, which held the v0.2.1 release for hours without ever reporting an
+# error. dist picks the runner itself, which is the point.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+]
+# The release is triggered by `make release-run`, not by a pushed tag: dist
+# creates the tag itself once the build is green. A tag a human forgets to push
+# is the failure this buys off — v0.3.1 sat untagged and unreleased on `main`.
+dispatch-releases = true
+# `.tar.gz`, not dist's default `.tar.xz`: the README's install line resolves
+# these assets through mise, and the extension is part of that contract.
+unix-archive = ".tar.gz"
+# Build provenance, as the hand-written workflow attested before it.
+github-attestations = true
+# build.rs decides `scriv --version` by asking git whether HEAD is tagged. In a
+# dist build it is not — dist creates the tag after the binaries exist, from a
+# shallow checkout with no tags — so the release would otherwise name itself a
+# development build. This tells build.rs what it cannot observe.
+# Relative to `.github/workflows/`, and deliberately above it: a bare step list
+# sitting among the workflows is a workflow GitHub cannot parse.
+github-build-setup = "../build-setup.yml"

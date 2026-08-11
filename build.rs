@@ -18,12 +18,20 @@ fn main() {
     for path in [".git/HEAD", ".git/index", ".git/refs"] {
         println!("cargo:rerun-if-changed={path}");
     }
+    println!("cargo:rerun-if-env-changed=SCRIV_RELEASE");
 
     println!("cargo:rustc-env=SCRIV_VERSION={}", version());
 }
 
 fn version() -> String {
     let crate_version = std::env::var("CARGO_PKG_VERSION").expect("cargo sets CARGO_PKG_VERSION");
+
+    // Set by the release workflow. The tag test below cannot stand in for it
+    // there: dist builds the binaries first and creates the tag from them
+    // afterwards, out of a checkout holding no tags at all.
+    if std::env::var_os("SCRIV_RELEASE").is_some() {
+        return crate_version;
+    }
 
     // No repository to ask: a packaged build, which is the release it claims.
     let Some(sha) = git(&["rev-parse", "--short=7", "HEAD"]) else {
