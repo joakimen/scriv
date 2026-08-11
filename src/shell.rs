@@ -78,12 +78,8 @@ function scriv-repo-open --description "Open this repository on GitHub, or selec
     command scriv repo open
 end
 
-# `scriv edit` spawns the editor itself, so these are wrappers for the same
+# `scriv edit` spawns the editor itself, so this is a wrapper for the same
 # reason as the one above.
-function scriv-edit --description "Select a file under \$PWD and open it in \$EDITOR"
-    command scriv edit
-end
-
 function scriv-file-edit --description "Select a tracked file and open it in \$EDITOR"
     command scriv edit --tracked
 end
@@ -133,7 +129,8 @@ function scriv-history-up --description "Search history, or move up within a mul
     scriv-history-select
 end
 
-# What each binding displaces, since only ctrl-o and ctrl-q are free in fish:
+# What each binding displaces, since ctrl-o and ctrl-q are the only keys free in
+# fish and only the first is taken — `scriv edit` has the `fe` function instead:
 # ctrl-g over `cancel` (escape and ctrl-c both still do that), ctrl-r over
 # `history-pager`, and up over `up-line` — which scriv-history-up hands back
 # wherever the selector would be wrong. ctrl-p/ctrl-n are deliberately left as
@@ -149,7 +146,6 @@ end
 # running them as a command would submit what they had just put on the line.
 function scriv_key_bindings --description "Bind scriv selectors to keys"
     bind ctrl-o "scriv-run-as-command scriv-repo-cd"
-    bind ctrl-q "scriv-run-as-command scriv-edit"
     bind f1     "scriv-run-as-command scriv-repo-open"
     bind f3     "scriv-run-as-command scriv-file-edit"
     bind ctrl-g "scriv-run-as-command scriv-branch-checkout"
@@ -175,7 +171,6 @@ mod tests {
         assert!(out.contains("function scriv-run-as-command"));
         assert!(out.contains("function scriv-restore-command-line"));
         assert!(out.contains("function scriv-repo-open"));
-        assert!(out.contains("function scriv-edit"));
         assert!(out.contains("function scriv-file-edit"));
         assert!(out.contains("function fe"));
         assert!(out.contains("function kl"));
@@ -191,7 +186,6 @@ mod tests {
         let out = integration(Shell::Fish, &mut dummy());
         assert!(out.contains("complete -c scriv"));
         assert!(out.contains("bind ctrl-o"));
-        assert!(out.contains("bind ctrl-q"));
         assert!(out.contains("bind f1"));
         assert!(out.contains("bind f3"));
         assert!(out.contains("bind f7"));
@@ -294,7 +288,7 @@ mod tests {
     #[test]
     fn bindings_that_produce_output_run_through_the_command_line() {
         let out = integration(Shell::Fish, &mut dummy());
-        for key in ["ctrl-o", "ctrl-q", "f1", "f3", "ctrl-g", "f7"] {
+        for key in ["ctrl-o", "f1", "f3", "ctrl-g", "f7"] {
             let bind = binding_for(&out, key);
             assert!(
                 bind.contains("scriv-run-as-command"),
@@ -367,6 +361,14 @@ mod tests {
             .map(str::trim)
             .find(|l| l.starts_with(&format!("bind {key} ")))
             .unwrap_or_else(|| panic!("no binding for {key}"))
+    }
+
+    /// `scriv edit` is reached by typing `fe`, so the one other key fish leaves
+    /// free stays free for the user's own binding.
+    #[test]
+    fn fish_leaves_ctrl_q_free() {
+        let out = integration(Shell::Fish, &mut dummy());
+        assert!(!out.contains("bind ctrl-q"), "{out}");
     }
 
     #[test]
