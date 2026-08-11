@@ -5,10 +5,11 @@
 # recorder pinned in a second place is worse than the `brew install vhs` that
 # CLAUDE.md already names.
 #
-# cargo-release drives `make release`, and bumps the version there and nowhere
-# else. dist owns the rest of a release and pins its own version in
-# dist-workspace.toml for CI; this entry is for running `dist init` by hand,
-# and the two must be bumped together.
+# cargo-release bumps the version and does nothing else. It runs in
+# `release-prepare.yml`, not here — mise-action installs the pin below, so the
+# version that cuts a release is the version in this file. dist owns the rest of
+# a release and pins itself in dist-workspace.toml for CI; the entry below is
+# for running `dist init` by hand, and the two must be bumped together.
 
 [tools]
 prek = "0.4.11"

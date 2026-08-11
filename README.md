@@ -53,8 +53,8 @@ pull request.
 ```sh
 make                # fmt check, clippy, tests, release build
 make hooks          # install the git hooks in prek.toml
-make release         # bump the version and open the release PR
-make release-publish # after the PR merges: hand the version to dist
+make release         # dispatch the version bump; opens a PR
+make release-publish # after that PR merges: dispatch the release
 make release-dry-run # build every target, release nothing
 make demo            # re-record docs/demo.gif
 make demo-fixture    # build the demo sandbox and poke at it by hand
@@ -62,24 +62,30 @@ make demo-fixture    # build the demo sandbox and poke at it by hand
 
 ## Releasing
 
-Releasing is two commands. The version bump lands through a PR because the
-`main` ruleset requires the `build` and `demo` checks on the branch tip, so it
-cannot be pushed straight to `main`.
+Releasing runs entirely in GitHub Actions, in two dispatches with a pull request
+between them. Nothing is built, versioned or signed on a maintainer's machine.
 
 ```sh
-make release          # bump the version, open the PR, arm squash auto-merge
-# ...wait for the PR to merge...
-make release-publish  # hand the version on main to dist
+make release LEVEL=minor  # dispatch release-prepare; LEVEL is patch by default
+# ...review and merge the pull request it opens...
+make release-publish      # dispatch release for the version now on main
 ```
 
-`make release` prompts for a level (patch/minor/major); cargo-release shows the
-resolved version and asks before it changes anything.
+Both commands are `gh workflow run`, so the Actions tab does just as well.
 
-Everything after that belongs to [dist](https://axodotdev.github.io/cargo-dist),
-configured in `dist-workspace.toml`: it refuses a version no package carries,
-builds macOS and Linux on x86_64 and arm64, and creates the tag and the release
-together once four tarballs with checksums and build provenance exist. There is
-no tag to push and none to get wrong. `.github/workflows/release.yml` is
-generated — change `dist-workspace.toml` and run `dist init`, never the workflow.
+`release-prepare` bumps the version with cargo-release and opens the pull
+request. That pull request is the review point, and it exists because the `main`
+ruleset requires the `build` and `demo` checks on the branch tip.
+
+`release` belongs to [dist](https://axodotdev.github.io/cargo-dist), configured
+in `dist-workspace.toml`: it refuses a version no package carries, builds macOS
+and Linux on x86_64 and arm64, and creates the tag and the release together once
+four tarballs with checksums and build provenance exist. There is no tag to push
+and none to get wrong. `.github/workflows/release.yml` is generated — change
+`dist-workspace.toml` and run `dist init`, never the workflow.
+
+`release-prepare` needs a `RELEASE_TOKEN` secret with `contents: write` and
+`pull-requests: write`. GitHub schedules no checks on a pull request opened by
+the default `GITHUB_TOKEN`, and the ruleset would never be satisfiable.
 
 `make release-dry-run` runs the same builds and releases nothing.

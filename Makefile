@@ -33,37 +33,21 @@ install:
 hooks:
 	prek install --hook-type pre-commit --hook-type pre-push
 
-# Cut a release, step 1 of 2. Pick a bump level; cargo-release bumps the version
-# in Cargo.toml and Cargo.lock, then this opens a PR for the bump and arms squash
-# auto-merge. The bump lands through a PR rather than straight onto main because
-# the `main` ruleset requires the `build` and `demo` checks on the branch tip and
-# grants no bypass. cargo-release prints the resolved version and asks before it
-# changes anything. Run `make release-publish` once the PR has merged.
+# Releasing, step 1 of 2: dispatch the bump. Both steps are `gh workflow run`
+# against a workflow rather than work done here, so the machine that cuts a
+# release holds no credentials, no toolchain and no opinion — the same release
+# comes out whoever runs it. `LEVEL` is patch unless said otherwise.
+LEVEL ?= patch
 .PHONY: release
 release:
-	@test "$$(git branch --show-current)" = main || { echo "release: run from main" >&2; exit 1; }
-	@git pull --ff-only
-	@printf 'Select release level:\n  1) patch\n  2) minor\n  3) major\n#? '; \
-	read level; \
-	case "$$level" in \
-	  1) level=patch ;; \
-	  2) level=minor ;; \
-	  3) level=major ;; \
-	  *) echo "release: invalid selection '$$level'" >&2; exit 1 ;; \
-	esac; \
-	cargo release version "$$level" --execute; \
-	ver=$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); \
-	git switch -c "release-v$$ver"; \
-	git commit -am "Release v$$ver"; \
-	git push -u origin "release-v$$ver"; \
-	gh pr create --title "Release v$$ver" --body "Bump version to $$ver for release."; \
-	gh pr merge --squash --auto
+	@gh workflow run release-prepare.yml -f level=$(LEVEL)
+	@echo "Bump to $(LEVEL) dispatched. It opens a pull request; merge it, then: make release-publish"
 
-# Cut a release, step 2 of 2. Run once the `make release` PR has merged. Hands
-# the version on `main` to dist, which refuses a tag no package carries, builds
-# every target, then creates the tag and the release from binaries that already
-# exist. Nothing local pushes a tag — a tag nobody remembered to push is what
-# left v0.3.1 sitting on `main` unreleased.
+# Releasing, step 2 of 2. Run once the bump pull request has merged. Hands the
+# version on `main` to dist, which refuses a tag no package carries, builds every
+# target, then creates the tag and the release from binaries that already exist.
+# Nothing pushes a tag — a tag nobody remembered to push is what left v0.3.1
+# sitting on `main` unreleased.
 .PHONY: release-publish
 release-publish:
 	@git switch main
