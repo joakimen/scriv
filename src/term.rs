@@ -231,6 +231,11 @@ impl Drop for HangupWatch {
 /// Stands in for a line break in text folded onto one row.
 pub const NEWLINE_GLYPH: &str = "⏎";
 
+/// [`NEWLINE_GLYPH`] with the spaces that set it off, written out rather than
+/// built per call: [`one_row`] runs once per row of every listing and again on
+/// every selector reload. A test holds it to the glyph above.
+const NEWLINE_JOINER: &str = " ⏎ ";
+
 /// Text from outside scriv, made safe to draw on one row of a terminal.
 ///
 /// Control characters are dropped: a terminal *acts on* what it is sent, so a
@@ -239,11 +244,18 @@ pub const NEWLINE_GLYPH: &str = "⏎";
 /// never before. Newlines fold to [`NEWLINE_GLYPH`] so one entry stays one row,
 /// and tabs become a space so columns stay aligned.
 pub fn one_row(text: &str) -> String {
-    let joiner = format!(" {NEWLINE_GLYPH} ");
-    text.lines()
-        .map(drop_controls)
-        .collect::<Vec<_>>()
-        .join(&joiner)
+    // Folded in place rather than collected and joined: all but a handful of
+    // rows are a single line, and that case now allocates once.
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else {
+        return String::new();
+    };
+    let mut out = drop_controls(first);
+    for line in lines {
+        out.push_str(NEWLINE_JOINER);
+        out.push_str(&drop_controls(line));
+    }
+    out
 }
 
 /// [`one_row`] for text that is allowed to keep its line breaks — a preview
@@ -456,6 +468,21 @@ mod tests {
     #[test]
     fn a_tab_becomes_one_space() {
         assert_eq!(one_row("a\tb"), "a b");
+    }
+
+    /// The joiner is written out for speed, so nothing but this holds it to the
+    /// glyph it is supposed to be showing.
+    #[test]
+    fn the_written_out_joiner_is_the_glyph_it_claims() {
+        assert_eq!(super::NEWLINE_JOINER, format!(" {NEWLINE_GLYPH} "));
+    }
+
+    #[test]
+    fn several_line_breaks_all_fold() {
+        assert_eq!(
+            one_row("a\nb\nc"),
+            format!("a {NEWLINE_GLYPH} b {NEWLINE_GLYPH} c")
+        );
     }
 
     #[test]

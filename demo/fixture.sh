@@ -13,6 +13,14 @@ case $FIX in
     *) FIX=$PWD/$FIX ;;
 esac
 
+# The next thing this does is `rm -rf "$FIX"`, from a path a caller supplied.
+# A depth of at least three keeps a typo that resolves to `/`, `/Users` or a
+# home directory from reaching it.
+case $FIX in
+    */*/*/*) ;;
+    *) echo "fixture: refusing to wipe '$FIX' — too close to the root" >&2; exit 1 ;;
+esac
+
 SCRIV_BIN_DIR=${SCRIV_BIN_DIR:-$PWD/target/release}
 
 rm -rf "$FIX"

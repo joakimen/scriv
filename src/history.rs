@@ -133,9 +133,14 @@ pub const STAMP_WIDTH: usize = "2026-07-30 13:57".len();
 pub fn stamp(when: Option<i64>, offset: time::UtcOffset) -> String {
     match when.and_then(|w| local(w, offset)) {
         Some(dt) => render(&dt),
-        None => " ".repeat(STAMP_WIDTH),
+        None => BLANK_STAMP.to_string(),
     }
 }
+
+/// A [`stamp`]-shaped blank, written out rather than built per row: a history
+/// with no timestamps is one allocation and a loop per entry otherwise. Held to
+/// [`STAMP_WIDTH`] by a test.
+const BLANK_STAMP: &str = "                ";
 
 /// The one place the layout of a rendered timestamp is written down.
 fn render(dt: &time::OffsetDateTime) -> String {

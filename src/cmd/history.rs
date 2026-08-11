@@ -46,12 +46,21 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
 /// shown without being searched — matched, a query of `3` would rank thousands
 /// of timestamps first. No row carries a preview, so the selector keeps the
 /// full width for the commands.
+/// Almost every command is one line with nothing in it to strip, and folding
+/// leaves it identical. Those rows keep one copy of the text rather than a
+/// label and a value that happen to be equal — this runs over the whole history
+/// on every ctrl-r.
 fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<SelectItem> {
     entries
         .iter()
         .map(|entry| {
-            SelectItem::new(history::one_line(&entry.cmd), entry.cmd.clone())
-                .prefix(format!("{}  ", history::stamp(entry.when, offset)))
+            let folded = history::one_line(&entry.cmd);
+            let item = if folded == entry.cmd {
+                SelectItem::plain(folded)
+            } else {
+                SelectItem::new(folded, entry.cmd.clone())
+            };
+            item.prefix(format!("{}  ", history::stamp(entry.when, offset)))
         })
         .collect()
 }
@@ -149,6 +158,15 @@ mod tests {
         );
         assert_eq!(dated.len(), undated.len());
         assert!(undated.trim().is_empty(), "{undated:?}");
+    }
+
+    /// The one-copy path must still return the command, whichever branch of
+    /// `items` built the row.
+    #[test]
+    fn a_folded_row_and_an_untouched_one_both_return_the_command() {
+        let items = items(&entries(), utc());
+        assert_eq!(items[0].value(), "git status");
+        assert_eq!(items[1].value(), "git commit -m 'a\nb'");
     }
 
     #[test]
