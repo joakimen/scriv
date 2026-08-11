@@ -260,8 +260,12 @@ fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Res
     let reload = {
         let (known, failure, state) = (Arc::clone(&known), Arc::clone(&failure), state.to_string());
         Box::new(move || {
+            // Asked for outside the lock: `gh` is a network round trip, and
+            // holding the list for it would make a second ctrl-r wait on the
+            // first rather than on GitHub.
+            let fresh = gh::list(&state, limit);
             let mut known = known.lock().expect("pull request list poisoned");
-            match gh::list(&state, limit) {
+            match fresh {
                 Ok(fresh) if !fresh.is_empty() => *known = fresh,
                 // An empty answer is not worth blanking the list for: the
                 // pull request you were looking at was there a moment ago.

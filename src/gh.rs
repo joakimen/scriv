@@ -687,10 +687,18 @@ pub fn view_repo_web(dir: &Path) -> Result<()> {
 /// owners to suggest on a machine with nothing cloned yet. Failure is returned
 /// rather than swallowed, since a missing `gh` is worth saying.
 pub fn owners() -> Result<Vec<String>> {
+    // Two independent round trips to GitHub, and both stand between the user
+    // and the owner selector. Run together they cost the slower one rather than
+    // the sum.
+    let (login, orgs) = std::thread::scope(|scope| {
+        let orgs = scope.spawn(|| capture(&["api", "user/orgs", "--jq", ".[].login"]));
+        let login = capture(&["api", "user", "--jq", ".login"]);
+        (login, orgs.join())
+    });
+
     let mut out = Vec::new();
-    let login = capture(&["api", "user", "--jq", ".login"])?;
-    out.extend(login.split_whitespace().map(str::to_string));
-    let orgs = capture(&["api", "user/orgs", "--jq", ".[].login"])?;
+    out.extend(login?.split_whitespace().map(str::to_string));
+    let orgs = orgs.unwrap_or_else(|e| std::panic::resume_unwind(e))?;
     out.extend(orgs.split_whitespace().map(str::to_string));
     Ok(out)
 }
