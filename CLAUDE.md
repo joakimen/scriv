@@ -19,7 +19,9 @@ agent a commit on `main`, and `prek.toml` refuses git the same, plus hygiene and
 
 Opening and merging pull requests here is standing authorisation, not something
 to confirm each time. The bar: `make` green, every commit green alone, the three
-docs below accounted for in the PR body. Then `gh pr merge --squash --auto`.
+docs below accounted for in the PR body. Then `gh pr merge --squash --auto`. Do
+not open the pull request in a browser — it lands on its own, and the link in
+the reply is enough for anyone who wants to look.
 
 `--auto` waits only on *required* checks, so it is load-bearing that `build` and
 `demo` are required and `strict` on `main`. It does not delete the local branch
