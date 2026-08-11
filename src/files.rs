@@ -60,10 +60,13 @@ pub fn write_lines(path: &Path, lines: &[String]) -> Result<()> {
         return Err(e);
     }
 
-    fs::rename(&tmp, path).with_context(|| {
+    // Cleanup before the context, not inside the closure that builds it: an
+    // error formatter that also deletes a file runs where nobody looks for it.
+    if let Err(e) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
-        format!("replacing known-files list {}", path.display())
-    })
+        return Err(e).with_context(|| format!("replacing known-files list {}", path.display()));
+    }
+    Ok(())
 }
 
 fn temp_name() -> String {

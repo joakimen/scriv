@@ -37,6 +37,8 @@ scriv config check         # confirm it all resolves
 | `scriv proc` | `ls` `sel` `kill` |
 | `scriv history` | `ls` `sel` |
 | `scriv edit` | `file` `dir` — found below `$PWD`, opened in `$EDITOR` |
+| `scriv config` | `init` `print` `path` `check` |
+| `scriv init` | `fish` and every other shell — see Setup |
 
 `ls` prints the set, `sel` fuzzy-selects one line of it, and the other verbs
 act. Every `sel` composes: `cd (scriv repo sel)`. Each group takes a one-letter
