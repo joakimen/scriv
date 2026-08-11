@@ -14,14 +14,12 @@ use ignore::{WalkBuilder, WalkState};
 /// Directory names never worth walking into, matching the `--walker-skip` list
 /// this replaced. `.gitignore` covers most build output; these are the
 /// directories that are commonly *not* ignored yet never worth offering.
-const WALKER_SKIP: &[&str] = &[
-    ".git",
-    "node_modules",
-    ".clj-kondo",
-    ".cpcache",
-    ".venv",
-    "lib",
-];
+///
+/// Every name here must be one that never holds source. `lib` was on this list
+/// and is not such a name — it is where Clojure, Elixir, Ruby and much of npm
+/// keep theirs, and skipping it left `scriv edit` silently unable to open half
+/// the files in those repositories.
+const WALKER_SKIP: &[&str] = &[".git", "node_modules", ".clj-kondo", ".cpcache", ".venv"];
 
 /// How many discovered paths may sit between the walk and whatever is reading
 /// it. Bounded so a full queue blocks the walker threads, which is what keeps
@@ -184,6 +182,21 @@ mod tests {
         fs::create_dir_all(dir.path().join("inner")).unwrap();
         let got: Vec<String> = dirs(dir.path()).collect();
         assert_eq!(got, vec!["inner".to_string()]);
+    }
+
+    /// A skip list is invisible when it is wrong: nothing errors, the files
+    /// simply are not there to open. `lib` holds source in several ecosystems.
+    #[test]
+    fn a_directory_that_holds_source_is_walked() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("lib/billing")).unwrap();
+        fs::write(root.join("lib/billing/core.clj"), "").unwrap();
+
+        assert!(
+            list(root).contains(&"lib/billing/core.clj".to_string()),
+            "a source directory is being skipped"
+        );
     }
 
     #[test]

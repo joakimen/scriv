@@ -19,13 +19,21 @@ pub fn expand_home_dir(dir: &str, home: &Path) -> PathBuf {
     }
 }
 
-/// Expand a leading `~` to `home`, operating on strings. A path that does not
-/// begin with `~` is returned unchanged.
+/// Expand a leading `~` to `home`, operating on strings. The string half of
+/// [`expand_home_dir`], and expands exactly what it does: a bare `~`, and a
+/// `~/` prefix.
+///
+/// `~user` is left alone. It names *another* account's home, which only the
+/// shell and the passwd database can resolve, and rewriting it against this
+/// user's home would silently point at a path nobody asked for.
 pub fn expand_tilde(path: &str, home: &str) -> String {
-    if !path.starts_with('~') {
-        return path.to_string();
+    if path == "~" {
+        return home.to_string();
     }
-    format!("{}{}", home, &path[1..])
+    match path.strip_prefix("~/") {
+        Some(rest) => format!("{home}/{rest}"),
+        None => path.to_string(),
+    }
 }
 
 /// Decide which of `$PWD` and the real working directory to work from.
@@ -220,6 +228,28 @@ mod tests {
     #[test]
     fn expand_tilde_only_rewrites_a_leading_tilde() {
         assert_eq!(expand_tilde("/etc/~/passwd", HOME), "/etc/~/passwd");
+    }
+
+    /// `~bob` is bob's home, not this user's with `bob` glued on the end.
+    /// Rewriting it produced a path that exists for nobody.
+    #[test]
+    fn expand_tilde_leaves_another_users_home_alone() {
+        assert_eq!(expand_tilde("~bob/notes.md", HOME), "~bob/notes.md");
+        assert_eq!(expand_tilde("~bob", HOME), "~bob");
+    }
+
+    /// The two spellings of the same rule must not drift apart.
+    #[test]
+    fn expand_tilde_agrees_with_expand_home_dir() {
+        for input in ["~", "~/dev/repo", "~bob/notes", "/etc/hosts", "rel/path"] {
+            assert_eq!(
+                expand_tilde(input, HOME),
+                expand_home_dir(input, Path::new(HOME))
+                    .to_string_lossy()
+                    .into_owned(),
+                "{input}"
+            );
+        }
     }
 
     #[test]
