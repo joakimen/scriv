@@ -16,7 +16,8 @@ Provides fuzzy-completion for various local and remote resources.
 mise use -g github:joakimen/scriv    # or: cargo install --path .
 ```
 
-macOS and Linux. Needs `git`; `gh` for pull requests and `repo clone`/`open`.
+macOS on Apple Silicon. Needs `git`; `gh` for pull requests and
+`repo clone`/`open`.
 
 ## Setup
 
@@ -80,9 +81,9 @@ request. That pull request is the review point, and it exists because the `main`
 ruleset requires the `build` and `demo` checks on the branch tip.
 
 `release` belongs to [dist](https://axodotdev.github.io/cargo-dist), configured
-in `dist-workspace.toml`: it refuses a version no package carries, builds macOS
-and Linux on x86_64 and arm64, and creates the tag and the release together once
-four tarballs with checksums and build provenance exist. There is no tag to push
+in `dist-workspace.toml`: it refuses a version no package carries, builds
+`aarch64-apple-darwin`, and creates the tag and the release together once the
+tarball, its checksum and its build provenance exist. There is no tag to push
 and none to get wrong. `.github/workflows/release.yml` is generated — change
 `dist-workspace.toml` and run `dist init`, never the workflow.
 

@@ -9,8 +9,11 @@ permissions:
   contents: read
 
 jobs:
+  # `macos-latest` is Apple Silicon, which is the only thing scriv builds for:
+  # `src/proc.rs` refuses to compile anywhere else. A cheaper Linux runner is
+  # not an option here, it is a build failure.
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install toolchain (pinned by rust-toolchain.toml)
@@ -22,28 +25,18 @@ jobs:
   # Plays the tape only. The GIF is re-recorded by hand (`make demo`), since the
   # render depends on the fonts installed on the machine.
   demo:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install toolchain (pinned by rust-toolchain.toml)
         run: rustup show
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-      # Not charmbracelet/vhs-action: it hardcodes a search for ffmpeg-n5.1
-      # assets in BtbN/FFmpeg-Builds, which upstream has moved past.
+      # Homebrew, where the Linux job downloaded three release archives by hand:
+      # the formula pulls ttyd and ffmpeg itself, and this is the same install
+      # CLAUDE.md tells a maintainer to run before `make demo`.
       - name: Install VHS and its recorder dependencies
-        env:
-          VHS_VERSION: 0.11.0
-          TTYD_VERSION: 1.7.7
         run: |
           set -eux
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
-          sudo curl -fsSL -o /usr/local/bin/ttyd \
-            "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
-          sudo chmod +x /usr/local/bin/ttyd
-          curl -fsSL \
-            "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_Linux_x86_64.tar.gz" \
-            | tar -xz -C /tmp
-          sudo install "/tmp/vhs_${VHS_VERSION}_Linux_x86_64/vhs" /usr/local/bin/vhs
+          brew install vhs
           vhs --version
       - run: make demo-check
