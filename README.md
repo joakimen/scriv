@@ -42,9 +42,9 @@ scriv config check         # confirm it all resolves
 act. Every `sel` composes: `cd (scriv repo sel)`. Each group takes a one-letter
 abbreviation — `r`, `f`, `b`, `e`, `h`, `c`, and `pc` for `proc`.
 
-In fish, `ctrl-r` searches history, `ctrl-o` jumps to a repository, `ctrl-g`
-checks out a branch and `ctrl-q` edits a file; `f1`, `f3` and `f7` open a
-repository, a tracked file and a pull request.
+In fish, `ctrl-r` searches history, `ctrl-o` jumps to a repository and `ctrl-g`
+checks out a branch; `f1`, `f3` and `f7` open a repository, a tracked file and a
+pull request.
 
 `scriv --help` covers the flags, the generated `config.toml` the settings.
 
