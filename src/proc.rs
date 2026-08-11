@@ -216,29 +216,31 @@ pub fn preview(p: &Process) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signal(&'static str);
 
+/// scriv builds for Apple Silicon and refuses anywhere else, and this table is
+/// why the refusal is a compile error rather than a line in the README. Only
+/// the first five signals below are numbered by POSIX. The rest are Darwin's,
+/// and Linux disagrees in the worst possible way: 19 is `CONT` here and `STOP`
+/// there, so the same table on the wrong platform does not fail — it resumes
+/// the process the user meant to suspend.
+#[cfg(not(target_vendor = "apple"))]
+compile_error!(
+    "scriv supports macOS on Apple Silicon only: its signal numbers are Darwin's, \
+     and elsewhere they name a different signal than the one asked for"
+);
+
 /// The signals worth offering, by the names `kill -l` prints: the ones that end
 /// or suspend a process. Anything else is a job for `kill`.
-///
-/// The numbers are the *host's*. Only the first five are fixed by POSIX; the
-/// rest are numbered differently on Linux and on the BSDs macOS descends from,
-/// and the two disagree in the worst possible way — Linux 19 is `STOP` where
-/// macOS 19 is `CONT`. A table hardcoded to one platform does not fail on the
-/// other, it sends the opposite signal.
 const SIGNALS: [(&str, i32); 9] = [
     ("HUP", 1),
     ("INT", 2),
     ("QUIT", 3),
     ("KILL", 9),
     ("TERM", 15),
-    ("USR1", if BSD_NUMBERING { 30 } else { 10 }),
-    ("USR2", if BSD_NUMBERING { 31 } else { 12 }),
-    ("STOP", if BSD_NUMBERING { 17 } else { 19 }),
-    ("CONT", if BSD_NUMBERING { 19 } else { 18 }),
+    ("USR1", 30),
+    ("USR2", 31),
+    ("STOP", 17),
+    ("CONT", 19),
 ];
-
-/// Whether this target numbers signals as the BSDs do. Apple's platforms are
-/// the ones scriv builds for that do; everything else it builds for is Linux.
-const BSD_NUMBERING: bool = cfg!(target_vendor = "apple");
 
 impl Signal {
     /// The default: ask the process to stop and let it clean up. `--force` is
@@ -506,30 +508,27 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
         }
     }
 
-    /// The numbers are the host's, not one platform's written down twice. A
-    /// table fixed to the wrong platform is not a parse error: `-s 19` means
-    /// `STOP` on Linux and `CONT` on macOS, so the process resumes where it was
-    /// meant to stop.
+    /// Darwin's numbers, which the compile guard above is what makes safe to
+    /// write down flat. Getting these wrong is not a parse error: `-s 19` is
+    /// `CONT` here and `STOP` on Linux, so a process meant to be suspended
+    /// carries on instead.
     #[test]
-    fn a_signal_number_means_what_this_platform_means_by_it() {
+    fn the_signal_numbers_are_darwins() {
         let number = |name: &str| SIGNALS.iter().find(|(n, _)| *n == name).unwrap().1;
-        let got = (
-            number("USR1"),
-            number("USR2"),
-            number("STOP"),
-            number("CONT"),
+        assert_eq!(
+            (
+                number("USR1"),
+                number("USR2"),
+                number("STOP"),
+                number("CONT"),
+            ),
+            (30, 31, 17, 19),
         );
-        if cfg!(target_vendor = "apple") {
-            assert_eq!(got, (30, 31, 17, 19), "not the BSD numbering");
-        } else {
-            assert_eq!(got, (10, 12, 19, 18), "not the Linux numbering");
-        }
     }
 
-    /// The POSIX-fixed five are the same everywhere, and must not be swept into
-    /// the platform split above.
+    /// The POSIX-fixed five, which are the same wherever they are read.
     #[test]
-    fn the_portable_signals_are_numbered_the_same_everywhere() {
+    fn the_portable_signals_are_numbered_as_posix_says() {
         for (name, number) in [
             ("HUP", 1),
             ("INT", 2),

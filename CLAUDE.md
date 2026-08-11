@@ -73,6 +73,19 @@ touches CI secrets, or publishes the crate.
    anything changed what a selector draws. CI only plays the tape, so a stale
    GIF is invisible. When nothing changed on screen, say so in the PR.
 
+## One platform
+
+scriv builds for `aarch64-apple-darwin` and nothing else, and `src/proc.rs`
+fails the build anywhere else rather than letting it through. That guard is not
+tidiness: signal numbers past the POSIX five differ between Darwin and Linux,
+19 being `CONT` on one and `STOP` on the other, so a binary for the wrong
+platform suspends nothing and resumes what it should have stopped.
+
+Both CI jobs therefore run on `macos-latest`. A step that compiles the crate
+cannot be moved to a Linux runner to save time, and widening the target list is
+not a line in `dist-workspace.toml` — it is an audit of everything that assumed
+Darwin, the signal table first.
+
 ## Rules for code that does not exist yet
 
 Rationale for code that does is a doc comment at the site — `ScratchRow`,

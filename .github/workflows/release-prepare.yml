@@ -31,6 +31,10 @@ jobs:
     # A fork dispatching this would open a pull request against its own copy
     # with credentials it does not have.
     if: github.repository == 'joakimen/scriv'
+    # Linux, though scriv only builds for Apple Silicon: cargo-release edits
+    # manifests and never compiles the crate. Anything added here that does
+    # compile it belongs on `macos-latest` instead, or it will hit the target
+    # guard in `src/proc.rs`.
     runs-on: ubuntu-latest
     steps:
       # RELEASE_TOKEN, not GITHUB_TOKEN: GitHub runs no workflows on a pull
