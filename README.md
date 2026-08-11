@@ -53,10 +53,11 @@ pull request.
 ```sh
 make                # fmt check, clippy, tests, release build
 make hooks          # install the git hooks in prek.toml
-make release        # bump the version and open the release PR
-make release-tag    # after the PR merges: tag main and push the tag
-make demo           # re-record docs/demo.gif
-make demo-fixture   # build the demo sandbox and poke at it by hand
+make release         # bump the version and open the release PR
+make release-publish # after the PR merges: hand the version to dist
+make release-dry-run # build every target, release nothing
+make demo            # re-record docs/demo.gif
+make demo-fixture    # build the demo sandbox and poke at it by hand
 ```
 
 ## Releasing
@@ -66,15 +67,19 @@ Releasing is two commands. The version bump lands through a PR because the
 cannot be pushed straight to `main`.
 
 ```sh
-make release        # bump the version, open the PR, arm squash auto-merge
+make release          # bump the version, open the PR, arm squash auto-merge
 # ...wait for the PR to merge...
-make release-tag    # tag the merged commit on main and push the tag
+make release-publish  # hand the version on main to dist
 ```
 
 `make release` prompts for a level (patch/minor/major); cargo-release shows the
 resolved version and asks before it changes anything.
 
-The tag is what releases: `.github/workflows/release.yml` builds macOS and Linux
-on x86_64 and arm64, attaches four tarballs with checksums and build
-provenance, and writes the notes from the commits. Releases are immutable, so a
-tag pushed at the wrong commit needs a new version rather than a fix.
+Everything after that belongs to [dist](https://axodotdev.github.io/cargo-dist),
+configured in `dist-workspace.toml`: it refuses a version no package carries,
+builds macOS and Linux on x86_64 and arm64, and creates the tag and the release
+together once four tarballs with checksums and build provenance exist. There is
+no tag to push and none to get wrong. `.github/workflows/release.yml` is
+generated — change `dist-workspace.toml` and run `dist init`, never the workflow.
+
+`make release-dry-run` runs the same builds and releases nothing.

@@ -2,7 +2,7 @@
 channel = "1.96.1"
 components = ["rustfmt", "clippy"]
 
-# No `targets`. rustup honours that list only when it first installs the
-# toolchain, which is why `release.yml` runs `rustup target add` of its own —
-# so the four cross-targets listed here bought nothing, and cost every job that
-# is not the release build a standard library per target it never links.
+# No `targets`. Nothing cross-compiles: dist gives each release target a runner
+# of its own architecture, so every build wants the host standard library and
+# no other. Listing the four here would cost every job a standard library per
+# target it never links.

@@ -5,9 +5,12 @@
 # recorder pinned in a second place is worse than the `brew install vhs` that
 # CLAUDE.md already names.
 #
-# cargo-release drives `make release` and `make release-tag`: the version bump
-# and the tag.
+# cargo-release drives `make release`, and bumps the version there and nowhere
+# else. dist owns the rest of a release and pins its own version in
+# dist-workspace.toml for CI; this entry is for running `dist init` by hand,
+# and the two must be bumped together.
 
 [tools]
 prek = "0.4.11"
 cargo-release = "1.1.2"
+cargo-dist = "0.32.0"

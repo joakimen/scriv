@@ -38,7 +38,7 @@ hooks:
 # auto-merge. The bump lands through a PR rather than straight onto main because
 # the `main` ruleset requires the `build` and `demo` checks on the branch tip and
 # grants no bypass. cargo-release prints the resolved version and asks before it
-# changes anything. Run `make release-tag` once the PR has merged.
+# changes anything. Run `make release-publish` once the PR has merged.
 .PHONY: release
 release:
 	@test "$$(git branch --show-current)" = main || { echo "release: run from main" >&2; exit 1; }
@@ -59,17 +59,26 @@ release:
 	gh pr create --title "Release v$$ver" --body "Bump version to $$ver for release."; \
 	gh pr merge --squash --auto
 
-# Cut a release, step 2 of 2. Run once the `make release` PR has merged. Tags the
-# squash commit on `main` (name and message from [package.metadata.release]) and
-# pushes the tag on its own — the tag is a `refs/tags` ref the branch ruleset
-# does not govern, and it is what release.yml builds and publishes from.
-.PHONY: release-tag
-release-tag:
+# Cut a release, step 2 of 2. Run once the `make release` PR has merged. Hands
+# the version on `main` to dist, which refuses a tag no package carries, builds
+# every target, then creates the tag and the release from binaries that already
+# exist. Nothing local pushes a tag — a tag nobody remembered to push is what
+# left v0.3.1 sitting on `main` unreleased.
+.PHONY: release-publish
+release-publish:
 	@git switch main
 	@git pull --ff-only
-	@cargo release tag --execute
 	@ver=$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); \
-	SKIP=check git push origin "v$$ver"
+	gh workflow run release.yml -f tag="v$$ver"; \
+	echo "Release v$$ver dispatched. Watch it with: gh run watch"
+
+# Exercise the release pipeline without releasing. dist builds every target and
+# throws the artifacts away, leaving no tag and no release behind. The `dry-run`
+# string is the workflow's own sentinel, not a flag of ours.
+.PHONY: release-dry-run
+release-dry-run:
+	@gh workflow run release.yml -f tag=dry-run
+	@echo "Dry run dispatched. Watch it with: gh run watch"
 
 # Re-record docs/demo.gif. Local only — the render depends on installed fonts.
 # Requires vhs (brew install vhs).
