@@ -36,28 +36,19 @@ jobs:
     # compile it belongs on `macos-latest` instead, or it will hit the target
     # guard in `src/proc.rs`.
     runs-on: ubuntu-latest
+    # `contents` pushes the bump branch, `pull-requests` opens the pull request
+    # and `actions` dispatches the checks it needs — see the last step.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     steps:
-      # RELEASE_TOKEN, not GITHUB_TOKEN: GitHub runs no workflows on a pull
-      # request opened by GITHUB_TOKEN, and the `main` ruleset requires the
-      # `build` and `demo` checks on the branch tip. The bump would arrive
-      # unmergeable, with no check ever scheduled to satisfy it.
-      - name: Check the release token is present
-        env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-        run: |
-          test -n "$RELEASE_TOKEN" || {
-            echo "RELEASE_TOKEN is unset. It needs contents:write and" >&2
-            echo "pull-requests:write on this repository." >&2
-            exit 1
-          }
-
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: main
           # cargo-release refuses to run against a shallow history, and the
           # push below needs a real branch to build on.
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN }}
 
       # mise.toml pins cargo-release. Installing it any other way would put a
       # second version of the tool in the release path.
@@ -71,7 +62,7 @@ jobs:
 
       - name: Open the release pull request
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -85,4 +76,12 @@ jobs:
             --body "Bump the version to $ver.
 
           Merge this, then dispatch \`release\` with the tag \`v$ver\`."
+          # The `main` ruleset requires `build` and `demo` on the branch tip,
+          # and nothing has scheduled them: GitHub answers an event raised with
+          # GITHUB_TOKEN either with no workflow run at all or, for the
+          # `pull_request` above, with one parked until a human approves it.
+          # `workflow_dispatch` is the exception it makes, so ask for the run
+          # outright. It reports both checks against the tip, which is what the
+          # ruleset reads.
+          gh workflow run ci.yml --ref "release-v$ver"
           echo "::notice::Opened the release pull request for v$ver"
