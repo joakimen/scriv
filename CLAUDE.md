@@ -111,14 +111,16 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   exits with the child's status rather than printing a vaguer line over git's.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
   `SCRIV_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
-- **`repo`/`file`/`branch`/`pr`/`history` are registries; `edit` is not.** A
+- **`repo`/`file`/`branch`/`worktree`/`pr`/`history` are registries; `edit` is
+  not.** A
   registry is a set, with `ls`/`sel` and verbs over it. `edit file`/`edit dir`
   name what is looked for below `$PWD`, so neither has an `ls` — do not add
   one, and do not file ambient-directory work under a noun group. `repo open`
   is the sole exception, and only to skip a question it can already answer.
 - **A verb is abbreviated in its own name, not an alias beside it.** `ls`, `sel`
   and `rm` get no long form (`list`, `co` and `switch` predate the rule). Groups
-  take one letter — `r`, `f`, `b`, `e`, `h`, `c` — and `pc`, as `p` meets `pr`.
+  take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c` — and `pc`, as `p` meets
+  `pr`.
 - **Key bindings prefer `ctrl-<letter>` and never `alt-`**, which fish mostly
   presets. Displacing a fish preset is deliberate and named above
   `scriv_key_bindings`. Function keys are the fallback, `f4`/`f5` excepted.

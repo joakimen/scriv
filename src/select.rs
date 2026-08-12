@@ -71,6 +71,22 @@ pub fn dir_preview(path: &str) -> Preview {
     Preview::Command(format!("ls -Ap -- {path} 2>&1 | head -n 200"))
 }
 
+/// The preview for a git checkout — a repository or one of its worktrees: the
+/// current branch and working-tree state, then recent commits. Both commands
+/// are local and take tens of milliseconds.
+///
+/// `--no-optional-locks` matters here: a plain `git status` rewrites the index,
+/// so scrolling past a checkout would contend for its index lock.
+pub fn checkout_preview(path: &str) -> Preview {
+    let checkout = quote(path);
+    Preview::Command(format!(
+        "git --no-optional-locks -C {checkout} -c color.status=always status --short --branch \
+         | head -n 10; \
+         git --no-optional-locks -C {checkout} log --color=always --max-count=20 --date=relative \
+         --format='%C(auto)%h%C(reset)  %C(blue)%an%C(reset)  %C(green)%ad%C(reset)  %s'"
+    ))
+}
+
 /// The command behind [`Preview::File`] and [`file_preview`].
 fn file_preview_cmd(path: &str) -> String {
     let path = quote(path);

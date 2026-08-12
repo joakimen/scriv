@@ -161,7 +161,7 @@ fn help_lists_every_top_level_command() {
     let run = sandbox.run(&["--help"]);
     run.ok();
     for command in [
-        "repo", "file", "edit", "branch", "pr", "proc", "history", "config", "init",
+        "repo", "file", "edit", "branch", "worktree", "pr", "proc", "history", "config", "init",
     ] {
         assert!(
             run.stdout.contains(command),
@@ -217,7 +217,7 @@ fn help_names_the_aliases_the_binary_accepts() {
     let sandbox = Sandbox::new();
     let top = sandbox.run(&["--help"]);
     top.ok();
-    for alias in ["r", "f", "e", "b", "pc", "h", "c"] {
+    for alias in ["r", "f", "e", "b", "w", "pc", "h", "c"] {
         assert!(
             top.stdout.contains(&format!("[aliases: {alias}]")),
             "`{alias}` is accepted but unmentioned:\n{}",
@@ -256,6 +256,7 @@ fn the_documented_abbreviations_resolve() {
         &["r", "--help"][..],
         &["e", "--help"][..],
         &["b", "--help"][..],
+        &["w", "--help"][..],
         &["f", "--help"][..],
         &["h", "--help"][..],
         &["pc", "--help"][..],
@@ -290,7 +291,9 @@ fn edit_dir_opens_the_directories_it_is_given() {
 #[test]
 fn every_registry_exposes_sel() {
     let sandbox = Sandbox::new();
-    for group in ["repo", "file", "branch", "pr", "proc", "history"] {
+    for group in [
+        "repo", "file", "branch", "worktree", "pr", "proc", "history",
+    ] {
         sandbox.run(&[group, "sel", "--help"]).ok();
     }
 }
@@ -574,6 +577,118 @@ fn repo_ls_reports_a_missing_root() {
     let run = sandbox.run(&["repo", "ls"]);
     run.code(1);
     assert!(run.stderr.contains("not/here"), "{}", run.stderr);
+}
+
+// --- worktrees --------------------------------------------------------------
+
+/// A real repository with one linked worktree, since `scriv worktree` reads
+/// git rather than the filesystem.
+///
+/// `git worktree add` needs a commit to point the new tree at, and the sandbox
+/// has no git identity to make one with — hence the author and committer in
+/// the environment, and the two `GIT_CONFIG_*` variables that keep the machine
+/// running the test out of the result.
+fn mk_worktree_repo(root: &Path) -> (PathBuf, PathBuf) {
+    let main = root.join("scriv");
+    std::fs::create_dir_all(&main).unwrap();
+
+    for args in [
+        &["init", "-b", "main"][..],
+        &["commit", "--allow-empty", "-m", "init"][..],
+        &["worktree", "add", "-b", "feat", "../feat"][..],
+    ] {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&main)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", root)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "scriv tests")
+            .env("GIT_AUTHOR_EMAIL", "tests@example.invalid")
+            .env("GIT_COMMITTER_NAME", "scriv tests")
+            .env("GIT_COMMITTER_EMAIL", "tests@example.invalid")
+            .output()
+            .expect("running git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+
+    (main, root.join("feat"))
+}
+
+/// git reports the real path of a worktree, and a temporary directory on macOS
+/// is reached through a symlink.
+fn real(path: &Path) -> String {
+    path.canonicalize().unwrap().to_string_lossy().into_owned()
+}
+
+#[test]
+fn worktree_ls_lists_the_main_tree_and_the_linked_one() {
+    let sandbox = Sandbox::new();
+    let (main, feat) = mk_worktree_repo(sandbox.home());
+
+    let run = sandbox.run_in(&main, &["worktree", "ls", "--absolute-paths"]);
+    run.ok();
+    assert_eq!(run.lines(), vec![real(&main), real(&feat)]);
+}
+
+/// Which tree is current is the whole question the selector answers, and it is
+/// the one the shell is standing in — not the one git happens to list first.
+#[test]
+fn worktree_ls_status_marks_the_tree_the_shell_is_in() {
+    let sandbox = Sandbox::new();
+    let (main, feat) = mk_worktree_repo(sandbox.home());
+
+    let from_linked = sandbox.run_in(&feat, &["worktree", "ls", "--status", "-A"]);
+    from_linked.ok();
+    let lines = from_linked.lines();
+    assert!(lines[0].starts_with("  main "), "{lines:?}");
+    assert!(lines[1].starts_with("* feat "), "{lines:?}");
+    assert!(lines[1].ends_with(&real(&feat)), "{lines:?}");
+
+    let from_main = sandbox.run_in(&main, &["worktree", "ls", "--status", "-A"]);
+    from_main.ok();
+    assert!(
+        from_main.lines()[0].starts_with("* main "),
+        "{:?}",
+        from_main.lines()
+    );
+}
+
+/// `~` is for reading, `-A` is for piping. `HOME` is overridden with its
+/// resolved form because git reports resolved paths, and a `~` is only
+/// recognisable in one that shares its prefix.
+#[test]
+fn worktree_ls_collapses_home_unless_asked_for_absolute_paths() {
+    let sandbox = Sandbox::new();
+    let (main, feat) = mk_worktree_repo(sandbox.home());
+    let home = sandbox.home().canonicalize().unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+
+    let collapsed = sandbox.run_full(&main, &["worktree", "ls"], &env);
+    collapsed.ok();
+    assert_eq!(collapsed.lines(), vec!["~/scriv", "~/feat"]);
+
+    let absolute = sandbox.run_full(&main, &["worktree", "ls", "-A"], &env);
+    absolute.ok();
+    assert_eq!(absolute.lines(), vec![real(&main), real(&feat)]);
+}
+
+#[test]
+fn worktree_ls_outside_a_repository_says_so() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["worktree", "ls"]);
+    run.code(1);
+    assert!(
+        run.stderr.contains("not inside a git repository"),
+        "{}",
+        run.stderr
+    );
 }
 
 // --- the known-files list ---------------------------------------------------
@@ -1122,6 +1237,7 @@ fn init_fish_emits_functions_bindings_and_completions() {
     run.ok();
     for needle in [
         "function scriv-repo-cd",
+        "function scriv-worktree-cd",
         "function scriv-history-select",
         "function fe",
         "function scriv_key_bindings",

@@ -2,10 +2,10 @@
 //! dispatch to the [`cmd`] implementations. All decision logic lives in the
 //! library crate.
 //!
-//! Top-level commands: `repo`, `file`, `branch`, `pr`, `proc` and `history`
-//! work with the things scriv finds; `edit` opens a file from the directory the
-//! user is in; `config` manages its configuration; `init` prints shell
-//! integration.
+//! Top-level commands: `repo`, `file`, `branch`, `worktree`, `pr`, `proc` and
+//! `history` work with the things scriv finds; `edit` opens a file from the
+//! directory the user is in; `config` manages its configuration; `init` prints
+//! shell integration.
 
 use std::process::ExitCode;
 
@@ -115,6 +115,20 @@ enum Command {
     Branch {
         #[command(subcommand)]
         command: BranchCmd,
+    },
+    /// Manage this repository's worktrees
+    ///
+    /// Lists the working trees of the repository you are standing in — the one
+    /// cloned and every one added with `git worktree add` — in git's own order,
+    /// the main tree first. The tree you are in is marked rather than moved to
+    /// the top, since it is not the one you are switching to.
+    ///
+    /// Switching to a worktree is a `cd`, which only a shell can perform, so
+    /// `sel` prints the path; the fish integration binds that to ctrl-t.
+    #[command(visible_alias = "w")]
+    Worktree {
+        #[command(subcommand)]
+        command: WorktreeCmd,
     },
     /// Manage GitHub PRs
     ///
@@ -324,6 +338,23 @@ enum BranchCmd {
         #[command(flatten)]
         scope: BranchScope,
     },
+}
+
+#[derive(Subcommand)]
+enum WorktreeCmd {
+    /// List this repository's worktrees
+    #[command(visible_alias = "list")]
+    Ls {
+        /// Return absolute file paths
+        #[arg(short = 'A', long)]
+        absolute_paths: bool,
+        /// Show the current-worktree marker, what each has checked out, and
+        /// whether it is locked or prunable
+        #[arg(long)]
+        status: bool,
+    },
+    /// Fuzzy-select a worktree and print its absolute path
+    Sel,
 }
 
 /// Which pull requests a `pr` subcommand fetches, shared by all three.
@@ -571,6 +602,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             BranchCmd::Checkout { branch, scope } => {
                 cmd::branch::checkout(&ctx, branch.as_deref(), scope.filter(), scope.fetch)
             }
+        },
+        Command::Worktree { command } => match command {
+            WorktreeCmd::Ls {
+                absolute_paths,
+                status,
+            } => cmd::worktree::ls(&ctx, absolute_paths, status),
+            WorktreeCmd::Sel => cmd::worktree::sel(&ctx),
         },
         Command::Pr { command } => match command {
             PrCmd::Ls { status, scope } => cmd::pr::ls(&ctx, &scope.state, scope.limit, status),

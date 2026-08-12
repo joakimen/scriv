@@ -34,6 +34,7 @@ scriv config check         # confirm it all resolves
 | `scriv repo` | `ls` `sel` `open` `clone` |
 | `scriv file` | `ls` `sel` `add` `rm` `prune` |
 | `scriv branch` | `ls` `sel` `checkout` |
+| `scriv worktree` | `ls` `sel` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
 | `scriv proc` | `ls` `sel` `kill` |
 | `scriv history` | `ls` `sel` |
@@ -43,11 +44,11 @@ scriv config check         # confirm it all resolves
 
 `ls` prints the set, `sel` fuzzy-selects one line of it, and the other verbs
 act. Every `sel` composes: `cd (scriv repo sel)`. Each group takes a one-letter
-abbreviation — `r`, `f`, `b`, `e`, `h`, `c`, and `pc` for `proc`.
+abbreviation — `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc` for `proc`.
 
-In fish, `ctrl-r` searches history, `ctrl-o` jumps to a repository and `ctrl-g`
-checks out a branch; `f1`, `f3` and `f7` open a repository, a tracked file and a
-pull request.
+In fish, `ctrl-r` searches history, `ctrl-o` jumps to a repository, `ctrl-t` to
+a worktree of the one you are in, and `ctrl-g` checks out a branch; `f1`, `f3`
+and `f7` open a repository, a tracked file and a pull request.
 
 `scriv --help` covers the flags, the generated `config.toml` the settings.
 

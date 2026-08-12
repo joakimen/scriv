@@ -12,3 +12,4 @@ pub mod history;
 pub mod pr;
 pub mod proc;
 pub mod repo;
+pub mod worktree;

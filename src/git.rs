@@ -1,8 +1,8 @@
-//! Git branch enumeration and checkout.
+//! Git branch enumeration and checkout, and the repository's worktrees.
 //!
 //! The decisions — which refs are local, which are remote-only, what a checkout
 //! of a given name means — are pure functions over plain data
-//! ([`parse_ref_lines`], [`classify`], [`resolve`]).
+//! ([`parse_ref_lines`], [`classify`], [`resolve`], [`parse_worktrees`]).
 //!
 //! One `for-each-ref` over `refs/heads` and `refs/remotes` enumerates both in a
 //! pass already ordered by commit recency; [`by_relevance`] regroups it without
@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -288,6 +288,141 @@ pub fn resolve(branches: &[Branch], input: &str) -> Checkout {
     Checkout::Switch(input.to_string())
 }
 
+/// A working tree of the repository: the main one, or one added with
+/// `git worktree add`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Worktree {
+    /// Absolute path to the tree, as git reports it.
+    pub path: PathBuf,
+    /// Short branch name, empty when HEAD is detached or the tree is bare.
+    pub branch: String,
+    /// Full HEAD commit, empty for a bare tree — which has no HEAD.
+    pub head: String,
+    /// A bare repository: nothing checked out, and nowhere to work.
+    pub bare: bool,
+    /// Held by `git worktree lock`, so pruning leaves it alone.
+    pub locked: bool,
+    /// git can no longer use it — most often because its directory is gone.
+    pub prunable: bool,
+    /// Whether this is the tree the working directory is in.
+    pub current: bool,
+}
+
+/// How much of a commit to show where a branch name would be. Fixed rather than
+/// git's `core.abbrev`, which grows with the repository and would make the
+/// column's width depend on which one is being listed; 7 is what git itself
+/// shows in a repository of ordinary size.
+const SHORT_COMMIT: usize = 7;
+
+impl Worktree {
+    /// What identifies the tree beside its path: the branch it has checked out,
+    /// the commit a detached HEAD sits on, or that the repository is bare.
+    /// Parenthesised where it is not a branch name, so the two never read alike.
+    pub fn head_label(&self) -> String {
+        if self.bare {
+            return "(bare)".to_string();
+        }
+        if !self.branch.is_empty() {
+            return self.branch.clone();
+        }
+        let short: String = self.head.chars().take(SHORT_COMMIT).collect();
+        format!("({short})")
+    }
+
+    /// Short tags for the states worth flagging, for when colour is
+    /// unavailable. An ordinary tree has none.
+    pub fn tags(&self) -> Vec<&'static str> {
+        let mut tags = Vec::new();
+        if self.locked {
+            tags.push("locked");
+        }
+        if self.prunable {
+            tags.push("prunable");
+        }
+        tags
+    }
+
+    /// ANSI 256-colour index for the row, or `None` for an ordinary tree, which
+    /// keeps the terminal's foreground. Standard hues, so they follow the theme.
+    pub fn color(&self) -> Option<u8> {
+        // Checked before `current`: a tree git cannot use is not one to enter,
+        // and that outranks where the shell happens to be standing.
+        if self.prunable {
+            return Some(8); // grey — nothing to switch to
+        }
+        if self.current {
+            return Some(2); // green — where you already are
+        }
+        if self.branch.is_empty() {
+            return Some(3); // yellow — detached or bare, so no branch to land on
+        }
+        None
+    }
+}
+
+/// Parse `git worktree list --porcelain`.
+///
+/// Each record opens with a `worktree <path>` line and is followed by its
+/// attributes, one per line, valueless where the attribute is a flag. A record
+/// is closed by the next `worktree` line rather than by the blank line between
+/// them, so an attribute git adds later cannot be mistaken for a new record.
+pub fn parse_worktrees(output: &str) -> Vec<Worktree> {
+    let mut worktrees = Vec::new();
+    let mut current: Option<Worktree> = None;
+
+    for line in output.lines() {
+        let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+        if key == "worktree" {
+            worktrees.extend(current.take());
+            if !value.is_empty() {
+                current = Some(Worktree {
+                    path: PathBuf::from(value),
+                    ..Worktree::default()
+                });
+            }
+            continue;
+        }
+        // Attributes before the first `worktree` line belong to nothing.
+        let Some(worktree) = current.as_mut() else {
+            continue;
+        };
+        match key {
+            "HEAD" => worktree.head = value.to_string(),
+            "branch" => worktree.branch = value.strip_prefix("refs/heads/").unwrap_or(value).into(),
+            "bare" => worktree.bare = true,
+            // Both carry an optional reason, which the listing has no room for.
+            "locked" => worktree.locked = true,
+            "prunable" => worktree.prunable = true,
+            _ => {}
+        }
+    }
+
+    worktrees.extend(current);
+    worktrees
+}
+
+/// Mark the tree `here` is inside, so a listing can point at it.
+///
+/// `resolve` is `canonicalize`: git prints the real path of every worktree
+/// while the working directory may have reached one through a symlink, and only
+/// the resolved forms compare equal. What is displayed stays as git gave it.
+pub fn mark_current(
+    worktrees: Vec<Worktree>,
+    here: Option<&Path>,
+    resolve: impl Fn(&Path) -> PathBuf,
+) -> Vec<Worktree> {
+    let Some(here) = here.map(&resolve) else {
+        return worktrees;
+    };
+    worktrees
+        .into_iter()
+        .map(|worktree| Worktree {
+            current: resolve(&worktree.path) == here,
+            ..worktree
+        })
+        .collect()
+}
+
 /// Run git with `args`, capturing stdout.
 fn capture(args: &[&str]) -> Result<String> {
     let output = Command::new("git")
@@ -379,6 +514,18 @@ pub fn branches() -> Result<Vec<Branch>> {
     ])
     .context("listing branches")?;
     Ok(by_relevance(classify(&parse_ref_lines(&out))))
+}
+
+/// Every working tree of the repository, in git's own order: the main tree
+/// first, then the linked ones as they were added. The tree the working
+/// directory is in is marked rather than moved, since where you already are is
+/// rarely where you are going.
+pub fn worktrees() -> Result<Vec<Worktree>> {
+    let out = capture(&["worktree", "list", "--porcelain"]).context("listing worktrees")?;
+    let worktrees = parse_worktrees(&out);
+    Ok(mark_current(worktrees, repo_root().as_deref(), |path| {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    }))
 }
 
 /// Refresh remote-tracking refs, dropping ones deleted upstream.
@@ -640,5 +787,146 @@ mod tests {
             resolve(&sample(), "nope"),
             Checkout::Switch("nope".to_string())
         );
+    }
+
+    /// Exactly what `git worktree list --porcelain` writes: a main tree, a
+    /// linked one, a detached one, a locked one and a tree whose directory has
+    /// been deleted.
+    const WORKTREE_LIST: &str = "\
+worktree /home/u/dev/scriv
+HEAD 950547ef3af47b2e60406bd23e530bdb1e226c6e
+branch refs/heads/main
+
+worktree /home/u/dev/scriv/.claude/worktrees/feat
+HEAD 32bb788aa1c04d9ee4d1e5a8b0e0b8d1c2f3a4b5
+branch refs/heads/feat/x
+
+worktree /home/u/dev/scriv/.claude/worktrees/spike
+HEAD cd7eff2bbb1c04d9ee4d1e5a8b0e0b8d1c2f3a4b
+detached
+
+worktree /home/u/dev/scriv/.claude/worktrees/held
+HEAD ec4b8dfccc1c04d9ee4d1e5a8b0e0b8d1c2f3a4b
+branch refs/heads/held
+locked waiting on review
+
+worktree /home/u/dev/scriv/.claude/worktrees/gone
+HEAD 88a2dedddd1c04d9ee4d1e5a8b0e0b8d1c2f3a4b
+branch refs/heads/gone
+prunable gitdir file points to non-existent location
+";
+
+    #[test]
+    fn parses_every_worktree_record() {
+        let got = parse_worktrees(WORKTREE_LIST);
+        assert_eq!(got.len(), 5);
+        assert_eq!(got[0].path, PathBuf::from("/home/u/dev/scriv"));
+        assert_eq!(got[0].branch, "main", "the ref prefix survived");
+        assert_eq!(got[1].branch, "feat/x", "a branch name may contain a slash");
+        assert!(got[2].branch.is_empty(), "a detached HEAD has no branch");
+        assert!(got[3].locked);
+        assert!(got[4].prunable);
+    }
+
+    /// A reason on `locked` or `prunable` is words, not a value to be parsed.
+    #[test]
+    fn a_state_with_a_reason_is_still_that_state() {
+        let got = parse_worktrees(WORKTREE_LIST);
+        assert_eq!(got[3].tags(), vec!["locked"]);
+        assert_eq!(got[4].tags(), vec!["prunable"]);
+        assert!(got[0].tags().is_empty(), "an ordinary tree carries no tag");
+    }
+
+    #[test]
+    fn a_bare_repository_has_no_head_to_report() {
+        let got = parse_worktrees("worktree /home/u/dev/mirror.git\nbare\n");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].bare);
+        assert_eq!(got[0].head_label(), "(bare)");
+    }
+
+    /// The column reads as a branch name only when it is one.
+    #[test]
+    fn a_detached_head_shows_the_commit_it_sits_on() {
+        let got = parse_worktrees(WORKTREE_LIST);
+        assert_eq!(got[0].head_label(), "main");
+        assert_eq!(got[2].head_label(), "(cd7eff2)");
+    }
+
+    #[test]
+    fn attributes_belong_to_the_record_that_opened() {
+        // No blank line between the records, and an attribute git might add
+        // after the ones known here.
+        let got = parse_worktrees(
+            "worktree /a\nHEAD abc\nbranch refs/heads/a\nsomething-new value\nworktree /b\nHEAD def\ndetached\n",
+        );
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].branch, "a");
+        assert_eq!(got[1].path, PathBuf::from("/b"));
+        assert!(got[1].branch.is_empty());
+    }
+
+    #[test]
+    fn nothing_is_parsed_from_nothing() {
+        assert!(parse_worktrees("").is_empty());
+        // Attributes with no record to attach to are dropped, not panicked on.
+        assert!(parse_worktrees("HEAD abc\nbranch refs/heads/a\n").is_empty());
+    }
+
+    #[test]
+    fn the_current_tree_is_the_one_the_shell_is_in() {
+        let here = Path::new("/home/u/dev/scriv/.claude/worktrees/feat");
+        let got = mark_current(
+            parse_worktrees(WORKTREE_LIST),
+            Some(here),
+            Path::to_path_buf,
+        );
+        assert_eq!(
+            got.iter().filter(|w| w.current).count(),
+            1,
+            "exactly one tree is the current one",
+        );
+        assert!(got[1].current);
+        assert_eq!(got[1].color(), Some(2), "the current tree is green");
+    }
+
+    /// git prints the real path of a worktree; the working directory may have
+    /// reached it through a symlink, as `/tmp` is on macOS.
+    #[test]
+    fn the_current_tree_is_found_through_a_symlink() {
+        let got = mark_current(
+            parse_worktrees("worktree /private/tmp/wt\nHEAD abc\nbranch refs/heads/main\n"),
+            Some(Path::new("/tmp/wt")),
+            |path| match path.strip_prefix("/tmp") {
+                Ok(rest) => Path::new("/private/tmp").join(rest),
+                Err(_) => path.to_path_buf(),
+            },
+        );
+        assert!(got[0].current, "the symlinked path did not match");
+        assert_eq!(
+            got[0].path,
+            PathBuf::from("/private/tmp/wt"),
+            "resolving must not rewrite what is displayed",
+        );
+    }
+
+    #[test]
+    fn outside_a_repository_no_tree_is_current() {
+        let got = mark_current(parse_worktrees(WORKTREE_LIST), None, Path::to_path_buf);
+        assert!(got.iter().all(|w| !w.current));
+    }
+
+    /// A tree git cannot use is not one to switch to, whichever one the shell
+    /// is standing in.
+    #[test]
+    fn an_unusable_tree_is_greyed_even_when_it_is_the_current_one() {
+        let got = mark_current(
+            parse_worktrees(WORKTREE_LIST),
+            Some(Path::new("/home/u/dev/scriv/.claude/worktrees/gone")),
+            Path::to_path_buf,
+        );
+        assert_eq!(got[4].color(), Some(8));
+        assert_eq!(got[2].color(), Some(3), "a detached tree is yellow");
+        assert_eq!(got[0].color(), None, "an ordinary tree keeps the default");
     }
 }

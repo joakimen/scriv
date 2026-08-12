@@ -105,21 +105,6 @@ fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
         .collect()
 }
 
-/// The preview for a repository: its current branch and working-tree state,
-/// then recent commits. Both commands are local and take tens of milliseconds.
-///
-/// `--no-optional-locks` matters here: a plain `git status` rewrites the index,
-/// so scrolling past a repository would contend for its index lock.
-fn preview(path: &str) -> Preview {
-    let repo = select::quote(path);
-    Preview::Command(format!(
-        "git --no-optional-locks -C {repo} -c color.status=always status --short --branch \
-         | head -n 10; \
-         git --no-optional-locks -C {repo} log --color=always --max-count=20 --date=relative \
-         --format='%C(auto)%h%C(reset)  %C(blue)%an%C(reset)  %C(green)%ad%C(reset)  %s'"
-    ))
-}
-
 /// The selector rows for the discovered repositories: each prefixed with its
 /// label and coloured by it, paths rendered per `repo.display`. Every row's
 /// value is the absolute path, so a caller never re-expands `~`.
@@ -144,7 +129,7 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
                 RepoDisplay::Full => abs.clone(),
             };
             let row = format!("{label:<width$}  {shown}", label = repo.label);
-            let item = SelectItem::new(row, abs.clone()).preview(preview(&abs));
+            let item = SelectItem::new(row, abs.clone()).preview(select::checkout_preview(&abs));
             match colors.get(repo.label.as_str()) {
                 Some(&color) => item.color(color),
                 None => item,
