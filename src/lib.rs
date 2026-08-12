@@ -1,5 +1,5 @@
-//! `scriv` — select repositories, files, git branches, GitHub pull requests and
-//! running processes from one fuzzy finder.
+//! `scriv` — select repositories, files, git branches and worktrees, GitHub
+//! pull requests and running processes from one fuzzy finder.
 //!
 //! The crate is split into an I/O-free core and an imperative shell: the
 //! [`cmd`] modules read the environment, touch the filesystem, shell out to
