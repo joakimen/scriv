@@ -7,14 +7,17 @@ license = "MIT"
 repository = "https://github.com/joakimen/scriv"
 exclude = ["docs/", "demo/", ".github/", ".claude/", "prek.toml", "mise.toml"]
 
-# Config for `make release` (cargo-release), which bumps the version and no
-# more. Tagging and publishing belong to dist — see dist-workspace.toml — so no
-# tag name is configured here; there is one source of truth for it and it is the
-# version dist is handed. scriv ships as GitHub release binaries, never to
-# crates.io, and the bump starts from `main`.
+# Config for cargo-release, which writes the version, the tag and the push.
+# Pushing the tag is what starts a release — see dist-workspace.toml — so the
+# tag name here is the contract dist reads. scriv ships as GitHub release
+# binaries, never to crates.io.
+#
+# The bump itself is an ordinary pull request, so `cargo release version` runs
+# on the branch carrying it; only the tag is cut from `main`.
 [package.metadata.release]
 publish = false
-allow-branch = ["main"]
+tag-name = "v{{version}}"
+allow-branch = ["main", "release/*"]
 
 [dependencies]
 anyhow = "1"

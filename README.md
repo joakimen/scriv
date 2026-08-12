@@ -55,41 +55,35 @@ and `f7` open a repository, a tracked file and a pull request.
 ## Development
 
 ```sh
-make                # fmt check, clippy, tests, release build
-make hooks          # install the git hooks in prek.toml
-make release         # dispatch the version bump; opens a PR
-make release-publish # after that PR merges: dispatch the release
-make release-dry-run # build every target, release nothing
-make demo            # re-record docs/demo.gif
-make demo-fixture    # build the demo sandbox and poke at it by hand
+make              # fmt check, clippy, tests, release build
+make hooks        # install the git hooks in prek.toml
+make demo         # re-record docs/demo.gif
+make demo-fixture # build the demo sandbox and poke at it by hand
 ```
 
 ## Releasing
 
-Releasing runs entirely in GitHub Actions, in two dispatches with a pull request
-between them. Nothing is built, versioned or signed on a maintainer's machine.
+A pushed tag is the release. The version bump reaches `main` as an ordinary
+pull request first, because the ruleset there requires the `build` and `demo`
+checks like it does of anything else.
 
 ```sh
-make release LEVEL=minor  # dispatch release-prepare; LEVEL is patch by default
-# ...review and merge the pull request it opens...
-make release-publish      # dispatch release for the version now on main
+git switch -c release/v0.5.0
+cargo release version minor --execute  # writes Cargo.toml and Cargo.lock
+# ...commit, open the pull request, merge it...
+git switch main && git pull
+cargo release tag --execute && cargo release push --execute
 ```
 
-Both commands are `gh workflow run`, so the Actions tab does just as well.
+That last line tags the merged commit `v0.5.0` and pushes the tag; `git tag` and
+`git push origin v0.5.0` do the same thing. cargo-release is pinned in
+`mise.toml` and configured under `[package.metadata.release]` in `Cargo.toml`.
 
-`release-prepare` bumps the version with cargo-release and opens the pull
-request. That pull request is the review point, and it exists because the `main`
-ruleset requires the `build` and `demo` checks on the branch tip.
+The tag starts [dist](https://axodotdev.github.io/cargo-dist), configured in
+`dist-workspace.toml`: it refuses a version no package carries, builds
+`aarch64-apple-darwin`, and publishes the release once the tarball, its checksum
+and its build provenance exist. `.github/workflows/release.yml` is generated —
+change `dist-workspace.toml` and run `dist init`, never the workflow.
 
-`release` belongs to [dist](https://axodotdev.github.io/cargo-dist), configured
-in `dist-workspace.toml`: it refuses a version no package carries, builds
-`aarch64-apple-darwin`, and creates the tag and the release together once the
-tarball, its checksum and its build provenance exist. There is no tag to push
-and none to get wrong. `.github/workflows/release.yml` is generated — change
-`dist-workspace.toml` and run `dist init`, never the workflow.
-
-`release-prepare` needs no secret of its own. It runs on the default
-`GITHUB_TOKEN` and dispatches `ci` against the bump branch, since GitHub leaves
-a pull request that token opened without the checks the ruleset asks for.
-
-`make release-dry-run` runs the same builds and releases nothing.
+No secret and no token beyond the workflow's own `GITHUB_TOKEN`. Every pull
+request runs `dist plan`, which catches a misconfiguration before a tag exists.

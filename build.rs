@@ -27,8 +27,8 @@ fn version() -> String {
     let crate_version = std::env::var("CARGO_PKG_VERSION").expect("cargo sets CARGO_PKG_VERSION");
 
     // Set by the release workflow. The tag test below cannot stand in for it
-    // there: dist builds the binaries first and creates the tag from them
-    // afterwards, out of a checkout holding no tags at all.
+    // there: dist builds from a shallow checkout, where `git describe` has no
+    // history to reach a tag through.
     if std::env::var_os("SCRIV_RELEASE").is_some() {
         return crate_version;
     }
