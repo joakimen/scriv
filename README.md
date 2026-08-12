@@ -70,20 +70,25 @@ checks like it does of anything else.
 ```sh
 git switch -c release/v0.5.0
 cargo release version minor --execute  # writes Cargo.toml and Cargo.lock
+cargo release replace --execute        # dates the CHANGELOG.md heading
 # ...commit, open the pull request, merge it...
 git switch main && git pull
 cargo release tag --execute && cargo release push --execute
 ```
 
 That last line tags the merged commit `v0.5.0` and pushes the tag; `git tag
-v0.5.0` and `git push origin v0.5.0` do the same thing. cargo-release is pinned in
-`mise.toml` and configured under `[package.metadata.release]` in `Cargo.toml`.
+v0.5.0` and `git push origin v0.5.0` do the same thing. cargo-release is pinned
+in `mise.toml` and configured under `[package.metadata.release]` in
+`Cargo.toml`.
 
 The tag starts [dist](https://axodotdev.github.io/cargo-dist), configured in
 `dist-workspace.toml`: it refuses a version no package carries, builds
-`aarch64-apple-darwin`, and publishes the release once the tarball, its checksum
-and its build provenance exist. `.github/workflows/release.yml` is generated —
-change `dist-workspace.toml` and run `dist init`, never the workflow.
+`aarch64-apple-darwin`, writes the install script, and publishes the release
+once the tarball, its checksum and its build provenance exist. The release notes
+are that version's section of `CHANGELOG.md`, so an entry written under
+`## Unreleased` while the work was done is what a reader sees.
+`.github/workflows/release.yml` is generated — change `dist-workspace.toml` and
+run `dist init`, never the workflow.
 
 No secret and no token beyond the workflow's own `GITHUB_TOKEN`. Every pull
 request runs `dist plan`, which catches a misconfiguration before a tag exists.
