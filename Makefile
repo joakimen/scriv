@@ -33,44 +33,9 @@ install:
 hooks:
 	prek install --hook-type pre-commit --hook-type pre-push
 
-# Releasing, step 1 of 2: dispatch the bump. Both steps are `gh workflow run`
-# against a workflow rather than work done here, so the machine that cuts a
-# release holds no credentials, no toolchain and no opinion — the same release
-# comes out whoever runs it. `LEVEL` is patch unless said otherwise.
-LEVEL ?= patch
-.PHONY: release
-release:
-	@gh workflow run release-prepare.yml -f level=$(LEVEL)
-	@echo "Bump to $(LEVEL) dispatched. It opens a pull request; merge it, then: make release-publish"
-
-# Releasing, step 2 of 2. Run once the bump pull request has merged. Hands the
-# version on `main` to dist, which refuses a tag no package carries, builds every
-# target, then creates the tag and the release from binaries that already exist.
-# Nothing pushes a tag — a tag nobody remembered to push is what left v0.3.1
-# sitting on `main` unreleased.
-#
-# Run too early, the version on `main` is still the released one and dist spends
-# three minutes building every target before the release API rejects the
-# duplicate tag. Checking here costs one API call.
-.PHONY: release-publish
-release-publish:
-	@git switch main
-	@git pull --ff-only
-	@ver=$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); \
-	if gh release view "v$$ver" >/dev/null 2>&1; then \
-		echo "v$$ver is already released. The bump pull request is probably still open — merge it first." >&2; \
-		exit 1; \
-	fi; \
-	gh workflow run release.yml -f tag="v$$ver"; \
-	echo "Release v$$ver dispatched. Watch it with: gh run watch"
-
-# Exercise the release pipeline without releasing. dist builds every target and
-# throws the artifacts away, leaving no tag and no release behind. The `dry-run`
-# string is the workflow's own sentinel, not a flag of ours.
-.PHONY: release-dry-run
-release-dry-run:
-	@gh workflow run release.yml -f tag=dry-run
-	@echo "Dry run dispatched. Watch it with: gh run watch"
+# Releasing has no target here. It is two cargo-release commands around an
+# ordinary pull request, spelled out in README.md, and a target wrapping them
+# would only hide which of the two a half-finished release stopped after.
 
 # Re-record docs/demo.gif. Local only — the render depends on installed fonts.
 # Requires vhs (brew install vhs).

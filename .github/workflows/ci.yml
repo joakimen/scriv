@@ -4,10 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  # `release-prepare.yml` dispatches this against the branch carrying a version
-  # bump, the one way it can put the required checks on a pull request GitHub
-  # otherwise leaves unchecked.
-  workflow_dispatch:
 
 permissions:
   contents: read
