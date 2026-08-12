@@ -88,8 +88,8 @@ tarball, its checksum and its build provenance exist. There is no tag to push
 and none to get wrong. `.github/workflows/release.yml` is generated — change
 `dist-workspace.toml` and run `dist init`, never the workflow.
 
-`release-prepare` needs a `RELEASE_TOKEN` secret with `contents: write` and
-`pull-requests: write`. GitHub schedules no checks on a pull request opened by
-the default `GITHUB_TOKEN`, and the ruleset would never be satisfiable.
+`release-prepare` needs no secret of its own. It runs on the default
+`GITHUB_TOKEN` and dispatches `ci` against the bump branch, since GitHub leaves
+a pull request that token opened without the checks the ruleset asks for.
 
 `make release-dry-run` runs the same builds and releases nothing.
