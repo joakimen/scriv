@@ -48,11 +48,19 @@ release:
 # target, then creates the tag and the release from binaries that already exist.
 # Nothing pushes a tag — a tag nobody remembered to push is what left v0.3.1
 # sitting on `main` unreleased.
+#
+# Run too early, the version on `main` is still the released one and dist spends
+# three minutes building every target before the release API rejects the
+# duplicate tag. Checking here costs one API call.
 .PHONY: release-publish
 release-publish:
 	@git switch main
 	@git pull --ff-only
 	@ver=$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); \
+	if gh release view "v$$ver" >/dev/null 2>&1; then \
+		echo "v$$ver is already released. The bump pull request is probably still open — merge it first." >&2; \
+		exit 1; \
+	fi; \
 	gh workflow run release.yml -f tag="v$$ver"; \
 	echo "Release v$$ver dispatched. Watch it with: gh run watch"
 
