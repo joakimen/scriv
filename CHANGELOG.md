@@ -1,0 +1,113 @@
+# Changelog
+
+What changed in each release, newest first. Versions are [semantic
+versioning](https://semver.org): while scriv is `0.x`, a new command or flag is
+a minor and a fix is a patch.
+
+The entry for a version is what its GitHub release says, so it is written for
+someone deciding whether to upgrade, not for someone reading the diff.
+
+## Unreleased
+
+### Added
+
+- An install script, published with every release:
+  `curl -LsSf https://github.com/joakimen/scriv/releases/latest/download/scriv-installer.sh | sh`.
+  It installs into `~/.local/bin`.
+
+## 0.5.0 - 2026-08-12
+
+### Added
+
+- `scriv worktree` lists and selects the working trees of the repository you are
+  standing in. In fish, ctrl-t jumps to one.
+
+### Changed
+
+- A release is cut by pushing a tag, rather than by dispatching a workflow that
+  needed a personal access token to open its own pull request.
+
+## 0.4.0 - 2026-08-11
+
+### Changed
+
+- scriv builds for Apple Silicon and refuses to compile anywhere else. Signal
+  numbers past the POSIX five differ between Darwin and Linux — 19 is `CONT` on
+  one and `STOP` on the other — so a binary for the wrong platform resumed the
+  process it was told to suspend.
+
+## 0.3.2 - 2026-08-11
+
+### Changed
+
+- Releases are built and published by GitHub Actions. Nothing is compiled or
+  signed on a maintainer's machine.
+
+## 0.3.1 - 2026-08-11
+
+### Changed
+
+- ctrl-q is left unbound, for your own use; `scriv edit` is reached through the
+  `fe` function instead.
+
+## 0.3.0 - 2026-08-10
+
+### Added
+
+- `scriv proc` finds a running process and signals it. scriv's own process and
+  everything that spawned it are never offered.
+- `scriv config check` looks at everything scriv depends on in one pass and says
+  what is wrong with each.
+- `scriv file prune` drops tracked files that no longer exist.
+- `scriv edit dir` selects a directory, splitting `edit` into `file` and `dir`.
+- `--color auto|always|never`, and `SCRIV_NO_COLOR` under `auto`.
+
+### Changed
+
+- `pick` is now `sel` and `remove` is `rm`, and each group takes a one-letter
+  abbreviation: `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc` for `proc`.
+- A development build reports `<version>-dev.<sha>`, so it cannot be mistaken
+  for the release of the same name.
+
+### Fixed
+
+- A selector no longer spins at full CPU after its terminal goes away.
+- A key binding no longer draws over the output it just produced.
+
+## 0.2.1 - 2026-07-30
+
+### Added
+
+- `scriv history` searches fish's history, newest first with repeats collapsed,
+  each row dated by when you last ran it.
+
+### Fixed
+
+- A listing ends quietly when its reader stops reading, so `scriv history ls |
+  head` no longer ends in a panic.
+
+## 0.2.0 - 2026-07-30
+
+Rewritten in Rust, with the fuzzy finder compiled in rather than shelled out to.
+
+### Added
+
+- `scriv branch` and `scriv pr` select branches and GitHub pull requests, with
+  preview panes and ctrl-r to refresh the list in place.
+- `scriv edit` finds a file below `$PWD` and opens it in `$EDITOR`.
+- `scriv repo clone` clones into `<root>/<owner>/<repo>`, and `scriv repo open`
+  opens a repository's GitHub page.
+- `scriv file` takes over the standalone `kf` tool, migrating its list on first
+  use.
+- `scriv init fish` emits helper functions, key bindings and completions.
+
+### Changed
+
+- Repositories live under one `root` laid out as `<owner>/<repo>`, and labels
+  name owners rather than paths. A config in the old shape is refused with the
+  replacement written out.
+
+## Earlier releases
+
+0.1.0 and 0.0.1 were the Go tool that only discovered repositories. Their
+history is in git.

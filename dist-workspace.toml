@@ -4,13 +4,19 @@ members = ["cargo:."]
 # Config for `dist`, which builds every target and publishes the GitHub release
 # for a pushed `v*` tag. `.github/workflows/release.yml` is generated from this
 # file — never edit it by hand, run `dist init` instead. That command also
-# rewrites this file, and keeps only the comments it finds above a key it still
-# recognises, so anything explanatory has to sit there.
+# rewrites this file, replacing every comment with a canned one, so the prose
+# below has to be put back each time.
 [dist]
 cargo-dist-version = "0.32.0"
 ci = "github"
-# scriv ships as release binaries only. No installer scripts, no crates.io.
-installers = []
+# The `curl … | sh` line every other Rust CLI leads with, built from the same
+# archives mise resolves. Nothing here reaches crates.io: `src/proc.rs` refuses
+# to compile off Apple Silicon, so the published crate would fail to build for
+# most of crates.io and all of docs.rs.
+installers = ["shell"]
+# Where that script puts the binary. dist's default is Cargo's own bin
+# directory, which is the wrong place for a tool nobody installs with cargo.
+install-path = "~/.local/bin"
 # One target, and the crate refuses to build for any other — see the guard in
 # `src/proc.rs`. Adding one back is not a line here: it means finding every
 # place that assumed Apple Silicon, starting with the signal numbers.
@@ -29,3 +35,6 @@ github-attestations = true
 # Relative to `.github/workflows/`, and deliberately above it: a bare step list
 # sitting among the workflows is a workflow GitHub cannot parse.
 github-build-setup = "../build-setup.yml"
+# No self-updater. `scriv update` would be a second way to install the binary,
+# and the install script already replaces one in place.
+install-updater = false
