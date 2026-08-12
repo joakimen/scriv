@@ -13,8 +13,12 @@ Provides fuzzy-completion for various local and remote resources.
 ## Install
 
 ```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/joakimen/scriv/releases/latest/download/scriv-installer.sh | sh
 mise use -g github:joakimen/scriv    # or: cargo install --path .
 ```
+
+The script puts the binary in `~/.local/bin` and adds it to your `PATH`; both
+it and mise resolve the same release archive.
 
 macOS on Apple Silicon. Needs `git`; `gh` for pull requests and
 `repo clone`/`open`.

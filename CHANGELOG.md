@@ -9,6 +9,12 @@ someone deciding whether to upgrade, not for someone reading the diff.
 
 ## Unreleased
 
+### Added
+
+- An install script, published with every release:
+  `curl -LsSf https://github.com/joakimen/scriv/releases/latest/download/scriv-installer.sh | sh`.
+  It installs into `~/.local/bin`.
+
 ## 0.5.0 - 2026-08-12
 
 ### Added
