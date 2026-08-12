@@ -75,8 +75,8 @@ git switch main && git pull
 cargo release tag --execute && cargo release push --execute
 ```
 
-That last line tags the merged commit `v0.5.0` and pushes the tag; `git tag` and
-`git push origin v0.5.0` do the same thing. cargo-release is pinned in
+That last line tags the merged commit `v0.5.0` and pushes the tag; `git tag
+v0.5.0` and `git push origin v0.5.0` do the same thing. cargo-release is pinned in
 `mise.toml` and configured under `[package.metadata.release]` in `Cargo.toml`.
 
 The tag starts [dist](https://axodotdev.github.io/cargo-dist), configured in
