@@ -9,6 +9,8 @@ someone deciding whether to upgrade, not for someone reading the diff.
 
 ## Unreleased
 
+## 0.5.1 - 2026-08-13
+
 ### Added
 
 - An install script, published with every release:
