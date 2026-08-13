@@ -92,10 +92,12 @@ tidiness: signal numbers past the POSIX five differ between Darwin and Linux,
 19 being `CONT` on one and `STOP` on the other, so a binary for the wrong
 platform suspends nothing and resumes what it should have stopped.
 
-Both CI jobs therefore run on `macos-latest`. A step that compiles the crate
-cannot be moved to a Linux runner to save time, and widening the target list is
-not a line in `dist-workspace.toml` — it is an audit of everything that assumed
-Darwin, the signal table first.
+Every job that compiles the crate therefore runs on `macos-latest`: both CI
+jobs, and both release-plz jobs, which compile it without saying so — working
+out what changed runs `cargo package`, and that verifies the tarball by building
+it. A step that compiles the crate cannot be moved to a Linux runner to save
+time, and widening the target list is not a line in `dist-workspace.toml` — it
+is an audit of everything that assumed Darwin, the signal table first.
 
 ## Rules for code that does not exist yet
 

@@ -28,7 +28,13 @@ jobs:
   # Tag the merged release pull request. Before the job below, so the tag it
   # reads as the current version is the one that just shipped.
   release:
-    runs-on: ubuntu-latest
+    # macOS for the same reason both CI jobs are: release-plz works out what
+    # changed by running `cargo package --allow-dirty --workspace`, which
+    # verifies the tarball by compiling it, and `src/proc.rs` fails that build
+    # anywhere but Apple Silicon. There is no flag for it — `publish_no_verify`
+    # reaches `cargo publish` and nothing else — so a Linux runner here is not
+    # a saving, it is the job failing before it reads a version.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -42,7 +48,8 @@ jobs:
 
   release-pr:
     needs: release
-    runs-on: ubuntu-latest
+    # Compiles the crate too, as above.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
