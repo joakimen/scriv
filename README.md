@@ -72,7 +72,8 @@ Nothing is run by hand.
 
 Every push to `main` runs [release-plz](https://release-plz.dev), which keeps a
 pull request open proposing the next version: the bump in `Cargo.toml` and
-`Cargo.lock`, and the `## Unreleased` section of `CHANGELOG.md` dated with it.
+`Cargo.lock`, and the version heading and release date that `## Unreleased`
+work in `CHANGELOG.md` is filed under.
 Merging that pull request tags the merge commit `v0.5.1` and pushes the tag.
 Leaving it open holds the version, which is the answer to a run of pull requests
 that only touched docs, `demo/` or CI.
@@ -87,9 +88,9 @@ next push to `main` rebuilds that branch from scratch.
 The tag starts [dist](https://axodotdev.github.io/cargo-dist), configured in
 `dist-workspace.toml`: it refuses a version no package carries, builds
 `aarch64-apple-darwin`, writes the install script, and publishes the release
-once the tarball, its checksum and its build provenance exist. The release notes
-are that version's section of `CHANGELOG.md`, so an entry written under
-`## Unreleased` while the work was done is what a reader sees.
+once the tarball, its checksum and its build provenance exist. The release takes
+its title and notes from that version's section of `CHANGELOG.md`, so an entry
+written under `## Unreleased` while the work was done is what a reader sees.
 `.github/workflows/release.yml` is generated — change `dist-workspace.toml` and
 run `dist init`, never the workflow.
 

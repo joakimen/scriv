@@ -5,11 +5,17 @@ versioning](https://semver.org): while scriv is `0.x`, a new command or flag is
 a minor and a fix is a patch.
 
 The entry for a version is what its GitHub release says, so it is written for
-someone deciding whether to upgrade, not for someone reading the diff.
+someone deciding whether to upgrade, not for someone reading the diff. Its
+heading is that release's title, which is why the date sits on a line below
+instead of in it: GitHub prints the date beside the title already. Both lines
+are written by `.github/date-changelog.sh` when the release pull request is
+raised, never by hand.
 
 ## Unreleased
 
-## 0.5.1 - 2026-08-13
+## v0.5.1
+
+*Released 2026-08-13*
 
 ### Added
 
@@ -17,7 +23,9 @@ someone deciding whether to upgrade, not for someone reading the diff.
   `curl -LsSf https://github.com/joakimen/scriv/releases/latest/download/scriv-installer.sh | sh`.
   It installs into `~/.local/bin`.
 
-## 0.5.0 - 2026-08-12
+## v0.5.0
+
+*Released 2026-08-12*
 
 ### Added
 
@@ -29,7 +37,9 @@ someone deciding whether to upgrade, not for someone reading the diff.
 - A release is cut by pushing a tag, rather than by dispatching a workflow that
   needed a personal access token to open its own pull request.
 
-## 0.4.0 - 2026-08-11
+## v0.4.0
+
+*Released 2026-08-11*
 
 ### Changed
 
@@ -38,21 +48,27 @@ someone deciding whether to upgrade, not for someone reading the diff.
   one and `STOP` on the other — so a binary for the wrong platform resumed the
   process it was told to suspend.
 
-## 0.3.2 - 2026-08-11
+## v0.3.2
+
+*Released 2026-08-11*
 
 ### Changed
 
 - Releases are built and published by GitHub Actions. Nothing is compiled or
   signed on a maintainer's machine.
 
-## 0.3.1 - 2026-08-11
+## v0.3.1
+
+*Released 2026-08-11*
 
 ### Changed
 
 - ctrl-q is left unbound, for your own use; `scriv edit` is reached through the
   `fe` function instead.
 
-## 0.3.0 - 2026-08-10
+## v0.3.0
+
+*Released 2026-08-10*
 
 ### Added
 
@@ -76,7 +92,9 @@ someone deciding whether to upgrade, not for someone reading the diff.
 - A selector no longer spins at full CPU after its terminal goes away.
 - A key binding no longer draws over the output it just produced.
 
-## 0.2.1 - 2026-07-30
+## v0.2.1
+
+*Released 2026-07-30*
 
 ### Added
 
@@ -88,7 +106,9 @@ someone deciding whether to upgrade, not for someone reading the diff.
 - A listing ends quietly when its reader stops reading, so `scriv history ls |
   head` no longer ends in a panic.
 
-## 0.2.0 - 2026-07-30
+## v0.2.0
+
+*Released 2026-07-30*
 
 Rewritten in Rust, with the fuzzy finder compiled in rather than shelled out to.
 
