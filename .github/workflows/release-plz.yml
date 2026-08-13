@@ -66,12 +66,19 @@ jobs:
       # request is rebuilt from main often enough that a second commit would
       # only be the one that keeps disappearing.
       - name: Date the changelog entry
-        if: steps.release-plz.outputs.pr != ''
         env:
           PR: ${{ steps.release-plz.outputs.pr }}
         run: |
-          branch=$(printf '%s' "$PR" | jq -r '.head_branch')
-          version=$(printf '%s' "$PR" | jq -r '.releases[0].version')
+          # Read the branch out before deciding there is one. A run with nothing
+          # to propose — the push that merged the last release pull request, and
+          # each one after it until something changes — reports the pull request
+          # as `{}`, which is neither absent nor a branch name.
+          branch=$(printf '%s' "${PR:-}" | jq -r '.head_branch // empty')
+          version=$(printf '%s' "${PR:-}" | jq -r '.releases[0].version // empty')
+          if [ -z "$branch" ] || [ -z "$version" ]; then
+            echo "No release pull request to date"
+            exit 0
+          fi
           # By explicit refspec: the checkout above narrows `remote.origin.fetch`
           # to `main`, so nothing here tracks a branch named after a release.
           git fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch"
