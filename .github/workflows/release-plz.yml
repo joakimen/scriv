@@ -1,0 +1,80 @@
+name: release-plz
+
+# The release pull request, and the tag that merging it cuts. Publishing starts
+# at that tag and belongs to release.yml, which this workflow must never do the
+# work of: it pushes a tag and stops.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+# release-plz rebuilds its branch from main and reads the tags it just pushed.
+# Two runs racing over that leaves a pull request proposing a version that has
+# already shipped.
+concurrency:
+  group: release-plz
+  cancel-in-progress: false
+
+env:
+  # Not the workflow's own GITHUB_TOKEN. A tag it pushes starts no workflow, so
+  # dist would never build the release; a pull request it opens runs no checks,
+  # so `build` and `demo` would never report and the ruleset on `main` would
+  # never let the bump in. Both are what this token is for.
+  GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+jobs:
+  # Tag the merged release pull request. Before the job below, so the tag it
+  # reads as the current version is the one that just shipped.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release
+          # Pinned separately from the action: the tag above moves on its own.
+          version: "0.3.160"
+
+  release-pr:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      - id: release-plz
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release-pr
+          version: "0.3.160"
+
+      # Amended into release-plz's own commit rather than added beside it: the
+      # bump and the changelog entry it announces are one change, and the pull
+      # request is rebuilt from main often enough that a second commit would
+      # only be the one that keeps disappearing.
+      - name: Date the changelog entry
+        if: steps.release-plz.outputs.pr != ''
+        env:
+          PR: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          branch=$(printf '%s' "$PR" | jq -r '.head_branch')
+          version=$(printf '%s' "$PR" | jq -r '.releases[0].version')
+          # By explicit refspec: the checkout above narrows `remote.origin.fetch`
+          # to `main`, so nothing here tracks a branch named after a release.
+          git fetch --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch"
+          git switch --quiet --force-create "$branch" "refs/remotes/origin/$branch"
+          .github/date-changelog.sh "$version"
+          if git diff --quiet; then
+            echo "Nothing to amend"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --quiet --all --amend --no-edit
+          git push --quiet --force-with-lease origin "HEAD:$branch"

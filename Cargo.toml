@@ -7,31 +7,9 @@ license = "MIT"
 repository = "https://github.com/joakimen/scriv"
 exclude = ["docs/", "demo/", ".github/", ".claude/", "prek.toml", "mise.toml"]
 
-# Config for cargo-release, which writes the version, the tag and the push.
-# Pushing the tag is what starts a release — see dist-workspace.toml — so the
-# tag name here is the contract dist reads. scriv ships as GitHub release
-# binaries, never to crates.io.
-#
-# The bump itself is an ordinary pull request, so `cargo release version` and
-# `cargo release replace` run on the branch carrying it; only the tag is cut
-# from `main`.
-[package.metadata.release]
-publish = false
-tag-name = "v{{version}}"
-allow-branch = ["main", "release/*"]
-# `cargo release replace` dates the `## Unreleased` heading with the version
-# just written, so the bump pull request carries the changelog entry rather than
-# leaving it for a second one. dist reads that section back out as the body of
-# the GitHub release, which is the only reason the file is machine-read at all.
-#
-# A sub-table rather than an inline one, which TOML 1.0 will not let span lines.
-# It is last in this section for the same reason: every key after it would
-# belong to it.
-[[package.metadata.release.pre-release-replacements]]
-file = "CHANGELOG.md"
-search = "## Unreleased\n"
-replace = "## Unreleased\n\n## {{version}} - {{date}}\n"
-exactly = 1
+# The version above is written by release-plz, in the pull request it opens —
+# see release-plz.toml. Nothing else may write it: a hand-edit on `main` is a
+# tag the next workflow run cuts without anyone reviewing it.
 
 [dependencies]
 anyhow = "1"

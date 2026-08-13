@@ -67,23 +67,22 @@ make demo-fixture # build the demo sandbox and poke at it by hand
 
 ## Releasing
 
-A pushed tag is the release. The version bump reaches `main` as an ordinary
-pull request first, because the ruleset there requires the `build` and `demo`
-checks like it does of anything else.
+A pushed tag is the release, and merging a pull request is what pushes it.
+Nothing is run by hand.
 
-```sh
-git switch -c release/v0.5.0
-cargo release version minor --execute  # writes Cargo.toml and Cargo.lock
-cargo release replace --execute        # dates the CHANGELOG.md heading
-# ...commit, open the pull request, merge it...
-git switch main && git pull
-cargo release tag --execute && cargo release push --execute
-```
+Every push to `main` runs [release-plz](https://release-plz.dev), which keeps a
+pull request open proposing the next version: the bump in `Cargo.toml` and
+`Cargo.lock`, and the `## Unreleased` section of `CHANGELOG.md` dated with it.
+Merging that pull request tags the merge commit `v0.5.1` and pushes the tag.
+Leaving it open holds the version, which is the answer to a run of pull requests
+that only touched docs, `demo/` or CI.
 
-That last line tags the merged commit `v0.5.0` and pushes the tag; `git tag
-v0.5.0` and `git push origin v0.5.0` do the same thing. cargo-release is pinned
-in `mise.toml` and configured under `[package.metadata.release]` in
-`Cargo.toml`.
+The proposal is a patch. A change that earns a minor — a new command or flag —
+says so with a `Release: minor` line in the body it is squashed with, which
+`release-plz.toml` matches. Should the open pull request read the wrong version
+anyway, edit `Cargo.toml` on its branch, run `cargo check` for the lockfile, fix
+the `CHANGELOG.md` heading to match, and merge before anything else lands: the
+next push to `main` rebuilds that branch from scratch.
 
 The tag starts [dist](https://axodotdev.github.io/cargo-dist), configured in
 `dist-workspace.toml`: it refuses a version no package carries, builds
@@ -94,5 +93,9 @@ are that version's section of `CHANGELOG.md`, so an entry written under
 `.github/workflows/release.yml` is generated — change `dist-workspace.toml` and
 run `dist init`, never the workflow.
 
-No secret and no token beyond the workflow's own `GITHUB_TOKEN`. Every pull
-request runs `dist plan`, which catches a misconfiguration before a tag exists.
+dist needs no secret, and every pull request runs `dist plan`, which catches a
+misconfiguration before a tag exists. release-plz needs one: `RELEASE_PLZ_TOKEN`,
+a fine-grained token with `Contents` and `Pull requests` write on this
+repository. The workflow's own `GITHUB_TOKEN` cannot stand in — a tag it pushes
+starts no workflow, so dist would never build, and a pull request it opens runs
+no checks, so `build` and `demo` would never report to the ruleset on `main`.

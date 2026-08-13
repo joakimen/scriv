@@ -5,12 +5,11 @@
 # recorder pinned in a second place is worse than the `brew install vhs` that
 # CLAUDE.md already names.
 #
-# cargo-release writes the version, the tag and the push, and runs on a
-# maintainer's machine — the pin below is the one that cuts every release. dist
-# owns the rest and pins itself in dist-workspace.toml for CI; the entry below
-# is for running `dist init` by hand, and the two must be bumped together.
+# Nothing below cuts a release. release-plz writes the version and the tag and
+# dist builds what that tag starts, both in CI, each pinned where it runs — in
+# .github/workflows/release-plz.yml and dist-workspace.toml. The dist entry here
+# is for running `dist init` by hand, and must be bumped with that file.
 
 [tools]
 prek = "0.4.11"
-cargo-release = "1.1.2"
 cargo-dist = "0.32.0"

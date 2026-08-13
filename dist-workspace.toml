@@ -22,8 +22,8 @@ install-path = "~/.local/bin"
 # place that assumed Apple Silicon, starting with the signal numbers.
 targets = ["aarch64-apple-darwin"]
 # A pushed `v*` tag is the whole trigger, which is what every other Rust CLI
-# does. `cargo release` writes the version, the tag and the push as one command,
-# so the tag cannot be the step someone forgets.
+# does. release-plz pushes that tag when the release pull request merges, so the
+# tag is nobody's step to forget — see release-plz.toml.
 dispatch-releases = false
 # `.tar.gz`, not dist's default `.tar.xz`: the README's install line resolves
 # these assets through mise, and the extension is part of that contract.

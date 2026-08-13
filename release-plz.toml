@@ -1,0 +1,32 @@
+#:schema https://raw.githubusercontent.com/release-plz/release-plz/main/.schema/latest.json
+# Config for release-plz, which proposes the next version as a pull request and
+# tags the commit merging it. Everything here stops at the tag: the tag is what
+# starts dist, and dist owns every step after it — see dist-workspace.toml.
+
+[workspace]
+# scriv is not on crates.io, so there is no registry to ask what version is
+# current. This reads it from the `v*` tags instead, which is the only reason
+# release-plz can run against this repository at all.
+git_only = true
+publish = false
+
+# dist publishes the GitHub release, with that version's CHANGELOG.md section as
+# its notes. A release created here would be a second, emptier one racing it.
+git_release_enable = false
+
+# CHANGELOG.md is written by hand under `## Unreleased` as the work lands: prose
+# for someone deciding whether to upgrade, which is not something derivable from
+# commit subjects. `.github/date-changelog.sh` gives that section the version
+# heading dist reads back, inside the same pull request.
+changelog_update = false
+
+# cargo-semver-checks compares a library's public API against the registry.
+# scriv has no lib target and no registry, so this only costs the job a download.
+semver_check = false
+
+# Commit subjects here are prose, not conventional commits, so every bump would
+# otherwise be a patch. A pull request that earns a minor — a new command or
+# flag, per CHANGELOG.md — says so with a `Release: minor` line in the body it
+# is squashed with. `(?m)` anchors the line rather than the whole message.
+custom_minor_increment_regex = "(?m)^Release: minor"
+custom_major_increment_regex = "(?m)^Release: major"
