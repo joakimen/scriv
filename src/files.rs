@@ -45,11 +45,18 @@ pub fn write_lines(path: &Path, lines: &[String]) -> Result<()> {
 
     let tmp = dir.join(temp_name());
     let write_result = (|| -> Result<()> {
-        let mut file = fs::File::create(&tmp)
+        let file = fs::File::create(&tmp)
             .with_context(|| format!("creating temp file {}", tmp.display()))?;
+        // Buffered: an entry is one short line, and a `write` syscall each is a
+        // syscall per tracked file.
+        let mut out = std::io::BufWriter::new(file);
         for line in &normalized {
-            writeln!(file, "{line}").with_context(|| format!("writing to {}", tmp.display()))?;
+            writeln!(out, "{line}").with_context(|| format!("writing to {}", tmp.display()))?;
         }
+        let file = out
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)
+            .with_context(|| format!("writing to {}", tmp.display()))?;
         file.sync_all()
             .with_context(|| format!("flushing {}", tmp.display()))?;
         Ok(())

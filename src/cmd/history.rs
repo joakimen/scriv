@@ -86,6 +86,7 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
             break;
         }
     }
+    out.finish()?;
     Ok(())
 }
 
