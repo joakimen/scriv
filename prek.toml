@@ -22,13 +22,17 @@ repo = "local"
 
 # CLAUDE.md forbids committing to main, and `.claude/hooks/no-commit-on-main.sh`
 # only refuses the agent. This refuses git.
+#
+# `exclude` is what implements CLAUDE.md's exception for Markdown: with no
+# `always_run`, a hook runs only when a staged file matches its filter, so a
+# commit of nothing but `.md` files leaves this one with nothing to run on.
 [[repos.hooks]]
 id = "no-commit-on-main"
 name = "commits go on a branch, not main"
-entry = "sh -c 'test \"$(git branch --show-current)\" != main || { echo \"On main. Branch first: git switch -c <name>\" >&2; exit 1; }'"
+entry = "sh -c 'test \"$(git branch --show-current)\" != main || { echo \"On main with a non-Markdown change. Branch first: git switch -c <name>\" >&2; exit 1; }'"
 language = "system"
 stages = ["pre-commit"]
-always_run = true
+exclude = "\\.md$"
 pass_filenames = false
 
 # The first thing `make` runs, and the cheapest: a fraction of a second against

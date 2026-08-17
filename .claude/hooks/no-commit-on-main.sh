@@ -26,14 +26,35 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
 [ "$branch" = "main" ] || exit 0
 
+# CLAUDE.md's exception: a commit of nothing but Markdown may land on `main`.
+#
+# What the commit would contain is the staged set, plus every modified tracked
+# file when the command stages them itself. That flag is matched loosely — a
+# `-a` inside the message text matches too — because widening the set can only
+# ever refuse a commit this hook would otherwise have allowed. An amend is
+# never markdown-only: it carries whatever the commit it rewrites carried.
+paths=$(git -C "$cwd" diff --cached --name-only 2>/dev/null)
+if printf '%s' "$command" | grep -Eq '(^|[[:space:]])(-[A-Za-z]*a[A-Za-z]*|--all)([[:space:]]|$)'; then
+	paths=$(printf '%s\n%s' "$paths" "$(git -C "$cwd" diff --name-only 2>/dev/null)")
+fi
+amends=$(printf '%s' "$command" | grep -Eq '(^|[[:space:]])--amend([[:space:]]|$)' && echo yes)
+
+# An empty set means nothing is staged and the paths are on the command line,
+# which this cannot see. Unprovable is refused, not waved through.
+if [ -z "${amends:-}" ] && [ -n "$(printf '%s' "$paths" | tr -d '[:space:]')" ] &&
+	! printf '%s\n' "$paths" | grep -v '^[[:space:]]*$' | grep -qv '\.md$'; then
+	exit 0
+fi
+
 cat >&2 <<'EOF'
 Refusing: HEAD is `main`, and this commit would land on it directly.
 
 CLAUDE.md: "Never commit straight to `main`. The pull request is what leaves a
 reviewable record of work nobody watched happen."
 
-Put the work on a branch first. Anything larger than a one-line fix gets its
-own worktree:
+Only a commit whose every staged path ends in `.md` is exempt, and this one
+does not qualify — stage the Markdown on its own, or put the work on a branch.
+Anything larger than a one-line fix gets its own worktree:
 
     git worktree add .claude/worktrees/<name> -b <name>
 
