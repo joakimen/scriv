@@ -34,20 +34,28 @@ parallel pull requests one at a time, largest first: arm, wait on `gh pr view
 `--force-with-lease`, arm the next. Two independently green commits have never
 been compiled together, which is what that sequencing buys.
 
-Cutting a release is not that authorisation. release-plz keeps a pull request
-open proposing the next version, and merging it pushes the tag that publishes:
-a deliberate act, the maintainer's, never one to arm auto-merge on or to merge
-on your own initiative. Leaving it open is how the version holds through a run
-of pull requests that only touched docs, `demo/`, CI, `prek.toml` or this file.
-It earns a merge once something in `src/` a user would feel — a command, a flag,
-a fix — has landed, green and settled, which is the same bar as a `## Unreleased`
-section with something in it: a version with nothing to announce is not one.
+Cutting a release is part of that authorisation, not a step past it. scriv is
+the maintainer's own daily tool, so a feature sitting on `main` behind an
+unmerged release pull request is a feature nobody can use — merging the feature
+is not where delivering it ends. Once something in `src/` a user would feel — a
+command, a flag, a fix — has landed green and settled, merge the release pull
+request release-plz keeps open, let the tag's dist run publish, then
+`mise upgrade "github:joakimen/scriv"` and say which version `scriv --version`
+reports. That is roughly nine minutes of CI end to end; do not wait on it idly
+when there is other work.
+
+A run of pull requests that only touched docs, `demo/`, CI, `prek.toml` or this
+file earns no release. Leaving that pull request open is how the version holds
+through them, and it is the same bar as a `## Unreleased` section with
+something in it: a version with nothing to announce is not one.
 
 That pull request proposes a patch. A change that earns a minor — a new command
-or flag, while `0.x` — has to say so with a `Release: minor` line in the body it
-is squashed with, so it belongs to the pull request making the change and cannot
-be added afterwards. README.md under *Releasing* has the rest, including the way
-out when the proposed version is wrong anyway.
+or flag, while `0.x` — has to say so with a `Release: minor` line in a commit
+message on its branch. Not in the pull request description: this repository
+squashes with `COMMIT_MESSAGES`, so the description is discarded and a marker
+written there is matched by nothing and costs a version silently. README.md
+under *Releasing* has the rest, including the way out when the proposed version
+is wrong anyway.
 
 Nothing is built, signed or tagged on a maintainer's machine. Do not cut a
 release locally to work around a red workflow — fix the workflow.

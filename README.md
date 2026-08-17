@@ -133,11 +133,12 @@ the tag. Leaving it open holds the version, which is the answer to a run of
 pull requests that only touched docs, `demo/` or CI.
 
 The proposal is a patch. A change that earns a minor — a new command or flag —
-says so with a `Release: minor` line in the body it is squashed with, which
-`release-plz.toml` matches. Should the open pull request read the wrong version
-anyway, edit `Cargo.toml` on its branch, run `cargo check` for the lockfile, fix
-the `CHANGELOG.md` heading to match, and merge before anything else lands: the
-next push to `main` rebuilds that branch from scratch.
+says so with a `Release: minor` line in a commit message on its branch, which
+`release-plz.toml` matches. Not the pull request description: squash merges here
+take the commit messages and discard it. Should the open pull request read the
+wrong version anyway, edit `Cargo.toml` on its branch, run `cargo check` for the
+lockfile, fix the `CHANGELOG.md` heading to match, and merge before anything
+else lands: the next push to `main` rebuilds that branch from scratch.
 
 The tag starts [dist](https://axodotdev.github.io/cargo-dist), configured in
 `dist-workspace.toml`: it refuses a version no package carries, builds
