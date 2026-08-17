@@ -347,6 +347,22 @@ enum BranchCmd {
         #[command(flatten)]
         scope: BranchScope,
     },
+    /// Delete local branches; omit the names to select them
+    ///
+    /// `tab` selects several. Each is listed with whether git can see its
+    /// commits have landed, and answering the question that follows is what
+    /// lets an unmerged one go — a repository that squashes its merges has no
+    /// other kind, so there is no flag to type every time and read never.
+    ///
+    /// Remote branches are never offered: deleting one is a push.
+    Rm {
+        /// Branches to delete; omit to select interactively
+        #[arg(value_name = "BRANCH")]
+        branches: Vec<String>,
+        /// Delete without asking
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -364,6 +380,36 @@ enum WorktreeCmd {
     },
     /// Fuzzy-select a worktree and print its absolute path
     Sel,
+    /// Add a worktree; omit the branch to select or name one
+    ///
+    /// A branch that does not exist is created, since a tree is usually where
+    /// a piece of work starts. A remote-only one arrives tracking it.
+    ///
+    /// Where the tree goes is `[worktree] root` — `.worktrees` inside the
+    /// repository by default, one directory per branch with `/` written as `-`.
+    /// An absolute root holds the trees of every repository, under the
+    /// repository's own name. The path is printed, so `cd (scriv worktree add
+    /// feat/x)` lands in it.
+    Add {
+        /// Branch the tree checks out; omit to select or type one
+        branch: Option<String>,
+    },
+    /// Remove worktrees; omit the paths to select them
+    ///
+    /// `tab` selects several. Neither the main tree nor the one you are
+    /// standing in is offered — git will not remove either. The branches they
+    /// had checked out are left alone; that is `scriv branch rm`.
+    Rm {
+        /// Worktrees to remove, by path; omit to select interactively
+        #[arg(value_name = "PATH")]
+        paths: Vec<String>,
+        /// Remove a tree with uncommitted changes in it
+        #[arg(short, long)]
+        force: bool,
+        /// Remove without asking
+        #[arg(short, long)]
+        yes: bool,
+    },
 }
 
 /// Which pull requests a `pr` subcommand fetches, shared by all three.
@@ -626,6 +672,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             BranchCmd::Checkout { branch, scope } => {
                 cmd::branch::checkout(&ctx, branch.as_deref(), scope.filter(), scope.fetch)
             }
+            BranchCmd::Rm { branches, yes } => cmd::branch::rm(&ctx, &branches, yes),
         },
         Command::Worktree { command } => match command {
             WorktreeCmd::Ls {
@@ -633,6 +680,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 status,
             } => cmd::worktree::ls(&ctx, absolute_paths, status),
             WorktreeCmd::Sel => cmd::worktree::sel(&ctx),
+            WorktreeCmd::Add { branch } => cmd::worktree::add(&ctx, branch.as_deref()),
+            WorktreeCmd::Rm { paths, force, yes } => {
+                cmd::worktree::remove(&ctx, &paths, force, yes)
+            }
         },
         Command::Pr { command } => match command {
             PrCmd::Ls { status, scope } => cmd::pr::ls(&ctx, &scope.state, scope.limit, status),

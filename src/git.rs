@@ -288,6 +288,68 @@ pub fn resolve(branches: &[Branch], input: &str) -> Checkout {
     Checkout::Switch(input.to_string())
 }
 
+/// What a name given to `worktree add` means: the three ways a new tree can
+/// come by the branch it checks out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeSource {
+    /// Check out a local branch that already exists.
+    Branch(String),
+    /// Create `branch` from `remote_ref` and track it, as [`Checkout::Track`]
+    /// does for the current tree.
+    Track { remote_ref: String, branch: String },
+    /// Create a branch here, from what is checked out now.
+    New(String),
+}
+
+impl TreeSource {
+    /// The local branch the new tree will be on, whichever way it got there.
+    pub fn branch(&self) -> &str {
+        match self {
+            Self::Branch(name) | Self::New(name) => name,
+            Self::Track { branch, .. } => branch,
+        }
+    }
+}
+
+/// Decide where a new tree's branch comes from, given the known branches.
+///
+/// [`resolve`]'s rules, and then two of its own, because `git worktree add`
+/// does not guess the way `git switch` does:
+///
+/// - A bare name only a remote has creates the local branch tracking it. This
+///   is git's own DWIM, which `switch` performs and `worktree add` does not —
+///   left to git, `worktree add -b feat/x` would build a *new* branch from
+///   HEAD that shares a name with the remote one and nothing else. Ambiguous
+///   across remotes, it is left alone, as a branch to create.
+/// - A name matching nothing at all is a branch to create rather than an error.
+///   Adding a tree is how a piece of work starts, and its branch usually does
+///   not exist yet.
+pub fn tree_source(branches: &[Branch], input: &str) -> TreeSource {
+    let tracking = |remote_ref: &str| TreeSource::Track {
+        branch: split_remote(remote_ref)
+            .map(|(_, branch)| branch.to_string())
+            .unwrap_or_else(|| remote_ref.to_string()),
+        remote_ref: remote_ref.to_string(),
+    };
+
+    match resolve(branches, input) {
+        Checkout::Track { remote_ref } => tracking(&remote_ref),
+        Checkout::Switch(name) if branches.iter().any(|b| b.name == name) => {
+            TreeSource::Branch(name)
+        }
+        Checkout::Switch(name) => {
+            let mut remotes = branches
+                .iter()
+                .filter(|b| b.kind == BranchKind::Remote)
+                .filter(|b| split_remote(&b.name).is_some_and(|(_, tail)| tail == name));
+            match (remotes.next(), remotes.next()) {
+                (Some(only), None) => tracking(&only.name),
+                _ => TreeSource::New(name),
+            }
+        }
+    }
+}
+
 /// A working tree of the repository: the main one, or one added with
 /// `git worktree add`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -466,6 +528,30 @@ fn passthrough(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// [`passthrough`], with the child's stdout sent to scriv's stderr.
+///
+/// `git worktree add` narrates its checkout on stdout — `HEAD is now at …`, and
+/// the line saying an upstream was set — while stdout is also where scriv puts
+/// the path a shell reads to `cd` into the new tree. Both are worth keeping, so
+/// git keeps its voice and gives up the channel.
+fn passthrough_onto_stderr(args: &[&str]) -> Result<()> {
+    use std::os::fd::AsFd;
+
+    let stderr = std::io::stderr()
+        .as_fd()
+        .try_clone_to_owned()
+        .context("duplicating stderr")?;
+    let status = Command::new("git")
+        .args(args)
+        .stdout(Stdio::from(stderr))
+        .status()
+        .map_err(spawn_error)?;
+    if !status.success() {
+        return Err(Reported(status.code().unwrap_or(1)).into());
+    }
+    Ok(())
+}
+
 /// Fail early, and with a better message than git's, when the working
 /// directory is not inside a repository.
 pub fn ensure_repo() -> Result<()> {
@@ -579,6 +665,121 @@ pub fn checkout(action: &Checkout) -> Result<()> {
         Checkout::Switch(name) => passthrough(&["switch", "--", name]),
         Checkout::Track { remote_ref } => passthrough(&["switch", "--track", remote_ref]),
     }
+}
+
+/// Create a working tree at `path` from `source`.
+///
+/// git creates the parent directories itself, so there is nothing to prepare,
+/// and everything it says lands on stderr — see [`passthrough_onto_stderr`].
+pub fn add_worktree(path: &Path, source: &TreeSource) -> Result<()> {
+    let path = path.to_string_lossy();
+    match source {
+        TreeSource::Branch(name) => passthrough_onto_stderr(&["worktree", "add", &path, name]),
+        TreeSource::New(name) => passthrough_onto_stderr(&["worktree", "add", "-b", name, &path]),
+        TreeSource::Track { remote_ref, branch } => passthrough_onto_stderr(&[
+            "worktree", "add", "--track", "-b", branch, &path, remote_ref,
+        ]),
+    }
+}
+
+/// Whether git already ignores `path`, by any of the rules it consults.
+fn is_ignored(path: &Path) -> bool {
+    Command::new("git")
+        .args(["check-ignore", "--quiet", "--"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Have this clone ignore `pattern`, if nothing already does.
+///
+/// A directory of working trees inside the repository is untracked files as far
+/// as everything else is concerned: `git status` lists them, and every walker
+/// that honours `.gitignore` — `scriv edit`'s included — offers the whole tree a
+/// second time under it. The rule belongs to this clone rather than to the
+/// project, so it goes in `info/exclude` and is never committed.
+///
+/// Returns whether a line was written. A failure is not one: the tree is
+/// already there and usable, and being untidy about it is not worth undoing it.
+pub fn ignore_locally(root: &Path, pattern: &str) -> Result<bool> {
+    if is_ignored(&root.join(pattern)) {
+        return Ok(false);
+    }
+
+    // The *common* directory: a linked worktree's own `.git` is a file
+    // pointing into the main one, and that is where `info/exclude` lives.
+    let common = capture(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .context("locating the git directory")?;
+    let exclude = Path::new(common.trim()).join("info").join("exclude");
+
+    let mut existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str(&format!("{pattern}/\n"));
+
+    if let Some(dir) = exclude.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    std::fs::write(&exclude, existing).with_context(|| format!("writing {}", exclude.display()))?;
+    Ok(true)
+}
+
+/// Remove the working tree at `path`. `force` is git's own, and is what a tree
+/// with uncommitted changes in it needs.
+pub fn remove_worktree(path: &Path, force: bool) -> Result<()> {
+    let path = path.to_string_lossy();
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(&path);
+    passthrough(&args)
+}
+
+/// The local branches already contained in the current HEAD, which are the ones
+/// git will delete without being forced.
+///
+/// A squash merge produces no such containment — the branch's commits never
+/// become ancestors of what merged them — so an empty answer means "git cannot
+/// tell", not "nothing has landed".
+pub fn merged_branches() -> Result<HashSet<String>> {
+    // `HEAD` spelled out: `--merged` takes an optional commit, so the format
+    // argument after a bare one is read as the commit to compare against.
+    let out = capture(&["branch", "--merged", "HEAD", "--format=%(refname:short)"])
+        .context("listing merged branches")?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Delete a local branch. `force` is git's `-D`: it deletes a branch whose
+/// commits are in no other, which `-d` refuses.
+///
+/// Captured rather than passed through, so a refusal is one line the caller can
+/// report against the branch it belongs to — several branches are deleted in
+/// one run, and git's own wording says which only by quoting the name.
+pub fn delete_branch(name: &str, force: bool) -> Result<()> {
+    let flag = if force { "-D" } else { "-d" };
+    capture(&["branch", flag, "--", name])
+        .map(|_| ())
+        .map_err(|err| anyhow!("{}", unprefixed(&format!("{err:#}"))))
+}
+
+/// git's own `error:` or `fatal:` opener, removed. The caller is reporting the
+/// line inside one of its own, and two of the word in a row says nothing twice.
+fn unprefixed(message: &str) -> &str {
+    let message = message.trim();
+    ["error: ", "fatal: "]
+        .iter()
+        .find_map(|prefix| message.strip_prefix(prefix))
+        .unwrap_or(message)
 }
 
 #[cfg(test)]
@@ -818,6 +1019,79 @@ mod tests {
         assert_eq!(
             resolve(&sample(), "nope"),
             Checkout::Switch("nope".to_string())
+        );
+    }
+
+    #[test]
+    fn gits_own_error_opener_is_not_repeated_inside_the_callers() {
+        assert_eq!(
+            unprefixed("error: cannot delete branch 'x' used by worktree at '/y'"),
+            "cannot delete branch 'x' used by worktree at '/y'"
+        );
+        assert_eq!(unprefixed("fatal: not a valid ref"), "not a valid ref");
+        assert_eq!(unprefixed("  plain trouble  "), "plain trouble");
+    }
+
+    /// A tree is where work starts, and its branch usually does not exist yet —
+    /// the one place an unknown name means "create it" rather than "ask git".
+    #[test]
+    fn an_unknown_name_is_a_branch_to_create() {
+        assert_eq!(
+            tree_source(&sample(), "feat/new"),
+            TreeSource::New("feat/new".to_string())
+        );
+    }
+
+    #[test]
+    fn an_existing_branch_is_checked_out_rather_than_recreated() {
+        assert_eq!(
+            tree_source(&sample(), "scratch"),
+            TreeSource::Branch("scratch".to_string())
+        );
+    }
+
+    #[test]
+    fn a_remote_only_branch_arrives_tracking_it() {
+        assert_eq!(
+            tree_source(&sample(), "origin/feature"),
+            TreeSource::Track {
+                remote_ref: "origin/feature".to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+        // The remote name is not part of the local branch, whichever form the
+        // tree was asked for by.
+        assert_eq!(tree_source(&sample(), "origin/feature").branch(), "feature");
+    }
+
+    /// `git switch feature` would create the tracking branch by itself.
+    /// `git worktree add -b feature` would not: it would build a new branch
+    /// from HEAD sharing a name with the remote one and nothing else.
+    #[test]
+    fn a_bare_name_only_a_remote_has_still_tracks_it() {
+        assert_eq!(
+            tree_source(&sample(), "feature"),
+            TreeSource::Track {
+                remote_ref: "origin/feature".to_string(),
+                branch: "feature".to_string(),
+            }
+        );
+    }
+
+    /// git refuses to guess between two remotes, and neither does this.
+    #[test]
+    fn a_name_two_remotes_share_is_left_as_a_branch_to_create() {
+        let mut branches = sample();
+        branches.push(Branch {
+            name: "fork/feature".to_string(),
+            kind: BranchKind::Remote,
+            head: false,
+            date: "1 day ago".to_string(),
+            subject: "theirs".to_string(),
+        });
+        assert_eq!(
+            tree_source(&branches, "feature"),
+            TreeSource::New("feature".to_string())
         );
     }
 

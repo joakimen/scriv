@@ -74,8 +74,8 @@ ignore = ["node_modules", "target"]
 | --- | --- |
 | `scriv repo` | `ls` `sel` `open` `clone` |
 | `scriv file` | `ls` `sel` `add` `rm` `prune` |
-| `scriv branch` | `ls` `sel` `checkout` |
-| `scriv worktree` | `ls` `sel` |
+| `scriv branch` | `ls` `sel` `checkout` `rm` |
+| `scriv worktree` | `ls` `sel` `add` `rm` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
 | `scriv proc` | `ls` `sel` `kill` |
 | `scriv history` | `ls` `sel` |

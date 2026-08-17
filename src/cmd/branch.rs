@@ -7,11 +7,12 @@
 //! Every listing arrives ordered by [`git::by_relevance`]: current branch, then
 //! local, then remote-only, newest first within each.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
 
-use crate::git::{self, Branch, Filter};
+use crate::git::{self, Branch, BranchKind, Filter};
 use crate::select::{Preview, SelectItem};
 use crate::term;
 use crate::{Ctx, select};
@@ -213,10 +214,161 @@ pub fn checkout(ctx: &Ctx, name: Option<&str>, filter: Filter, fetch: bool) -> R
     git::checkout(&action)
 }
 
+// --- rm ---------------------------------------------------------------------
+
+/// The branches `rm` may offer: the ones that exist in this clone, minus the
+/// one that is checked out.
+///
+/// Remote branches are deliberately absent. Deleting one is a push, which is
+/// not something to be one keystroke and no network round trip away from, and
+/// nothing on this list would say it had happened.
+fn deletable(branches: &[Branch]) -> Vec<&Branch> {
+    branches
+        .iter()
+        .filter(|branch| branch.kind != BranchKind::Remote && !branch.head)
+        .collect()
+}
+
+/// The mark a branch carries in the list of what is about to be deleted, and in
+/// the selector: whether git considers its commits to have landed.
+///
+/// A squash merge leaves no trace git can follow — the branch's commits never
+/// become ancestors of the commit that merged them — so `not merged` is
+/// routinely true of work that is finished. It is a fact, not a warning, which
+/// is why it is shown rather than obeyed.
+fn merge_mark(merged: bool) -> &'static str {
+    if merged { "merged" } else { "not merged" }
+}
+
+/// Selector rows for deletion: the branch, when it was last committed to, and
+/// whether it has landed. Tinted green where git can see it has.
+fn rm_items(branches: &[Branch], merged: &HashSet<String>) -> Vec<SelectItem> {
+    let width = name_width(branches);
+    let mark_width = "not merged".len();
+    branches
+        .iter()
+        .map(|branch| {
+            let landed = merged.contains(&branch.name);
+            let label = format!(
+                "{name:<width$}  {mark:<mark_width$}  {date}  {subject}",
+                name = branch.name,
+                mark = merge_mark(landed),
+                date = branch.date,
+                subject = branch.subject,
+            );
+            SelectItem::new(label.trim_end(), branch.name.clone())
+                .color(if landed { 2 } else { 3 })
+                .preview(preview(branch))
+        })
+        .collect()
+}
+
+/// `scriv branch rm [NAME]...` — delete local branches, selecting them when
+/// none are named.
+///
+/// What will go is printed with its merge state before the question is put, as
+/// `file prune` does, and answering it is the consent that lets an unmerged
+/// branch go: a repository that squashes its merges has no other kind, so a
+/// flag guarding them would be a flag typed every time and read never.
+pub fn rm(ctx: &Ctx, names: &[String], yes: bool) -> Result<()> {
+    let branches = collect(ctx, Filter::Local, false)?;
+    let merged = git::merged_branches()?;
+
+    let targets: Vec<String> = if names.is_empty() {
+        let offered: Vec<Branch> = deletable(&branches).into_iter().cloned().collect();
+        if offered.is_empty() {
+            bail!("no other local branches — only the one you have checked out");
+        }
+        match select::select_many(
+            rm_items(&offered, &merged),
+            "Delete branches",
+            &ctx.config.selector,
+        ) {
+            Ok(selected) => selected,
+            Err(e) if e.is::<select::Cancelled>() => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    } else {
+        names.to_vec()
+    };
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    if !confirm_deletion(ctx, &targets, &merged, yes)? {
+        return Ok(());
+    }
+
+    let mut failed = 0;
+    for name in &targets {
+        // Forced for a branch git cannot see has landed: the confirmation
+        // above showed that state and was answered anyway.
+        let force = !merged.contains(name);
+        match git::delete_branch(name, force) {
+            Ok(()) => println!("Deleted {name}"),
+            Err(err) => {
+                failed += 1;
+                eprintln!("error: {name}: {err:#}");
+            }
+        }
+    }
+    if failed > 0 {
+        bail!(
+            "{failed} of {} branches could not be deleted",
+            targets.len()
+        );
+    }
+    Ok(())
+}
+
+/// Show what is about to go, and what git knows about each, then ask.
+fn confirm_deletion(
+    ctx: &Ctx,
+    targets: &[String],
+    merged: &HashSet<String>,
+    yes: bool,
+) -> Result<bool> {
+    let width = targets.iter().map(|n| n.chars().count()).max().unwrap_or(0);
+    let color = ctx.color();
+
+    let mut out = term::Listing::stdout();
+    for name in targets {
+        let landed = merged.contains(name);
+        let row = format!("{name:<width$}  {}", merge_mark(landed));
+        if !out.line(&term::paint(&row, if landed { 2 } else { 3 }, color))? {
+            return Ok(false);
+        }
+    }
+    out.finish()?;
+
+    match term::Confirm::resolve(yes) {
+        term::Confirm::Assumed => Ok(true),
+        term::Confirm::Ask => {
+            let question = format!(
+                "Delete {} {}?",
+                targets.len(),
+                if targets.len() == 1 {
+                    "branch"
+                } else {
+                    "branches"
+                }
+            );
+            let answer = term::confirm(&question)?;
+            if !answer {
+                println!("Nothing deleted");
+            }
+            Ok(answer)
+        }
+        term::Confirm::Impossible => bail!(
+            "no terminal to ask for confirmation on — pass `--yes` to delete without being asked"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::{BranchKind, RefLine, classify};
+    use crate::git::{RefLine, classify};
 
     fn branches() -> Vec<Branch> {
         classify(&[
@@ -280,6 +432,39 @@ mod tests {
             label.starts_with("  café  now"),
             "column padded past the longest name: {label:?}"
         );
+    }
+
+    /// Deleting a remote branch is a push. Nothing on this list would say it
+    /// had happened, and no confirmation here is consent to change a remote.
+    #[test]
+    fn only_local_branches_that_are_not_checked_out_are_offered_for_deletion() {
+        let here = branches();
+        let offered: Vec<&str> = deletable(&here).iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(offered, Vec::<&str>::new(), "main is checked out here");
+
+        let mut branches = branches();
+        branches[0].head = false;
+        let offered: Vec<&str> = deletable(&branches)
+            .iter()
+            .map(|b| b.name.as_str())
+            .collect();
+        assert_eq!(offered, vec!["main"], "a remote branch was offered");
+    }
+
+    #[test]
+    fn the_deletion_rows_say_what_git_can_see_has_landed() {
+        let mut branches = branches();
+        branches[0].head = false;
+        let merged: HashSet<String> = ["main".to_string()].into_iter().collect();
+
+        let rows = rm_items(&branches, &merged);
+        assert!(rows[0].label.contains("merged"), "{}", rows[0].label);
+        assert_eq!(rows[0].color, Some(2), "a landed branch is not green");
+        assert_eq!(rows[0].value(), "main");
+
+        let rows = rm_items(&branches, &HashSet::new());
+        assert!(rows[0].label.contains("not merged"), "{}", rows[0].label);
+        assert_eq!(rows[0].color, Some(3));
     }
 
     #[test]

@@ -3,13 +3,15 @@
 //!
 //! Switching to one is a `cd`, which a child process cannot do to its parent,
 //! so `sel` prints the path and the fish integration's ctrl-t moves there —
-//! the same split as `repo sel`.
+//! the same split as `repo sel`. `add` prints its path for the same reason.
+
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
 use crate::git::{self, Worktree};
-use crate::path::display_path;
-use crate::select::SelectItem;
+use crate::path::{display_path, expand_home_dir};
+use crate::select::{Choice, SelectItem};
 use crate::{Ctx, select, term};
 
 /// Every working tree of the current repository, in git's order.
@@ -138,6 +140,208 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
+// --- add --------------------------------------------------------------------
+
+/// A branch name as one directory name: `feat/x` becomes `feat-x` rather than
+/// an `x` inside a `feat`, so however branches are named the trees stay one
+/// flat list to look at.
+fn slug(branch: &str) -> String {
+    branch.replace('/', "-")
+}
+
+/// Where a new tree for `branch` goes.
+///
+/// A relative root is inside the repository, so a tree sits beside the checkout
+/// it came from and goes when that does. An absolute one holds the trees of
+/// every repository, and would collide on the first two branches named `main`,
+/// so the repository's own directory name is a level of it.
+fn tree_path(repo_root: &Path, root: &Path, branch: &str) -> PathBuf {
+    let slug = slug(branch);
+    if !root.is_absolute() {
+        return repo_root.join(root).join(slug);
+    }
+    match repo_root.file_name() {
+        Some(name) => root.join(name).join(slug),
+        None => root.join(slug),
+    }
+}
+
+/// Fuzzy-select the branch a new tree checks out, accepting a name that matches
+/// nothing — which is how a tree for work that has not started yet is made.
+fn choose_branch(ctx: &Ctx, branches: &[git::Branch]) -> Result<String> {
+    let items = items_for_branches(branches);
+    match select::select_one_or_query(items, "Branch (type a new name)", &ctx.config.selector)? {
+        Choice::Item(name) => Ok(name),
+        Choice::Query(typed) => Ok(typed),
+    }
+}
+
+/// Selector rows for the branch list: the name, and what it last carried.
+fn items_for_branches(branches: &[git::Branch]) -> Vec<SelectItem> {
+    let width = branches
+        .iter()
+        .map(|b| b.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    branches
+        .iter()
+        .map(|branch| {
+            let label = format!(
+                "{name:<width$}  {date}  {subject}",
+                name = branch.name,
+                date = branch.date,
+                subject = branch.subject,
+            );
+            SelectItem::new(label.trim_end(), branch.name.clone()).color(branch.kind.color())
+        })
+        .collect()
+}
+
+/// `scriv worktree add [BRANCH]` — create a working tree, selecting or naming
+/// the branch it checks out.
+///
+/// The path is scriv's to decide (see [`tree_path`]) and is printed on stdout,
+/// so the tree can be entered with `cd (scriv worktree add feat/x)`. git's own
+/// narration goes to stderr, where it does not get in the way of that.
+pub fn add(ctx: &Ctx, branch: Option<&str>) -> Result<()> {
+    let repo_root = git::require_repo_root()?;
+    let branches = git::branches()?;
+
+    let input = match branch {
+        Some(branch) => branch.to_string(),
+        None => choose_branch(ctx, &branches)?,
+    };
+    let source = git::tree_source(&branches, &input);
+    ctx.log.info(&format!("tree source: {source:?}"));
+
+    let root = expand_home_dir(&ctx.config.worktree.root, ctx.home());
+    let path = tree_path(&repo_root, &root, source.branch());
+    if path.exists() {
+        bail!(
+            "{} already exists — `scriv worktree sel` will take you there",
+            path.display()
+        );
+    }
+
+    git::add_worktree(&path, &source)?;
+
+    // Only for a root inside the repository: an absolute one is nobody's
+    // working copy and there is nothing to hide from `git status`.
+    if !root.is_absolute() {
+        match git::ignore_locally(&repo_root, &ctx.config.worktree.root) {
+            Ok(true) => eprintln!(
+                "note: added `{}/` to this clone's .git/info/exclude",
+                ctx.config.worktree.root
+            ),
+            Ok(false) => {}
+            Err(err) => ctx
+                .log
+                .warn(&format!("could not write info/exclude: {err:#}")),
+        }
+    }
+
+    println!("{}", path.display());
+    Ok(())
+}
+
+// --- rm ---------------------------------------------------------------------
+
+/// The trees `rm` may offer: neither the main tree, which git will not remove,
+/// nor the one the shell is standing in, which it will not remove either.
+fn removable(worktrees: &[Worktree]) -> Vec<&Worktree> {
+    worktrees
+        .iter()
+        .skip(1) // git lists the main tree first, and it cannot be removed
+        .filter(|worktree| !worktree.current)
+        .collect()
+}
+
+/// `scriv worktree rm [PATH]...` — remove working trees, selecting them when
+/// none are named.
+///
+/// What will go is printed before the question is put, as `file prune` does:
+/// "remove 2 trees?" is answerable only by someone who has seen the two. The
+/// branches they had checked out are left alone — that is `scriv branch rm`.
+pub fn remove(ctx: &Ctx, paths: &[String], force: bool, yes: bool) -> Result<()> {
+    let worktrees = load(ctx)?;
+
+    let targets: Vec<String> = if paths.is_empty() {
+        let offered = removable(&worktrees);
+        if offered.is_empty() {
+            bail!("no worktrees to remove — only the main tree and the one you are in");
+        }
+        let rows: Vec<SelectItem> = {
+            let owned: Vec<Worktree> = offered.into_iter().cloned().collect();
+            items(&owned, ctx.home_str())
+        };
+        match select::select_many(rows, "Remove worktrees", &ctx.config.selector) {
+            Ok(selected) => selected,
+            Err(e) if e.is::<select::Cancelled>() => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    } else {
+        paths.to_vec()
+    };
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    if !confirm_removal(ctx, &targets, yes)? {
+        return Ok(());
+    }
+
+    let mut failed = 0;
+    for path in &targets {
+        match git::remove_worktree(Path::new(path), force) {
+            Ok(()) => println!("Removed {}", display_path(path, ctx.home_str(), false)),
+            // git says why on the terminal it was handed; a second sentence
+            // from scriv over the top of it would only be vaguer.
+            Err(_) => failed += 1,
+        }
+    }
+    if failed > 0 {
+        bail!(
+            "{failed} of {} worktrees could not be removed",
+            targets.len()
+        );
+    }
+    Ok(())
+}
+
+/// Show what is about to go and ask, unless `yes`.
+fn confirm_removal(ctx: &Ctx, targets: &[String], yes: bool) -> Result<bool> {
+    let mut out = term::Listing::stdout();
+    for path in targets {
+        if !out.line(&display_path(path, ctx.home_str(), false))? {
+            return Ok(false);
+        }
+    }
+    out.finish()?;
+
+    match term::Confirm::resolve(yes) {
+        term::Confirm::Assumed => Ok(true),
+        term::Confirm::Ask => {
+            let question = format!(
+                "Remove {} {}?",
+                targets.len(),
+                if targets.len() == 1 {
+                    "worktree"
+                } else {
+                    "worktrees"
+                }
+            );
+            let answer = term::confirm(&question)?;
+            if !answer {
+                println!("Nothing removed");
+            }
+            Ok(answer)
+        }
+        term::Confirm::Impossible => bail!(
+            "no terminal to ask for confirmation on — pass `--yes` to remove without being asked"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,6 +425,55 @@ mod tests {
             label.starts_with("  café  ~/café"),
             "column padded past the longest name: {label:?}",
         );
+    }
+
+    #[test]
+    fn a_branch_becomes_one_directory_rather_than_a_nest() {
+        assert_eq!(slug("feat/x"), "feat-x");
+        assert_eq!(slug("release/1.2/rc"), "release-1.2-rc");
+        assert_eq!(slug("main"), "main");
+    }
+
+    #[test]
+    fn a_relative_root_puts_the_tree_beside_the_checkout() {
+        let path = tree_path(
+            Path::new("/home/u/dev/github.com/me/scriv"),
+            Path::new(".worktrees"),
+            "feat/x",
+        );
+        assert_eq!(
+            path,
+            PathBuf::from("/home/u/dev/github.com/me/scriv/.worktrees/feat-x")
+        );
+    }
+
+    /// One directory of trees for every repository would have two `main`s the
+    /// moment a second repository used it.
+    #[test]
+    fn an_absolute_root_keeps_each_repository_apart() {
+        let path = tree_path(
+            Path::new("/home/u/dev/github.com/me/scriv"),
+            Path::new("/home/u/dev/worktrees"),
+            "main",
+        );
+        assert_eq!(path, PathBuf::from("/home/u/dev/worktrees/scriv/main"));
+    }
+
+    #[test]
+    fn neither_the_main_tree_nor_the_one_you_are_in_is_offered_for_removal() {
+        let mut trees = worktrees();
+        trees[1].current = true;
+        assert!(
+            removable(&trees).is_empty(),
+            "offered a tree git would refuse to remove"
+        );
+
+        let trees = worktrees();
+        let offered: Vec<&str> = removable(&trees)
+            .iter()
+            .map(|w| w.branch.as_str())
+            .collect();
+        assert_eq!(offered, vec!["feat/x"], "the main tree was offered");
     }
 
     #[test]
