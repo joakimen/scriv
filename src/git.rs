@@ -498,6 +498,25 @@ pub fn repo_root() -> Option<PathBuf> {
     (!root.is_empty()).then(|| PathBuf::from(root))
 }
 
+/// The branch the working directory has checked out.
+///
+/// `None` on a detached HEAD, where `rev-parse` answers with the literal
+/// `HEAD`: there is no branch, and so nothing a pull request could be opened
+/// from. Absence is an answer rather than an error, as in [`repo_root`].
+pub fn current_branch() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!branch.is_empty() && branch != "HEAD").then_some(branch)
+}
+
 /// Every branch in the repository, ordered by [`by_relevance`]: the current
 /// branch, then local branches, then remote-only ones, newest first within
 /// each.

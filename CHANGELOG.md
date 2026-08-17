@@ -13,6 +13,12 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv pr open --current` opens the pull request for the branch you have
+  checked out, and the repository's pull request list when it has none. In
+  fish, f2 does it.
+
 ### Changed
 
 - `scriv repo clone` shows the date each repository was last pushed to, as a

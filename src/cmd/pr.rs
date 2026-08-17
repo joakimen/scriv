@@ -10,6 +10,7 @@ use anyhow::{Result, bail};
 
 use crate::Ctx;
 use crate::gh::{self, MergeMethod, PullRequest};
+use crate::git;
 use crate::select::{self, Preview, SelectItem};
 use crate::term;
 
@@ -328,7 +329,16 @@ pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Re
 
 /// `scriv pr open [number]` — open a pull request in the browser, selecting one
 /// when no number is given.
-pub fn open(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result<()> {
+pub fn open(
+    ctx: &Ctx,
+    number: Option<u64>,
+    current: bool,
+    state: &str,
+    limit: usize,
+) -> Result<()> {
+    if current {
+        return open_current(ctx);
+    }
     let number = resolve(
         ctx,
         number,
@@ -338,6 +348,45 @@ pub fn open(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result
         Tint::State,
     )?;
     gh::view_web(number)
+}
+
+/// `scriv pr open --current` — open the pull request for the checked-out
+/// branch, falling back to the repository's pull request list when it has none.
+///
+/// The fallback is the point of the flag: a branch either has a pull request or
+/// is a branch you are about to open one from, and both answers are a page in
+/// the browser rather than a question to answer. A detached HEAD has no branch
+/// at all, and takes the same fallback.
+fn open_current(ctx: &Ctx) -> Result<()> {
+    git::ensure_repo()?;
+
+    let branch = git::current_branch();
+    let number = match &branch {
+        Some(branch) => {
+            let _spinner = term::spinner("looking for this branch's pull request", ctx.color());
+            gh::pr_for_branch(branch)?
+        }
+        None => None,
+    };
+
+    match number {
+        Some(number) => {
+            ctx.log
+                .info(&format!("pull request #{number} for this branch"));
+            gh::view_web(number)
+        }
+        None => {
+            // Said out loud: the browser opens either way, and without this the
+            // list page looks like the pull request the binding was asked for.
+            match &branch {
+                Some(branch) => {
+                    eprintln!("note: no pull request from `{branch}`; opening the list")
+                }
+                None => eprintln!("note: HEAD is detached; opening the pull request list"),
+            }
+            gh::list_web()
+        }
+    }
 }
 
 /// `scriv pr merge [number]` — merge a pull request, selecting one when no
