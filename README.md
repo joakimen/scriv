@@ -4,7 +4,7 @@
 [![release](https://img.shields.io/github/v/release/joakimen/scriv?logo=github&color=blue)](https://github.com/joakimen/scriv/releases/latest)
 [![license](https://img.shields.io/github/license/joakimen/scriv?color=blue)](LICENSE)
 
-![A candle burning above an open book](docs/art/seal.svg)
+![A candle burning above an open book, flanked by engraved rules](docs/art/banner.svg)
 
 Provides fuzzy-completion for various local and remote resources.
 
