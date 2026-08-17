@@ -1,6 +1,6 @@
 [package]
 name = "scriv"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 description = "Provides fuzzy-completion for various local and remote resources."
 license = "MIT"
