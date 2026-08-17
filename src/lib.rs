@@ -69,6 +69,9 @@ pub struct Ctx {
     utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
+    /// `GH_REPO`, which names the repository `gh` acts on when the working
+    /// directory is not one.
+    gh_repo: Option<String>,
     /// Whether printed output carries colour, resolved once from `--color`,
     /// `SCRIV_NO_COLOR` and whether stdout is a terminal.
     color: bool,
@@ -132,6 +135,10 @@ impl Ctx {
             std::env::var("EDITOR").ok().as_deref(),
         );
 
+        let gh_repo = std::env::var("GH_REPO")
+            .ok()
+            .filter(|repo| !repo.trim().is_empty());
+
         Ok(Self {
             home_s: home.to_string_lossy().into_owned(),
             pwd_s: pwd.to_string_lossy().into_owned(),
@@ -142,6 +149,7 @@ impl Ctx {
             history_path,
             utc_offset,
             editor,
+            gh_repo,
             color: color.for_stdout(),
             config,
             log: Logger::new(verbose),
@@ -171,6 +179,13 @@ impl Ctx {
             anyhow::bail!("the configured editor is empty");
         }
         Ok(parts)
+    }
+
+    /// The repository `GH_REPO` names, if it names one. `gh` reads the variable
+    /// itself; scriv reads it only to know whether a command that needs a
+    /// repository already has one.
+    pub fn gh_repo(&self) -> Option<&str> {
+        self.gh_repo.as_deref()
     }
 
     /// This machine's offset from UTC, resolved once at startup.

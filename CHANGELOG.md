@@ -13,6 +13,23 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `scriv history` no longer offers scriv's own key bindings back. Pressing
+  ctrl-o records `scriv-repo-cd` in fish's history, so the rows at the top of
+  ctrl-r were the keys you had just pressed rather than anything you typed.
+- `scriv pr` says it is not in a git repository itself, rather than passing on
+  `gh`'s report of git's `fatal: not a git repository`. `GH_REPO` still names a
+  repository to work on without one.
+- `scriv pr` says when a listing stopped at `--limit`, as `repo clone` already
+  did, so a missing pull request is not mistaken for one that is not there.
+- A missing `root` now points at the config file to edit when there is one, and
+  only sends you to `scriv config init` when there is not — that command refuses
+  to overwrite a config, so the old advice was a dead end.
+- `scriv config check` reports whether `gh` is still logged in. An expired token
+  breaks `pr` as completely as a missing `gh` does, and looked like nothing at
+  all. It is the one check that waits on the network.
+
 ## v0.7.1
 
 *Released 2026-08-17*

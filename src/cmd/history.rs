@@ -1,8 +1,9 @@
 //! `scriv history` — search the commands you have already run.
 //!
-//! The list is fish's own history file, newest first with repeats dropped.
-//! Selecting a command prints it rather than running it; the fish integration
-//! puts it back on the command line to be read before enter.
+//! The list is fish's own history file, newest first with repeats dropped and
+//! scriv's own key bindings left out. Selecting a command prints it rather than
+//! running it; the fish integration puts it back on the command line to be read
+//! before enter.
 
 use std::io::Write;
 
@@ -27,7 +28,9 @@ fn load(ctx: &Ctx) -> Result<Vec<Entry>> {
 
     // A history file holds whatever was typed at the shell, which is not
     // always valid UTF-8.
-    let entries = history::recent_first(history::parse(&String::from_utf8_lossy(&data)));
+    let entries = history::recent_first(history::typed_only(history::parse(
+        &String::from_utf8_lossy(&data),
+    )));
     if entries.is_empty() {
         anyhow::bail!("no commands in {}", path.display());
     }

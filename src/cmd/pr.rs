@@ -14,6 +14,22 @@ use crate::git;
 use crate::select::{self, Preview, SelectItem};
 use crate::term;
 
+/// Fail before `gh` does when there is no repository for it to be about.
+///
+/// `gh` works this out from the directory it runs in, and outside one reports
+/// git's own `fatal: not a git repository` — a sentence about git, from a
+/// command the user asked about pull requests. `GH_REPO` names a repository
+/// without a checkout, and is `gh`'s to act on, so it is left alone.
+fn ensure_target(ctx: &Ctx) -> Result<()> {
+    if ctx.gh_repo().is_some() || git::repo_root().is_some() {
+        return Ok(());
+    }
+    bail!(
+        "not inside a git repository — `pr` acts on the repository you are \
+         standing in, or the one `GH_REPO` names"
+    )
+}
+
 /// Fetch pull requests, failing with a useful message when there are none.
 fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
     let prs = {
@@ -21,6 +37,11 @@ fn collect(ctx: &Ctx, state: &str, limit: usize) -> Result<Vec<PullRequest>> {
         gh::list(state, limit)?
     };
     ctx.log.info(&format!("found {} pull requests", prs.len()));
+    if prs.len() == limit {
+        // A full page is indistinguishable from a repository with exactly that
+        // many, so the filter names itself rather than quietly hiding the rest.
+        eprintln!("note: showing the first {limit} pull requests; pass --limit to raise it");
+    }
     if prs.is_empty() {
         // `--state all` would otherwise read "no all pull requests found".
         let scope = if state == "all" {
@@ -95,6 +116,7 @@ impl StatusColumns {
 /// The glyphs are shapes rather than colours, so a piped listing still says
 /// everything a coloured one does.
 pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
+    ensure_target(ctx)?;
     let prs = collect(ctx, state, limit)?;
     let color = ctx.color();
     let width = number_width(&prs);
@@ -293,6 +315,7 @@ fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Res
 /// `scriv pr sel` — fuzzy-select a pull request and print its number, so it
 /// composes with `gh`: `gh pr view (scriv pr sel)`.
 pub fn sel(ctx: &Ctx, state: &str, limit: usize) -> Result<()> {
+    ensure_target(ctx)?;
     let number = select(ctx, state, limit, "Select a pull request", Tint::State)?;
     println!("{number}");
     Ok(())
@@ -317,6 +340,7 @@ fn resolve(
 /// one when no number is given. The checkout itself is `gh pr checkout`, which
 /// handles fork PRs and sets the upstream.
 pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result<()> {
+    ensure_target(ctx)?;
     let number = resolve(
         ctx,
         number,
@@ -337,6 +361,7 @@ pub fn open(
     state: &str,
     limit: usize,
 ) -> Result<()> {
+    ensure_target(ctx)?;
     if current {
         return open_current(ctx);
     }
@@ -406,6 +431,7 @@ pub fn merge(
     delete_branch: bool,
     auto: bool,
 ) -> Result<()> {
+    ensure_target(ctx)?;
     let number = resolve(
         ctx,
         number,

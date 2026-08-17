@@ -93,6 +93,25 @@ fn unescape(text: &str) -> String {
     out
 }
 
+/// Whether `cmd` is a call to one of the `scriv-` functions `scriv init fish`
+/// emits.
+///
+/// Pressing ctrl-o hands `scriv-repo-cd` to fish to run, so fish records it —
+/// see [`shell`](crate::shell). A key press is not something that was typed,
+/// and offering it back puts a row nobody can use at the top of the very
+/// selector the key opened. `fe` and `kl` are deliberately not among them:
+/// those are typed, and worth recalling.
+fn is_key_binding(cmd: &str) -> bool {
+    let cmd = cmd.trim();
+    cmd.starts_with("scriv-") && !cmd.contains(char::is_whitespace)
+}
+
+/// Drop the entries that are [`is_key_binding`] calls.
+pub fn typed_only(mut entries: Vec<Entry>) -> Vec<Entry> {
+    entries.retain(|entry| !is_key_binding(&entry.cmd));
+    entries
+}
+
 /// Newest first, with earlier runs of the same command dropped. The set holds
 /// borrowed commands: this runs on every ctrl-r over tens of thousands of
 /// entries, and cloning each one built a second copy of the whole history.
@@ -295,6 +314,31 @@ mod tests {
     #[test]
     fn an_empty_history_dedups_to_nothing() {
         assert!(recent_first(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn the_key_bindings_scriv_emits_are_not_offered_back() {
+        let entries = parse(
+            "- cmd: scriv-repo-cd\n  when: 3\n\
+             - cmd: scriv-history-select\n  when: 2\n\
+             - cmd: git status\n  when: 1\n",
+        );
+        let kept = typed_only(entries);
+        assert_eq!(
+            kept.iter().map(|e| e.cmd.as_str()).collect::<Vec<_>>(),
+            vec!["git status"]
+        );
+    }
+
+    /// The rule is "a bare call to a `scriv-` function", not "mentions scriv":
+    /// what the user typed at the prompt is theirs, however it starts.
+    #[test]
+    fn a_typed_command_survives_however_it_begins() {
+        let entries = parse(
+            "- cmd: scriv repo sel\n- cmd: fe -t\n- cmd: kl\n\
+             - cmd: scriv-repo-cd --help\n- cmd: scriv_key_bindings\n",
+        );
+        assert_eq!(typed_only(entries).len(), 5);
     }
 
     #[test]

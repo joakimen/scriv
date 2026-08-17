@@ -15,13 +15,29 @@ use crate::repo::FoundRepo;
 use crate::select::{Choice, SelectItem, Tint};
 use crate::{Ctx, git, repo, select, term};
 
+/// What to say when there is nowhere to look for repositories. The two ways to
+/// arrive here need opposite advice, and telling someone who has just written a
+/// config to write one is how a first run stalls: `config init` refuses to
+/// overwrite the file it is being recommended for.
+fn no_root_message(config_path: &Path, config_exists: bool) -> String {
+    if config_exists {
+        format!(
+            "no `root` configured in {} — set `[repo] root` to the directory \
+             holding your <owner>/<repo> checkouts",
+            config_path.display()
+        )
+    } else {
+        format!(
+            "no configuration at {} — run `scriv config init` to write a starter one",
+            config_path.display()
+        )
+    }
+}
+
 /// Discover repositories, label-tagged and sorted by path.
 fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
     if ctx.config.repo.root.is_none() && ctx.config.repo.extra.is_empty() {
-        anyhow::bail!(
-            "no `root` configured in {}; run `scriv config init` to create a starter config",
-            ctx.config_path.display()
-        );
+        anyhow::bail!(no_root_message(&ctx.config_path, ctx.config_path.exists()));
     }
     ctx.log.info(&format!(
         "settings: ignore = {}",
@@ -201,8 +217,8 @@ const PRESENT_COLOR: u8 = 2;
 fn clone_root(ctx: &Ctx) -> Result<PathBuf> {
     let root = ctx.config.repo.root.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
-            "no `root` configured in {}; `repo clone` writes to <root>/<owner>/<repo>",
-            ctx.config_path.display()
+            "{} — `repo clone` writes to <root>/<owner>/<repo>",
+            no_root_message(&ctx.config_path, ctx.config_path.exists())
         )
     })?;
     Ok(expand_home_dir(root, ctx.home()))
@@ -742,6 +758,21 @@ mod tests {
         for item in repo_items(&repos(), tmp.path()) {
             assert!(item.preview.is_none(), "{} opens a pane", item.label);
         }
+    }
+
+    #[test]
+    fn the_advice_for_a_missing_root_depends_on_there_being_a_config() {
+        let path = Path::new("/home/u/.config/scriv/config.toml");
+
+        let written = no_root_message(path, true);
+        assert!(written.contains("[repo] root"), "{written}");
+        assert!(
+            !written.contains("config init"),
+            "advises a command that refuses to run: {written}"
+        );
+
+        let absent = no_root_message(path, false);
+        assert!(absent.contains("scriv config init"), "{absent}");
     }
 
     #[test]
