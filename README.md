@@ -9,10 +9,13 @@
 
 Provides fuzzy-completion for various local and remote resources.
 
-One selector over the things you reach for all day: repositories, tracked
-files, branches, worktrees, GitHub pull requests, running processes and shell
-history. The finder is compiled in, so a selection is one process rather than a
-pipeline, and `scriv init fish` puts the common ones on a key.
+A single fuzzy selector over resources that would otherwise each need their own
+command and output parser: Git repositories, tracked files, branches,
+worktrees, GitHub pull requests, system processes and fish history. Each group
+lists its set, selects from it, and acts on the selection.
+
+The finder is linked into the binary — no `fzf` dependency and no subprocess.
+`scriv init fish` emits shell functions, key bindings and completions.
 
 ![scriv: check out a remote branch, find and open a file, list pull requests](docs/demo.gif)
 
@@ -22,18 +25,20 @@ pipeline, and `scriv init fish` puts the common ones on a key.
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/joakimen/scriv/releases/latest/download/scriv-installer.sh | sh
 ```
 
-The script puts the binary in `~/.local/bin` and adds that to your `PATH`. Two
-other ways in, resolving the same release archive or building it yourself:
+The script installs into `~/.local/bin` and adds it to `PATH`. Alternatively,
+through a version manager or from source:
 
 ```sh
 mise use -g github:joakimen/scriv
 cargo install --git https://github.com/joakimen/scriv
 ```
 
-macOS on Apple Silicon, and nothing else — the signal table `scriv proc` uses
-is Darwin's. `git` is required. `gh` is needed by `pr` and by `repo
-clone`/`open`, fish's history file by `history`, and `$VISUAL` or `$EDITOR` by
-`edit`; `scriv config check` reports on each.
+Supported platform: macOS on Apple Silicon. `scriv proc` depends on Darwin's
+signal numbers, and the crate refuses to compile for any other target.
+
+External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, a
+fish history file for `history`, and `$VISUAL` or `$EDITOR` for `edit`.
+`scriv config check` reports on each.
 
 ## Setup
 
@@ -43,9 +48,9 @@ scriv init fish | source   # helpers, key bindings, completions
 scriv config check         # confirm it all resolves
 ```
 
-Put the middle line in `~/.config/fish/config.fish` to keep it. The bindings
-arrive as a function rather than bound at source time, so they compose with
-fish's own lifecycle — call it yourself to switch them on:
+Add the second line to `~/.config/fish/config.fish` to make it permanent. Key
+bindings are emitted as a function rather than bound at source time, so they
+compose with fish's binding lifecycle; call it from `fish_user_key_bindings`:
 
 ```fish
 function fish_user_key_bindings
@@ -53,9 +58,8 @@ function fish_user_key_bindings
 end
 ```
 
-Every setting is a commented line in the file `config init` writes. The one
-that matters is the root your repositories live under, laid out `<owner>/<repo>`
-as GitHub itself is:
+`config init` writes every setting as a commented line. `repo.root` is the one
+that must be set: repositories are located at `<root>/<owner>/<repo>`.
 
 ```toml
 [repo]
@@ -79,9 +83,10 @@ ignore = ["node_modules", "target"]
 | `scriv config` | `init` `print` `path` `check` |
 | `scriv init` | `fish` and every other shell — see Setup |
 
-`ls` prints the set, `sel` fuzzy-selects one line of it, and the other verbs
-act. Every `sel` composes: `cd (scriv repo sel)`. Each group takes a one-letter
-abbreviation — `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc` for `proc`.
+`ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
+on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.
+Groups abbreviate to one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc`
+for `proc`.
 
 ## Key bindings
 
@@ -90,7 +95,7 @@ abbreviation — `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc` for `proc`.
 | Key | Action |
 | --- | --- |
 | `ctrl-o` | `cd` to a repository |
-| `ctrl-t` | `cd` to a worktree of the one you are in |
+| `ctrl-t` | `cd` to a worktree of the current repository |
 | `ctrl-g` | check out a branch |
 | `ctrl-r` | search shell history onto the command line |
 | `up` | the same, on the first line of a prompt |
@@ -98,10 +103,11 @@ abbreviation — `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc` for `proc`.
 | `f3` | open a tracked file in `$EDITOR` |
 | `f7` | check out a pull request |
 
-Two functions come with them: `fe` for `scriv edit`, arguments passed through,
-and `kl` for `scriv proc kill --force`.
+`scriv init fish` also defines `fe` (`scriv edit`, arguments passed through) and
+`kl` (`scriv proc kill --force`).
 
-`scriv --help` covers the flags, the generated `config.toml` the settings.
+Flags are documented in `scriv --help`, settings in the generated
+`config.toml`.
 
 ## Development
 

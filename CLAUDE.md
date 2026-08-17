@@ -14,6 +14,7 @@ Three checked-in guards, none a substitute for `make`: `hooks/rustfmt.sh`
 formats each Rust file as written, `hooks/no-commit-on-main.sh` refuses the
 agent a commit on `main`, and `prek.toml` refuses git the same, plus hygiene and
 `make fmt-check` on commit and `make check` on push (`make hooks`, per clone).
+Both `main` guards let a Markdown-only commit through — see below.
 
 ## Shipping without being asked
 
@@ -58,10 +59,17 @@ that command, silently. `dist init` also rewrites `dist-workspace.toml`,
 replacing every comment with a canned one of its own, so the prose explaining
 why each key is set has to be put back by hand afterwards.
 
-Never commit straight to `main`. Stop and say so rather than merging when the
-change could not actually be verified, a test was deleted rather than replaced,
-a real cost is unnamed in the PR body, or the work rewrites pushed history,
-touches CI secrets, or publishes the crate.
+Never commit straight to `main`, with one exception: a commit whose every path
+ends in `.md` may be committed and pushed to `main` directly. Nothing CI builds
+reads those files, so a pull request over them buys a review nobody gives and a
+wait on two jobs that cannot fail differently. Both guards below know the
+exception; a commit that touches one Rust file alongside ten Markdown ones is
+not one and is still refused.
+
+Stop and say so rather than merging when the change could not actually be
+verified, a test was deleted rather than replaced, a real cost is unnamed in
+the PR body, or the work rewrites pushed history, touches CI secrets, or
+publishes the crate.
 
 ## Four docs nothing checks
 
