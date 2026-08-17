@@ -13,6 +13,16 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `scriv repo clone` shows the date each repository was last pushed to, as a
+  column before the description.
+- Its rows are no longer coloured end to end. Only the visibility word is
+  tinted — yellow private, magenta internal — and a repository you already have
+  is marked with a green tick rather than being greyed out.
+- The preview pane is gone from that selector: everything it held is a column
+  now.
+
 ## v0.6.0
 
 *Released 2026-08-17*

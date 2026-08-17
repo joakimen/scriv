@@ -10,6 +10,7 @@
 //! Rows arrive either all at once ([`select_one`], [`select_many`]) or as they
 //! are discovered ([`select_one_streamed`], [`select_many_streamed`]).
 
+use std::ops::Range;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -96,6 +97,16 @@ fn file_preview_cmd(path: &str) -> String {
     )
 }
 
+/// A stretch of a label drawn in its own colour, as a character range.
+///
+/// Where [`SelectItem::color`] says something about the whole row, a tint says
+/// something about one column of it — so a row can carry two facts that are
+/// true of different parts of it without either claiming the line.
+pub struct Tint {
+    pub range: Range<usize>,
+    pub color: u8,
+}
+
 /// One choice in the selector: `label` is displayed and matched against,
 /// [`SelectItem::value`] is returned when it is selected, `color` optionally
 /// tints the row (an ANSI 256-colour index, so it respects the terminal
@@ -110,6 +121,7 @@ pub struct SelectItem {
     /// [`SelectItem::value`].
     value: Option<String>,
     pub color: Option<u8>,
+    pub tints: Vec<Tint>,
     pub preview: Option<Preview>,
 }
 
@@ -121,6 +133,7 @@ impl SelectItem {
             prefix: None,
             value: None,
             color: None,
+            tints: Vec::new(),
             preview: None,
         }
     }
@@ -132,6 +145,7 @@ impl SelectItem {
             prefix: None,
             value: Some(value.into()),
             color: None,
+            tints: Vec::new(),
             preview: None,
         }
     }
@@ -153,6 +167,12 @@ impl SelectItem {
         self
     }
 
+    /// Colour individual columns of the label. See [`Tint`].
+    pub fn tints(mut self, tints: Vec<Tint>) -> Self {
+        self.tints = tints;
+        self
+    }
+
     /// Show `preview` in the preview pane while this row is highlighted.
     pub fn preview(mut self, preview: Preview) -> Self {
         self.preview = Some(preview);
@@ -162,6 +182,50 @@ impl SelectItem {
 
 /// Colour of a [`SelectItem::prefix`]: ANSI 8, the terminal's own grey.
 const PREFIX_COLOR: u8 = 8;
+
+/// Recolour the character ranges in `tints`, leaving skim's match highlighting
+/// alone: a span drawn in anything but `base` is a character the query matched,
+/// and why the row is on screen at all outranks which column it sits in.
+fn tinted<'a>(line: Line<'a>, tints: &[Tint], base: Style) -> Line<'a> {
+    let color_at = |index: usize| {
+        tints
+            .iter()
+            .find(|tint| tint.range.contains(&index))
+            .map(|tint| tint.color)
+    };
+    let style = |color: Option<u8>| match color {
+        Some(color) => base.fg(Color::Indexed(color)),
+        None => base,
+    };
+
+    let mut out = Line::default();
+    let mut at = 0;
+    for span in line.spans {
+        let width = span.content.chars().count();
+        if span.style != base {
+            out.push_span(span);
+            at += width;
+            continue;
+        }
+        // One span per run of characters sharing a colour, rather than per
+        // character: a row is redrawn on every keystroke.
+        let mut run = String::new();
+        let mut color = None;
+        for (offset, ch) in span.content.chars().enumerate() {
+            let next = color_at(at + offset);
+            if next != color && !run.is_empty() {
+                out.push_span(Span::styled(std::mem::take(&mut run), style(color)));
+            }
+            color = next;
+            run.push(ch);
+        }
+        if !run.is_empty() {
+            out.push_span(Span::styled(run, style(color)));
+        }
+        at += width;
+    }
+    out
+}
 
 /// Bridges a [`SelectItem`] to skim.
 struct SkItem {
@@ -182,19 +246,25 @@ impl SkimItem for SkItem {
             context.base_style = context.base_style.fg(Color::Indexed(idx));
         }
 
+        let base = context.base_style;
+        let mut line = context.to_line(self.text());
+        if !self.item.tints.is_empty() {
+            line = tinted(line, &self.item.tints, base);
+        }
+
         let Some(prefix) = &self.item.prefix else {
-            return context.to_line(self.text());
+            return line;
         };
 
         // Prepended as a span rather than folded into the label, so
         // `to_line`'s highlight positions still index the matched text.
-        let mut line = Line::default();
-        line.push_span(Span::styled(
+        let mut out = Line::default();
+        out.push_span(Span::styled(
             prefix.clone(),
             Style::default().fg(Color::Indexed(PREFIX_COLOR)),
         ));
-        line.spans.extend(context.to_line(self.text()).spans);
-        line
+        out.spans.extend(line.spans);
+        out
     }
 
     fn preview(&self, _context: PreviewContext) -> ItemPreview {
@@ -693,6 +763,54 @@ mod tests {
     fn an_item_without_a_prefix_is_unchanged() {
         let line = rendered(SelectItem::plain("git status"), vec![]);
         assert_eq!(text_of(&line), "git status");
+    }
+
+    /// The characters drawn in `color`, wherever the renderer put them.
+    fn painted(line: &Line, color: u8) -> String {
+        line.spans
+            .iter()
+            .filter(|s| s.style.fg == Some(Color::Indexed(color)))
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn a_tint_colours_its_range_and_nothing_else() {
+        let item = SelectItem::plain("✓ billing-api  private").tints(vec![
+            Tint {
+                range: 0..1,
+                color: 2,
+            },
+            Tint {
+                range: 15..22,
+                color: 3,
+            },
+        ]);
+        let line = rendered(item, vec![]);
+        assert_eq!(text_of(&line), "✓ billing-api  private");
+        assert_eq!(painted(&line, 2), "✓");
+        assert_eq!(painted(&line, 3), "private");
+    }
+
+    /// A tinted column that the query hit is still shown as matched: the
+    /// highlight says why the row survived the search, which the colour of the
+    /// column it happens to sit in must not paint over.
+    #[test]
+    fn match_highlighting_survives_a_tint() {
+        let item = SelectItem::plain("✓ billing-api  private").tints(vec![Tint {
+            range: 15..22,
+            color: 3,
+        }]);
+        // Character 15: the `p` of `private`.
+        let line = rendered(item, vec![15]);
+        assert_eq!(painted(&line, 1), "p", "{line:?}");
+        assert_eq!(painted(&line, 3), "rivate", "{line:?}");
+    }
+
+    #[test]
+    fn an_item_without_tints_is_unchanged() {
+        let line = rendered(SelectItem::plain("git status"), vec![]);
+        assert_eq!(line.spans.len(), 1, "{line:?}");
     }
 
     #[test]
