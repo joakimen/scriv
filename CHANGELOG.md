@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.7.1
+
+*Released 2026-08-17*
+
 ### Changed
 
 - Listings write in blocks rather than a line at a time, which halves
