@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.6.0
+
+*Released 2026-08-17*
+
 ### Added
 
 - `scriv repo clone` colours its list by who can see a repository: private is
