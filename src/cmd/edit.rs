@@ -15,7 +15,7 @@ use std::process::Command;
 use anyhow::{Result, anyhow, bail};
 
 use crate::path::{display_path, expand_tilde};
-use crate::select::{Preview, SelectItem, dir_preview, file_preview};
+use crate::select::{Preview, SelectItem, file_preview};
 use crate::{Ctx, Reported, files, select, walk};
 
 /// `scriv edit file [FILE]...` — open `paths`, or select interactively when
@@ -80,11 +80,10 @@ fn select_files(ctx: &Ctx) -> Result<Option<Vec<String>>> {
 
 /// Choose directories from the current directory tree.
 ///
-/// [`select_files`] over [`walk::dirs`], with the preview built per row: `bat`
-/// on a directory is an error message.
+/// [`select_files`] over [`walk::dirs`], previewing what is inside each one:
+/// `bat` on a directory is an error message.
 fn select_dirs(ctx: &Ctx) -> Result<Option<Vec<String>>> {
-    let items =
-        walk::dirs(Path::new(".")).map(|dir| SelectItem::plain(&dir).preview(dir_preview(&dir)));
+    let items = walk::dirs(Path::new(".")).map(|dir| SelectItem::plain(dir).preview(Preview::Dir));
 
     cancellable(select::select_many_streamed(
         items,
