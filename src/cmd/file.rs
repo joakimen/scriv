@@ -23,7 +23,7 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
                 break;
             }
         }
-        return Ok(());
+        return Ok(out.finish()?);
     }
 
     let use_color = status && ctx.color();
@@ -48,6 +48,7 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
             break;
         }
     }
+    out.finish()?;
     Ok(())
 }
 
@@ -84,6 +85,9 @@ pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
             return Ok(());
         }
     }
+    // Emptied before the question is put: "remove 4 entries?" is answerable
+    // only by someone who has already seen the four.
+    out.finish()?;
 
     match term::Confirm::resolve(yes) {
         term::Confirm::Assumed => {}

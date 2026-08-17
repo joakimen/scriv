@@ -423,16 +423,22 @@ pub fn mark_current(
         .collect()
 }
 
+/// A missing `git` is worth explaining; anything else is the spawn's own
+/// failure. Shared by every helper below, so one wording covers all of them.
+fn spawn_error(err: std::io::Error) -> anyhow::Error {
+    match err.kind() {
+        ErrorKind::NotFound => anyhow!("`git` was not found on PATH"),
+        _ => anyhow!(err).context("running git"),
+    }
+}
+
 /// Run git with `args`, capturing stdout.
 fn capture(args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => anyhow!("`git` was not found on PATH"),
-            _ => anyhow!(e).context("running git"),
-        })?;
+        .map_err(spawn_error)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stderr = stderr.trim();
@@ -453,10 +459,7 @@ fn passthrough(args: &[&str]) -> Result<()> {
     let status = Command::new("git")
         .args(args)
         .status()
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => anyhow!("`git` was not found on PATH"),
-            _ => anyhow!(e).context("running git"),
-        })?;
+        .map_err(spawn_error)?;
     if !status.success() {
         return Err(Reported(status.code().unwrap_or(1)).into());
     }
@@ -472,10 +475,7 @@ pub fn ensure_repo() -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => anyhow!("`git` was not found on PATH"),
-            _ => anyhow!(e).context("running git"),
-        })?;
+        .map_err(spawn_error)?;
     if !inside.success() {
         bail!("not inside a git repository");
     }
@@ -485,17 +485,26 @@ pub fn ensure_repo() -> Result<()> {
 /// The root of the repository the working directory is in, if it is in one.
 /// Absence is an answer rather than an error.
 pub fn repo_root() -> Option<PathBuf> {
+    require_repo_root().ok()
+}
+
+/// [`repo_root`] where being outside a repository is a failure, with the same
+/// message [`ensure_repo`] gives.
+///
+/// One `rev-parse` answers both questions, so a command that needs the root
+/// does not also spawn git to be told it is in a repository at all.
+pub fn require_repo_root() -> Result<PathBuf> {
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+        .map_err(spawn_error)?;
     let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!root.is_empty()).then(|| PathBuf::from(root))
+    if !output.status.success() || root.is_empty() {
+        bail!("not inside a git repository");
+    }
+    Ok(PathBuf::from(root))
 }
 
 /// The branch the working directory has checked out.
@@ -539,10 +548,14 @@ pub fn branches() -> Result<Vec<Branch>> {
 /// first, then the linked ones as they were added. The tree the working
 /// directory is in is marked rather than moved, since where you already are is
 /// rarely where you are going.
-pub fn worktrees() -> Result<Vec<Worktree>> {
+///
+/// `here` is the root of the tree the working directory is in — the caller has
+/// it from [`require_repo_root`], which is also what established there is a
+/// repository to list.
+pub fn worktrees(here: &Path) -> Result<Vec<Worktree>> {
     let out = capture(&["worktree", "list", "--porcelain"]).context("listing worktrees")?;
     let worktrees = parse_worktrees(&out);
-    Ok(mark_current(worktrees, repo_root().as_deref(), |path| {
+    Ok(mark_current(worktrees, Some(here), |path| {
         path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     }))
 }

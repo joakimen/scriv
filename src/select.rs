@@ -52,6 +52,10 @@ pub enum Preview {
     /// a million rows, and a command string on each is megabytes of panes
     /// nobody looks at.
     File,
+    /// The row's own value, previewed as a directory. [`Preview::File`]'s
+    /// counterpart, and deferred for the same reason — the directory walk is
+    /// streamed too.
+    Dir,
 }
 
 /// Quote `arg` for the shell that runs a [`Preview::Command`], so a branch name
@@ -66,10 +70,11 @@ pub fn file_preview(path: &str) -> Preview {
     Preview::Command(file_preview_cmd(path))
 }
 
-/// The preview for a directory: what is directly inside it, capped at 200 rows.
-pub fn dir_preview(path: &str) -> Preview {
+/// The command behind [`Preview::Dir`]: what is directly inside the directory,
+/// capped at 200 rows.
+fn dir_preview_cmd(path: &str) -> String {
     let path = quote(path);
-    Preview::Command(format!("ls -Ap -- {path} 2>&1 | head -n 200"))
+    format!("ls -Ap -- {path} 2>&1 | head -n 200")
 }
 
 /// The preview for a git checkout — a repository or one of its worktrees: the
@@ -272,6 +277,7 @@ impl SkimItem for SkItem {
             Some(Preview::Text(text)) => ItemPreview::AnsiText(text.clone()),
             Some(Preview::Command(cmd)) => ItemPreview::Command(cmd.clone()),
             Some(Preview::File) => ItemPreview::Command(file_preview_cmd(self.item.value())),
+            Some(Preview::Dir) => ItemPreview::Command(dir_preview_cmd(self.item.value())),
             // Blank rather than `Global`, which would run the empty global
             // preview command.
             None => ItemPreview::Text(String::new()),
@@ -811,6 +817,43 @@ mod tests {
     fn an_item_without_tints_is_unchanged() {
         let line = rendered(SelectItem::plain("git status"), vec![]);
         assert_eq!(line.spans.len(), 1, "{line:?}");
+    }
+
+    /// A deferred preview carries nothing until the row is highlighted, and
+    /// then previews the row's *value* — a streamed walk yields paths relative
+    /// to where it started, which is where the pane's command runs.
+    #[test]
+    fn a_deferred_preview_builds_its_command_from_the_rows_value() {
+        let context = || PreviewContext {
+            query: "",
+            cmd_query: "",
+            width: 80,
+            height: 20,
+            current_index: 0,
+            selected_indices: &[],
+            selections: &[],
+            current_selection: "",
+        };
+
+        let file = SkItem {
+            item: SelectItem::new("shown", "src/main.rs").preview(Preview::File),
+        };
+        let ItemPreview::Command(cmd) = file.preview(context()) else {
+            panic!("a file preview must run a command");
+        };
+        assert!(cmd.contains("'src/main.rs'"), "{cmd}");
+
+        let dir = SkItem {
+            item: SelectItem::new("shown", "src/cmd").preview(Preview::Dir),
+        };
+        let ItemPreview::Command(cmd) = dir.preview(context()) else {
+            panic!("a directory preview must run a command");
+        };
+        assert!(
+            cmd.starts_with("ls "),
+            "a directory is listed, not read: {cmd}"
+        );
+        assert!(cmd.contains("'src/cmd'"), "{cmd}");
     }
 
     #[test]

@@ -14,8 +14,10 @@ use crate::{Ctx, select, term};
 
 /// Every working tree of the current repository, in git's order.
 fn load(ctx: &Ctx) -> Result<Vec<Worktree>> {
-    git::ensure_repo()?;
-    let worktrees = git::worktrees()?;
+    // Both questions — is this a repository, and which tree is the shell in —
+    // out of the one `rev-parse`.
+    let here = git::require_repo_root()?;
+    let worktrees = git::worktrees(&here)?;
     ctx.log
         .info(&format!("found {} worktrees", worktrees.len()));
     if worktrees.is_empty() {
@@ -101,6 +103,7 @@ pub fn ls(ctx: &Ctx, absolute: bool, status: bool) -> Result<()> {
             break;
         }
     }
+    out.finish()?;
     Ok(())
 }
 

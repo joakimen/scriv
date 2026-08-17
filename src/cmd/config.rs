@@ -464,6 +464,7 @@ pub fn check(ctx: &Ctx) -> Result<()> {
             return Ok(());
         }
     }
+    out.finish()?;
 
     let failed = failures(&checks);
     if failed > 0 {

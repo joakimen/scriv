@@ -125,6 +125,7 @@ pub fn ls(ctx: &Ctx, state: &str, limit: usize, status: bool) -> Result<()> {
             break;
         }
     }
+    out.finish()?;
     Ok(())
 }
 

@@ -83,7 +83,7 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
                 break;
             }
         }
-        return Ok(());
+        return Ok(out.finish()?);
     }
 
     let width = name_width(&branches);
@@ -101,6 +101,7 @@ pub fn ls(ctx: &Ctx, filter: Filter, status: bool, fetch: bool) -> Result<()> {
             break;
         }
     }
+    out.finish()?;
     Ok(())
 }
 
@@ -153,8 +154,12 @@ fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Res
     let reload = {
         let (known, failure) = (Arc::clone(&known), Arc::clone(&failure));
         Box::new(move || {
+            // Fetched outside the lock: it is a network round trip, and holding
+            // the list for it would make a second ctrl-r — or closing the
+            // selector — wait on the remote rather than on the list.
+            let fresh = git::fetch().and_then(|()| git::branches());
             let mut known = known.lock().expect("branch list poisoned");
-            match git::fetch().and_then(|()| git::branches()) {
+            match fresh {
                 Ok(fresh) => *known = fresh,
                 Err(err) => {
                     *failure.lock().expect("failure slot poisoned") = Some(format!("{err:#}"))

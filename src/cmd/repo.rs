@@ -54,6 +54,7 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
             break;
         }
     }
+    out.finish()?;
     Ok(())
 }
 

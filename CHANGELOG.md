@@ -13,6 +13,16 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- Listings write in blocks rather than a line at a time, which halves
+  `scriv history ls` over a long fish history.
+- `scriv worktree` asks git one question fewer, taking about a quarter off how
+  long ctrl-t takes to open.
+- `scriv edit dir` no longer builds a preview command for every directory it
+  finds, only for the one you are looking at — the walk of a large tree stays
+  flat rather than growing a pane per row.
+
 ## v0.7.0
 
 *Released 2026-08-17*

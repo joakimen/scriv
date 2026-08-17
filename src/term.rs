@@ -55,15 +55,21 @@ pub const NO_COLOR_ENV_VAR: &str = "SCRIV_NO_COLOR";
 /// Stdout for a listing, which ends quietly when the reader stops reading.
 /// `println!` panics on a closed pipe, so `scriv history ls | head` would end
 /// in a stack trace where every other command-line tool simply stops.
+///
+/// Rows are buffered rather than handed straight to the OS: `std::io::Stdout`
+/// is line-buffered whatever it is pointed at, so an unbuffered listing costs
+/// one `write` syscall per row — half the wall clock of `history ls` over a long
+/// fish history. What that buys is paid for by noticing a closed pipe a buffer
+/// late, as every other tool does.
 pub struct Listing<W: Write> {
     out: W,
     open: bool,
 }
 
-impl Listing<std::io::Stdout> {
-    /// The listing every `ls` command writes: stdout.
+impl Listing<std::io::BufWriter<std::io::Stdout>> {
+    /// The listing every `ls` command writes: stdout, buffered.
     pub fn stdout() -> Self {
-        Self::new(std::io::stdout())
+        Self::new(std::io::BufWriter::new(std::io::stdout()))
     }
 }
 
@@ -87,6 +93,33 @@ impl<W: Write> Listing<W> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Push out whatever is still buffered. Call it once the rows run out: a
+    /// buffered listing has written nothing yet at that point, and this is the
+    /// only place a write failure has anywhere to be reported.
+    ///
+    /// [`Drop`] flushes as well, so an early return still prints its rows — but
+    /// it can only discard the error, which is why this exists.
+    pub fn finish(mut self) -> std::io::Result<()> {
+        self.flush_open()
+    }
+
+    fn flush_open(&mut self) -> std::io::Result<()> {
+        if !self.open {
+            return Ok(());
+        }
+        self.open = false;
+        match self.out.flush() {
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            other => other,
+        }
+    }
+}
+
+impl<W: Write> Drop for Listing<W> {
+    fn drop(&mut self) {
+        let _ = self.flush_open();
     }
 }
 
@@ -561,6 +594,38 @@ mod tests {
                 "{kind:?} was treated as the reader going away"
             );
         }
+    }
+
+    /// A writer that takes every row and fails only when asked to flush,
+    /// standing in for a listing whose buffer reaches the pipe at the end.
+    struct FailsOnFlush(std::io::ErrorKind);
+
+    impl std::io::Write for FailsOnFlush {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(self.0))
+        }
+    }
+
+    /// The rows are buffered, so the write that fails is the flush — and it is
+    /// the last chance anything has to say so.
+    #[test]
+    fn finishing_reports_a_failure_that_only_the_flush_could_find() {
+        let mut listing = super::Listing::new(FailsOnFlush(std::io::ErrorKind::StorageFull));
+        assert!(listing.line("one").unwrap());
+        assert_eq!(
+            listing.finish().unwrap_err().kind(),
+            std::io::ErrorKind::StorageFull
+        );
+    }
+
+    #[test]
+    fn finishing_stays_quiet_when_the_reader_has_already_gone() {
+        let mut listing = super::Listing::new(FailsOnFlush(std::io::ErrorKind::BrokenPipe));
+        assert!(listing.line("one").unwrap());
+        listing.finish().expect("a closed pipe is not a failure");
     }
 
     use super::*;
