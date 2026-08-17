@@ -489,6 +489,44 @@ pub fn view_web(number: u64) -> Result<()> {
     run(&["pr", "view", "--web", &number.to_string()])
 }
 
+/// Open the repository's pull request list in the browser.
+pub fn list_web() -> Result<()> {
+    run(&["pr", "list", "--web"])
+}
+
+/// The most recent pull request opened from `branch`, in any state, or `None`
+/// when GitHub has none.
+///
+/// State is deliberately unfiltered: a branch whose pull request has merged
+/// still has one, and it is the page a reader asking about that branch wants.
+///
+/// The number is asked for rather than derived from `gh pr view`'s own notion
+/// of the current branch, so one query decides both whether a pull request
+/// exists and which it is — two answers that must not be able to disagree.
+pub fn pr_for_branch(branch: &str) -> Result<Option<u64>> {
+    let out = capture(&[
+        "pr",
+        "list",
+        "--head",
+        branch,
+        "--state",
+        "all",
+        "--limit",
+        "1",
+        "--json",
+        "number",
+        "--jq",
+        ".[0].number",
+    ])?;
+    let out = out.trim();
+    if out.is_empty() {
+        return Ok(None);
+    }
+    out.parse()
+        .map(Some)
+        .with_context(|| format!("gh returned `{out}` as the pull request number for {branch}"))
+}
+
 /// How to merge a pull request. `None` at the call site leaves the choice to
 /// `gh`, which asks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

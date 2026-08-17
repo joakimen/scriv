@@ -112,6 +112,12 @@ function scriv-pr-checkout --description "Select a GitHub pull request and check
     command scriv pr checkout
 end
 
+# The one pull request binding that asks nothing: whatever this branch is, it
+# either has a pull request or it does not, and both are a page.
+function scriv-pr-open --description "Open this branch's pull request, or the list"
+    command scriv pr open --current
+end
+
 # History is the one selector whose result belongs on the command line, which
 # only the shell can write to.
 #
@@ -143,10 +149,10 @@ end
 # `history-pager`, ctrl-t over `transpose-chars` — swapping the two characters
 # around the cursor, which is worth less than a jump between worktrees — and up
 # over `up-line`, which scriv-history-up hands back wherever the selector would
-# be wrong. ctrl-p/ctrl-n are deliberately left as `up-line`/`down-line`. f1, f3
-# and f7 displace nothing; f4 and f5 are skipped because users' own tools cluster
-# there. alt-<letter> is not free: fish presets alt-b, alt-e, alt-o and alt-p
-# among others.
+# be wrong. ctrl-p/ctrl-n are deliberately left as `up-line`/`down-line`. f1, f2,
+# f3 and f7 displace nothing; f4 and f5 are skipped because users' own tools
+# cluster there. alt-<letter> is not free: fish presets alt-b, alt-e, alt-o and
+# alt-p among others.
 #
 # Rebind by calling `bind` yourself after `scriv_key_bindings`; the last binding
 # for a key wins.
@@ -158,6 +164,7 @@ function scriv_key_bindings --description "Bind scriv selectors to keys"
     bind ctrl-o "scriv-run-as-command scriv-repo-cd"
     bind ctrl-t "scriv-run-as-command scriv-worktree-cd"
     bind f1     "scriv-run-as-command scriv-repo-open"
+    bind f2     "scriv-run-as-command scriv-pr-open"
     bind f3     "scriv-run-as-command scriv-file-edit"
     bind ctrl-g "scriv-run-as-command scriv-branch-checkout"
     bind f7     "scriv-run-as-command scriv-pr-checkout"
@@ -188,6 +195,7 @@ mod tests {
         assert!(out.contains("function kl"));
         assert!(out.contains("function scriv-branch-checkout"));
         assert!(out.contains("function scriv-pr-checkout"));
+        assert!(out.contains("function scriv-pr-open"));
         assert!(out.contains("function scriv-history-select"));
         assert!(out.contains("function scriv-history-up"));
         assert!(out.contains("function scriv_key_bindings"));
@@ -200,6 +208,7 @@ mod tests {
         assert!(out.contains("bind ctrl-o"));
         assert!(out.contains("bind ctrl-t"));
         assert!(out.contains("bind f1"));
+        assert!(out.contains("bind f2"));
         assert!(out.contains("bind f3"));
         assert!(out.contains("bind f7"));
         assert!(out.contains("bind ctrl-g"));
@@ -301,7 +310,7 @@ mod tests {
     #[test]
     fn bindings_that_produce_output_run_through_the_command_line() {
         let out = integration(Shell::Fish, &mut dummy());
-        for key in ["ctrl-o", "ctrl-t", "f1", "f3", "ctrl-g", "f7"] {
+        for key in ["ctrl-o", "ctrl-t", "f1", "f2", "f3", "ctrl-g", "f7"] {
             let bind = binding_for(&out, key);
             assert!(
                 bind.contains("scriv-run-as-command"),

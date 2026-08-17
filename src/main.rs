@@ -432,6 +432,13 @@ enum PrCmd {
     Open {
         /// Pull request number
         number: Option<u64>,
+        /// Open the pull request for the checked-out branch, without asking
+        ///
+        /// A branch with none opens the repository's pull request list
+        /// instead, which is also what a detached HEAD gets. The fish
+        /// integration binds this to f2.
+        #[arg(long, conflicts_with_all = ["number", "state", "limit"])]
+        current: bool,
         #[command(flatten)]
         scope: PrScope,
     },
@@ -626,7 +633,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             PrCmd::Checkout { number, scope } => {
                 cmd::pr::checkout(&ctx, number, &scope.state, scope.limit)
             }
-            PrCmd::Open { number, scope } => cmd::pr::open(&ctx, number, &scope.state, scope.limit),
+            PrCmd::Open {
+                number,
+                current,
+                scope,
+            } => cmd::pr::open(&ctx, number, current, &scope.state, scope.limit),
             PrCmd::Merge {
                 number,
                 method,

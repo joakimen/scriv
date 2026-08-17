@@ -100,6 +100,7 @@ for `proc`.
 | `ctrl-r` | search shell history onto the command line |
 | `up` | the same, on the first line of a prompt |
 | `f1` | open a repository on GitHub |
+| `f2` | open this branch's pull request, or the list if it has none |
 | `f3` | open a tracked file in `$EDITOR` |
 | `f7` | check out a pull request |
 

@@ -288,6 +288,39 @@ fn edit_dir_opens_the_directories_it_is_given() {
     assert_eq!(run.stdout.trim(), "-- src tests");
 }
 
+/// The branch's pull request is a different question from "which pull
+/// request?", so the two spellings must not both be answerable at once.
+#[test]
+fn pr_open_current_and_a_number_are_different_questions() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["pr", "open", "--current", "42"]);
+    run.code(2);
+    assert!(run.stderr.contains("cannot be used with"), "{}", run.stderr);
+}
+
+/// `--state` and `--limit` narrow a list this flag never asks for.
+#[test]
+fn pr_open_current_refuses_the_flags_it_would_ignore() {
+    let sandbox = Sandbox::new();
+    for scope in [&["--state", "all"][..], &["--limit", "5"][..]] {
+        let mut args = vec!["pr", "open", "--current"];
+        args.extend_from_slice(scope);
+        sandbox.run(&args).code(2);
+    }
+}
+
+#[test]
+fn pr_open_current_outside_a_repository_says_so() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["pr", "open", "--current"]);
+    run.code(1);
+    assert!(
+        run.stderr.contains("not inside a git repository"),
+        "{}",
+        run.stderr
+    );
+}
+
 #[test]
 fn every_registry_exposes_sel() {
     let sandbox = Sandbox::new();
