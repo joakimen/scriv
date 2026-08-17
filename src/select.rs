@@ -309,6 +309,7 @@ pub fn select_one_queried(
         multi: false,
         query,
         reload: None,
+        actions: &[],
     };
     run_selector(Feed::batch(items), run, cfg)?
         .values
@@ -321,6 +322,40 @@ pub fn select_one_queried(
 /// displaces skim's own `ctrl-r`, so only the selectors over remote data offer
 /// it.
 pub const REFRESH_KEY: &str = "ctrl-r";
+
+/// The key that hides and shows the preview pane. Offered wherever there is a
+/// pane to hide: a pane costs half the width, and a row worth reading in full
+/// is exactly when it is in the way.
+///
+/// `ctrl-v` is free in skim's default keymap, and inside a full-screen TUI it
+/// carries none of the meanings it has at a shell prompt.
+const PREVIEW_KEY: &str = "ctrl-v";
+
+/// A second thing a selector can do, on a key of its own.
+///
+/// One list of pull requests answers "which one" whichever verb asked, and the
+/// verb you wanted is often not the one you opened. An action lets the same
+/// selector close on a different one; [`Outcome::acted`] says which.
+pub struct Action {
+    /// skim's spelling of the key — `f2`, `ctrl-x`.
+    pub key: &'static str,
+    /// What the header calls it. A verb, two words at most.
+    pub label: &'static str,
+}
+
+impl Action {
+    pub const fn new(key: &'static str, label: &'static str) -> Self {
+        Self { key, label }
+    }
+}
+
+/// What a selector with [`Action`]s came back with.
+pub struct Chosen {
+    /// The row's value.
+    pub value: String,
+    /// The action taken, when it was not the ordinary one. `None` is enter.
+    pub action: Option<&'static str>,
+}
 
 /// Fetches a fresh set of rows. Called on a background thread, so it may block
 /// for as long as the network takes.
@@ -339,17 +374,43 @@ pub fn select_one_reloading(
     prompt: &str,
     cfg: &SelectorConfig,
     reload: Reload,
-) -> Result<String> {
+    actions: &'static [Action],
+) -> Result<Chosen> {
     let run = Run {
         prompt,
         multi: false,
         query: "",
         reload: Some(reload),
+        actions,
     };
-    run_selector(Feed::batch(items), run, cfg)?
+    chosen(run_selector(Feed::batch(items), run, cfg)?)
+}
+
+/// [`select_one`], with `actions` offered beside enter.
+pub fn select_one_acting(
+    items: Vec<SelectItem>,
+    prompt: &str,
+    cfg: &SelectorConfig,
+    actions: &'static [Action],
+) -> Result<Chosen> {
+    let run = Run {
+        prompt,
+        multi: false,
+        query: "",
+        reload: None,
+        actions,
+    };
+    chosen(run_selector(Feed::batch(items), run, cfg)?)
+}
+
+/// The one row an acting selector closed on, and how.
+fn chosen(outcome: Outcome) -> Result<Chosen> {
+    let action = outcome.acted;
+    outcome
         .values
         .into_iter()
         .next()
+        .map(|value| Chosen { value, action })
         .ok_or_else(|| Cancelled.into())
 }
 
@@ -565,6 +626,8 @@ struct Run<'a> {
     query: &'a str,
     /// Given one, [`REFRESH_KEY`] reloads the list through it.
     reload: Option<Reload>,
+    /// Keys that close the selector meaning something other than enter.
+    actions: &'static [Action],
 }
 
 impl<'a> Run<'a> {
@@ -574,6 +637,7 @@ impl<'a> Run<'a> {
             multi,
             query: "",
             reload: None,
+            actions: &[],
         }
     }
 }
@@ -584,6 +648,8 @@ struct Outcome {
     /// What the user had typed — the answer itself when the list is a set of
     /// suggestions and nothing matched.
     query: String,
+    /// The [`Action`] key it closed on, if it was not enter.
+    acted: Option<&'static str>,
 }
 
 /// Drive skim over `feed` and return the selected values.
@@ -604,7 +670,7 @@ fn run_with_query(
 
 /// Drive skim over `feed`.
 fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
-    let (prompt, multi) = (run.prompt, run.multi);
+    let (prompt, multi, actions) = (run.prompt, run.multi, run.actions);
     // A clearer message than skim's raw "Device not configured". Command
     // substitution still has a tty on stdin/stderr, so it is allowed.
     use std::io::IsTerminal;
@@ -625,7 +691,8 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
 
     // The per-item `preview()` supplies the content, so an empty command
     // string is all it takes to turn the pane on.
-    if cfg.preview && feed.preview {
+    let previewing = cfg.preview && feed.preview;
+    if previewing {
         builder
             .preview("")
             .preview_window(cfg.preview_window.as_str());
@@ -635,6 +702,9 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         builder.query(run.query.to_string());
     }
 
+    let reloadable = run.reload.is_some();
+    let header = hints(actions, reloadable, multi);
+
     // `no_clear_if_empty` keeps a quick reload from flickering; a slow one
     // still empties the list, which is what the busy header is for.
     if let Some(reload) = run.reload {
@@ -642,10 +712,16 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
             reload: Arc::new(Mutex::new(reload)),
         };
         builder
-            .bind(refresh_binds())
-            .header(IDLE_HEADER.to_string())
             .no_clear_if_empty(true)
             .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>);
+    }
+
+    if !header.is_empty() {
+        builder.header(header.clone());
+    }
+    let binds = binds(actions, reloadable, previewing, &header);
+    if !binds.is_empty() {
+        builder.bind(binds);
     }
 
     let options = builder
@@ -667,8 +743,72 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
             .iter()
             .map(|item| item.output().to_string())
             .collect(),
+        acted: acted(&output, actions),
         query: output.query,
     })
+}
+
+/// Which [`Action`] the selector closed on, if it was not enter.
+///
+/// Only the key's code and modifiers are compared. skim reports the whole
+/// event, which also carries how it was produced — press or release, and the
+/// terminal's own state — and a key parsed from a string cannot know either;
+/// they differ between terminals that speak a modern key encoding and those
+/// that do not.
+fn acted(output: &SkimOutput, actions: &'static [Action]) -> Option<&'static str> {
+    actions
+        .iter()
+        .find(|action| {
+            skim::binds::parse_key(action.key).is_ok_and(|want| {
+                want.code == output.final_key.code && want.modifiers == output.final_key.modifiers
+            })
+        })
+        .map(|action| action.key)
+}
+
+/// The header: what this selector can do that another one cannot.
+///
+/// [`PREVIEW_KEY`] is deliberately absent. It does the same thing in every
+/// selector that has a pane, and a header is one line competing with a preview
+/// pane for the width — four hints already ran off the end of a narrow one. It
+/// is in `scriv --help` instead, where something true everywhere belongs.
+///
+/// Nothing at all when there is nothing to say, so a plain list of paths keeps
+/// the row for a path.
+fn hints(actions: &[Action], reloadable: bool, multi: bool) -> String {
+    let mut hints: Vec<String> = actions
+        .iter()
+        .map(|action| format!("{} {}", action.key, action.label))
+        .collect();
+    if reloadable {
+        hints.push(format!("{REFRESH_KEY} refresh"));
+    }
+    if multi {
+        hints.push("tab select".to_string());
+    }
+    hints.join(HINT_SEPARATOR)
+}
+
+/// Between hints. Spaces alone read as one run-on line at a glance.
+const HINT_SEPARATOR: &str = " · ";
+
+/// Every skim binding this run needs: one `accept` per [`Action`], the preview
+/// toggle where there is a pane, and the reload pair where there is a reload.
+///
+/// `header` is what the reload puts back when it finishes, so the hints the
+/// selector opened with survive a refresh.
+fn binds(actions: &[Action], reloadable: bool, previewing: bool, header: &str) -> Vec<String> {
+    let mut binds: Vec<String> = actions
+        .iter()
+        .map(|action| format!("{}:accept", action.key))
+        .collect();
+    if previewing {
+        binds.push(format!("{PREVIEW_KEY}:toggle-preview"));
+    }
+    if reloadable {
+        binds.extend(refresh_binds(header));
+    }
+    binds
 }
 
 /// The row an inline selector opens on, so it never draws over the prompt.
@@ -694,20 +834,17 @@ fn draws_inline(height: &str) -> bool {
         != Some(100)
 }
 
-/// The selector's header when it is showing what it has.
-const IDLE_HEADER: &str = "ctrl-r to refresh";
-
 /// The header while a reload is in flight. skim empties the list for the
 /// duration, so this is what distinguishes fetching from "there are none".
 const BUSY_HEADER: &str = "⟳ refreshing…";
 
 /// The skim bindings that turn [`REFRESH_KEY`] into a reload of the item list.
-/// The second is skim's `load` event, which restores the idle header when a
-/// read finishes.
-fn refresh_binds() -> Vec<String> {
+/// The second is skim's `load` event, which puts `idle` back when a read
+/// finishes.
+fn refresh_binds(idle: &str) -> Vec<String> {
     vec![
         format!("{REFRESH_KEY}:reload+set-header({BUSY_HEADER})"),
-        format!("load:set-header({IDLE_HEADER})"),
+        format!("load:set-header({idle})"),
     ]
 }
 
@@ -895,7 +1032,7 @@ mod tests {
 
     #[test]
     fn the_refresh_key_is_bound_to_a_reload() {
-        let binds = refresh_binds();
+        let binds = refresh_binds("hints");
         let (key, actions) = binds[0]
             .split_once(':')
             .expect("not a `key:action` binding");
@@ -908,20 +1045,98 @@ mod tests {
     }
 
     #[test]
-    fn finishing_a_read_restores_the_idle_header() {
-        let restore = refresh_binds()
+    fn finishing_a_read_puts_the_hints_back() {
+        let restore = refresh_binds("f2 open · ctrl-r refresh")
             .into_iter()
             .find(|b| b.starts_with("load:"))
             .expect("nothing puts the header back");
-        assert!(restore.contains(IDLE_HEADER), "{restore}");
+        assert!(restore.contains("f2 open · ctrl-r refresh"), "{restore}");
     }
 
-    /// skim splits bindings on `,` and ends an argument at `)`.
+    /// skim splits bindings on `,` and ends an argument at `)`, and both the
+    /// busy header and the hints are written into one.
     #[test]
     fn header_text_cannot_break_the_binding_syntax() {
-        for header in [IDLE_HEADER, BUSY_HEADER] {
+        let every_hint = hints(
+            &[Action::new("f2", "open"), Action::new("f7", "check out")],
+            true,
+            true,
+        );
+        for header in [BUSY_HEADER, every_hint.as_str(), HINT_SEPARATOR] {
             assert!(!header.contains(','), "{header:?} would split the binding");
             assert!(!header.contains(')'), "{header:?} would end the argument");
+        }
+    }
+
+    #[test]
+    fn the_header_names_every_key_the_selector_answers_to() {
+        let full = hints(&[Action::new("f2", "open")], true, true);
+        assert_eq!(full, "f2 open · ctrl-r refresh · tab select");
+    }
+
+    /// A plain list of paths has nothing to say, and the row is worth more as a
+    /// path than as an empty hint line.
+    #[test]
+    fn a_selector_with_nothing_to_offer_draws_no_header() {
+        assert!(hints(&[], false, false).is_empty());
+    }
+
+    #[test]
+    fn each_hint_appears_only_when_its_key_is_bound() {
+        assert_eq!(hints(&[], false, true), "tab select");
+        assert_eq!(hints(&[], true, false), "ctrl-r refresh");
+    }
+
+    /// skim binds `ctrl-r` to rotating the match mode and `tab` to toggling a
+    /// selection. Naming either where it does not do what the header says is
+    /// worse than saying nothing.
+    /// Every hint has to name a key that is actually bound, or the header is a
+    /// promise the selector does not keep.
+    #[test]
+    fn every_key_the_header_names_is_bound() {
+        let actions = [Action::new("f2", "open"), Action::new("f7", "check out")];
+        let header = hints(&actions, true, true);
+        let binds = binds(&actions, true, true, &header);
+
+        for hint in header.split(HINT_SEPARATOR) {
+            let key = hint.split(' ').next().expect("a hint with no key");
+            // `tab` is skim's own, and needs no binding from scriv.
+            if key == "tab" {
+                continue;
+            }
+            assert!(
+                binds
+                    .iter()
+                    .any(|bind| bind.starts_with(&format!("{key}:"))),
+                "the header offers {key}, which nothing binds: {binds:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn an_action_key_closes_the_selector_and_the_preview_key_does_not() {
+        let actions = [Action::new("f2", "open")];
+        let binds = binds(&actions, false, true, "");
+        assert!(binds.contains(&"f2:accept".to_string()), "{binds:?}");
+        assert!(
+            binds.contains(&format!("{PREVIEW_KEY}:toggle-preview")),
+            "{binds:?}",
+        );
+    }
+
+    #[test]
+    fn a_plain_selector_binds_nothing_of_its_own() {
+        assert!(binds(&[], false, false, "").is_empty());
+    }
+
+    #[test]
+    fn the_action_keys_are_ones_skim_leaves_alone() {
+        for key in ["f1", "f2", "f7", PREVIEW_KEY] {
+            let parsed = skim::binds::parse_key(key).expect("scriv names a key skim cannot parse");
+            assert!(
+                !skim::binds::get_default_key_map().contains_key(&parsed),
+                "{key} already means something in skim",
+            );
         }
     }
 

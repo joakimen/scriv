@@ -170,7 +170,12 @@ fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Res
         })
     };
 
-    let name = select::select_one_reloading(items(&offered), prompt, &ctx.config.selector, reload)?;
+    // No second verb: what else there is to do with a branch — deleting it —
+    // is destructive, and a key beside the one that checks it out is the wrong
+    // distance from a mistake.
+    let chosen =
+        select::select_one_reloading(items(&offered), prompt, &ctx.config.selector, reload, &[])?;
+    let name = chosen.value;
 
     if let Some(err) = failure.lock().expect("failure slot poisoned").take() {
         eprintln!("warning: could not refresh branches: {err}");

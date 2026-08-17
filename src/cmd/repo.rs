@@ -155,15 +155,29 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
         .collect()
 }
 
+/// Open the highlighted repository's GitHub page instead of returning it. f1 is
+/// what does that from the prompt in fish, and means the same thing here — so
+/// the answer to "which one" can be given once whichever question was asked.
+const OPEN: select::Action = select::Action::new("f1", "on GitHub");
+
 /// `scriv repo sel` — fuzzy-select one repository and print its absolute path.
 ///
 /// The path is printed absolute so a shell shim can `cd` to it directly.
+///
+/// [`OPEN`] prints nothing, which the fish `cd` wrapper already treats as
+/// nothing to do — the same as cancelling.
 pub fn sel(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
     let (rows, now) = ctx.by_recency(repo_rows(ctx, &repos), |row| row.value());
-    let choice = select::select_one(rows, "Select a repository", &ctx.config.selector)?;
-    ctx.remember(&choice, now);
-    println!("{choice}");
+    let chosen =
+        select::select_one_acting(rows, "Select a repository", &ctx.config.selector, &[OPEN])?;
+    // Recorded either way: which repository was wanted is the answer, and what
+    // was then done with it does not make it a worse guess next time.
+    ctx.remember(&chosen.value, now);
+    if chosen.action.is_some() {
+        return gh::view_repo_web(Path::new(&chosen.value));
+    }
+    println!("{}", chosen.value);
     Ok(())
 }
 
