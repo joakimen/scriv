@@ -239,10 +239,11 @@ enum RepoCmd {
     /// several and they clone concurrently. `owner/repo` skips both selectors.
     ///
     /// Everything lands at `<root>/<owner>/<repo>`, so a clone is in
-    /// `scriv repo sel` immediately afterwards. Repositories you already have
-    /// are listed but greyed, and are skipped rather than re-cloned; private
-    /// ones are yellow and internal ones magenta. Archived repositories are
-    /// left out unless you ask for them.
+    /// `scriv repo sel` immediately afterwards. Each row carries the tags that
+    /// make a repository unusual — `private` in yellow, `internal` in magenta —
+    /// and the date it was last pushed to. Repositories you already have are
+    /// marked with a green tick and skipped rather than re-cloned. Archived
+    /// repositories are left out unless you ask for them.
     Clone {
         /// `owner` to select from, or `owner/repo` to clone directly
         #[arg(value_name = "OWNER[/REPO]")]

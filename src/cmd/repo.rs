@@ -12,7 +12,7 @@ use crate::config::{Labels, RepoDisplay};
 use crate::gh::{self, Repo};
 use crate::path::{display_path, expand_home_dir, relative_label};
 use crate::repo::FoundRepo;
-use crate::select::{Choice, Preview, SelectItem};
+use crate::select::{Choice, SelectItem, Tint};
 use crate::{Ctx, git, repo, select, term};
 
 /// Discover repositories, label-tagged and sorted by path.
@@ -189,9 +189,12 @@ pub fn open(ctx: &Ctx, force_select: bool) -> Result<()> {
 /// the ceiling is what a remote accepts from one user.
 const CLONE_CONCURRENCY: usize = 8;
 
-/// Colour for a row that is already on disk. Grey reads as "not actionable",
-/// which is exactly what an already-cloned repository is.
-const PRESENT_COLOR: u8 = 8;
+/// The mark on a repository already on disk, and its colour: green, the one
+/// hue that reads as "done" without being read as a warning. It is the whole
+/// signal — the row beneath it is drawn like any other, since a dimmed row says
+/// "not worth looking at" of a repository that is merely already here.
+const PRESENT_MARK: &str = "✓";
+const PRESENT_COLOR: u8 = 2;
 
 /// The configured root, expanded — the one directory clones are written to.
 fn clone_root(ctx: &Ctx) -> Result<PathBuf> {
@@ -282,86 +285,107 @@ fn select_owner(ctx: &Ctx, root: &Path) -> Result<String> {
     }
 }
 
-/// The preview for a repository: description and the facts that tell two
-/// similar repositories apart, from data `gh repo list` already returned.
-fn repo_preview(repo: &Repo, present: Option<&Path>) -> Preview {
-    let mut out = term::paint(&repo.name_with_owner, 6, true);
-    out.push('\n');
+/// How wide each column of the clone selector is, measured over the whole list
+/// so the columns line up.
+struct Widths {
+    name: usize,
+    tags: usize,
+    pushed: usize,
+}
 
-    let mut facts = Vec::new();
-    if !repo.language().is_empty() {
-        facts.push(repo.language().to_string());
+impl Widths {
+    fn of(repos: &[Repo]) -> Self {
+        // Character counts, not bytes: a column is padded by characters.
+        let widest = |f: fn(&Repo) -> usize| repos.iter().map(f).max().unwrap_or(0);
+        Self {
+            name: widest(|r| r.name().chars().count()),
+            tags: widest(|r| tag_column(r).chars().count()),
+            pushed: widest(|r| r.pushed_date().chars().count()),
+        }
     }
-    if !repo.pushed_date().is_empty() {
-        facts.push(format!("pushed {}", repo.pushed_date()));
+}
+
+/// The tags column: what makes this repository unusual, in one string.
+fn tag_column(repo: &Repo) -> String {
+    repo.tags().join(" ")
+}
+
+/// Append `text` and pad it out to `width` characters.
+fn push_column(row: &mut String, text: &str, width: usize) {
+    row.push_str(text);
+    for _ in text.chars().count()..width {
+        row.push(' ');
     }
-    let visibility = repo.visibility();
-    for tag in repo.tags() {
-        facts.push(match visibility.color() {
-            Some(color) if tag == visibility.tag() => term::paint(tag, color, true),
-            _ => tag.to_string(),
+}
+
+/// One row of the clone selector, and the columns of it that carry a colour.
+///
+/// The two are built together because a tint is a character range into the row,
+/// and counting those ranges out a second time is how they drift.
+///
+/// Nothing tints the row as a whole. A line drawn in one colour reads as a
+/// statement about the repository, and neither "already on disk" nor "private"
+/// is one — the first is about this machine and the second about one column, so
+/// each colours only the thing it is true of.
+fn clone_row(repo: &Repo, present: bool, widths: &Widths) -> (String, Vec<Tint>) {
+    let mut row = String::new();
+    let mut tints = Vec::new();
+
+    row.push_str(if present { PRESENT_MARK } else { " " });
+    if present {
+        tints.push(Tint {
+            range: 0..row.chars().count(),
+            color: PRESENT_COLOR,
         });
     }
-    if !facts.is_empty() {
-        out.push_str(&facts.join("  ·  "));
-        out.push('\n');
-    }
+    row.push(' ');
 
-    if let Some(path) = present {
-        out.push_str(&term::paint(
-            &format!("already cloned at {}\n", path.display()),
-            PRESENT_COLOR,
-            true,
-        ));
-    }
-    out.push('\n');
+    push_column(&mut row, repo.name(), widths.name);
+    row.push_str("  ");
 
-    let description = repo.description.trim();
-    out.push_str(if description.is_empty() {
-        "(no description)"
-    } else {
-        description
-    });
-    Preview::Text(out)
+    let visibility = repo.visibility();
+    let tags_at = row.chars().count();
+    for (index, tag) in repo.tags().iter().enumerate() {
+        if index > 0 {
+            row.push(' ');
+        }
+        let at = row.chars().count();
+        row.push_str(tag);
+        if let Some(color) = visibility.color()
+            && *tag == visibility.tag()
+        {
+            tints.push(Tint {
+                range: at..row.chars().count(),
+                color,
+            });
+        }
+    }
+    for _ in (row.chars().count() - tags_at)..widths.tags {
+        row.push(' ');
+    }
+    row.push_str("  ");
+
+    push_column(&mut row, repo.pushed_date(), widths.pushed);
+    row.push_str("  ");
+    row.push_str(repo.description.trim());
+
+    (row.trim_end().to_string(), tints)
 }
 
 /// Build the repository rows, marking the ones already on disk. They stay
 /// listed rather than filtered out, since their absence would read as "this org
 /// does not have that repo".
+///
+/// No preview pane: everything `gh repo list` returned that is worth seeing is
+/// now a column, and a pane that repeats the row is a pane nobody reads.
 fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
-    let width = repos
-        .iter()
-        .map(|r| r.name().chars().count())
-        .max()
-        .unwrap_or(0);
-    // Rendered once and reused for both the column width and the rows.
-    let tags: Vec<String> = repos.iter().map(|r| r.tags().join(" ")).collect();
-    let tag_width = tags.iter().map(|t| t.chars().count()).max().unwrap_or(0);
-
+    let widths = Widths::of(repos);
     repos
         .iter()
-        .zip(&tags)
-        .map(|(repo, tags)| {
-            let dest = destination(root, repo.owner(), repo.name());
-            let present = dest.exists();
-            let marker = if present { "✓" } else { " " };
-            let label = format!(
-                "{marker} {name:<width$}  {tags:<tag_width$}  {description}",
-                name = repo.name(),
-                description = repo.description.trim(),
-            );
-            let item = SelectItem::new(label.trim_end(), repo.name_with_owner.clone())
-                .preview(repo_preview(repo, present.then_some(dest.as_path())));
-            // Being on disk outranks visibility: it is the one thing that
-            // changes what selecting the row does.
-            match if present {
-                Some(PRESENT_COLOR)
-            } else {
-                repo.visibility().color()
-            } {
-                Some(color) => item.color(color),
-                None => item,
-            }
+        .map(|repo| {
+            let present = destination(root, repo.owner(), repo.name()).exists();
+            let (row, tints) = clone_row(repo, present, &widths);
+            SelectItem::new(row, repo.name_with_owner.clone()).tints(tints)
         })
         .collect()
 }
@@ -604,6 +628,21 @@ mod tests {
         assert_eq!(repos[1].tags(), vec!["archived", "fork"]);
     }
 
+    /// The characters `range` covers, which is what the selector will paint.
+    fn tinted(row: &str, tint: &Tint) -> String {
+        row.chars()
+            .skip(tint.range.start)
+            .take(tint.range.end - tint.range.start)
+            .collect::<String>()
+    }
+
+    fn tint_of(row: &str, tints: &[Tint], color: u8) -> Option<String> {
+        tints
+            .iter()
+            .find(|t| t.color == color)
+            .map(|t| tinted(row, t))
+    }
+
     #[test]
     fn present_repositories_are_marked_not_hidden() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -612,57 +651,101 @@ mod tests {
 
         let items = repo_items(&repos(), root);
         assert_eq!(items.len(), 2, "a present repo was dropped from the list");
-        assert!(items[0].label.starts_with('✓'), "{}", items[0].label);
-        assert_eq!(items[0].color, Some(PRESENT_COLOR));
-        assert!(!items[1].label.starts_with('✓'), "{}", items[1].label);
-        assert_eq!(items[1].color, None);
+        assert!(
+            items[0].label.starts_with(PRESENT_MARK),
+            "{}",
+            items[0].label
+        );
+        assert!(
+            !items[1].label.starts_with(PRESENT_MARK),
+            "{}",
+            items[1].label
+        );
         // The value is still the slug, so selecting it is well-defined.
         assert_eq!(items[0].value(), "acme/billing-api");
     }
 
     #[test]
-    fn visibility_colours_a_row_that_is_not_on_disk_yet() {
+    fn nothing_colours_a_whole_row() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let items = repo_items(&repos(), tmp.path());
-        assert_eq!(items[0].color, gh::Visibility::Private.color());
-        assert_eq!(items[1].color, None, "a public repository is left bare");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("acme/billing-api")).unwrap();
+        for item in repo_items(&repos(), root) {
+            assert_eq!(item.color, None, "{} is drawn in one colour", item.label);
+        }
+    }
+
+    #[test]
+    fn the_mark_on_an_existing_clone_is_green_and_only_the_mark() {
+        let widths = Widths::of(&repos());
+        let (row, tints) = clone_row(&repos()[0], true, &widths);
+        assert_eq!(tint_of(&row, &tints, PRESENT_COLOR).as_deref(), Some("✓"));
+        assert_eq!(PRESENT_COLOR, 2, "the mark is not green");
+    }
+
+    #[test]
+    fn an_uncloned_repository_carries_no_mark() {
+        let widths = Widths::of(&repos());
+        let (row, tints) = clone_row(&repos()[0], false, &widths);
+        assert!(!row.starts_with(PRESENT_MARK), "{row}");
+        assert_eq!(tint_of(&row, &tints, PRESENT_COLOR), None);
+    }
+
+    #[test]
+    fn only_the_visibility_word_takes_the_visibility_colour() {
+        let widths = Widths::of(&repos());
+        let (row, tints) = clone_row(&repos()[0], false, &widths);
+        let color = gh::Visibility::Private.color().unwrap();
+        assert_eq!(tint_of(&row, &tints, color).as_deref(), Some("private"));
+    }
+
+    /// `archived` and `fork` share the tags column with the visibility word and
+    /// say nothing about who can see the repository.
+    #[test]
+    fn the_other_tags_are_left_uncoloured() {
+        let widths = Widths::of(&repos());
+        let (row, tints) = clone_row(&repos()[1], false, &widths);
+        assert!(row.contains("archived fork"), "{row}");
+        assert!(tints.is_empty(), "a public repository is left bare: {row}");
+    }
+
+    #[test]
+    fn the_row_carries_the_last_push_date_before_the_description() {
+        let widths = Widths::of(&repos());
+        let (row, _) = clone_row(&repos()[0], false, &widths);
+        let pushed = row.find("2026-07-27").expect(&row);
+        let description = row.find("Meters usage").expect(&row);
+        assert!(pushed < description, "{row}");
+    }
+
+    /// Every column is padded to the width of the whole list, so a row reads
+    /// down the screen rather than only across.
+    #[test]
+    fn the_columns_line_up() {
+        let widths = Widths::of(&repos());
+        let rows: Vec<String> = repos()
+            .iter()
+            .map(|repo| clone_row(repo, false, &widths).0)
+            .collect();
+        let at = |row: &str, needle: &str| row.find(needle).map(|i| row[..i].chars().count());
+        assert_eq!(
+            at(&rows[0], "2026-07-27"),
+            at(&rows[1], "2024-01-02"),
+            "{rows:?}",
+        );
+    }
+
+    #[test]
+    fn nothing_previews_a_repository() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for item in repo_items(&repos(), tmp.path()) {
+            assert!(item.preview.is_none(), "{} opens a pane", item.label);
+        }
     }
 
     #[test]
     fn an_owner_with_nothing_to_show_names_the_archive_filter() {
         assert!(empty_message("acme", false).contains("--archived"));
         assert!(!empty_message("acme", true).contains("--archived"));
-    }
-
-    #[test]
-    fn preview_paints_the_visibility_tag() {
-        let Preview::Text(text) = repo_preview(&repos()[0], None) else {
-            panic!("expected text");
-        };
-        let color = gh::Visibility::Private.color().unwrap();
-        assert!(
-            text.contains(&term::paint("private", color, true)),
-            "{text}"
-        );
-    }
-
-    #[test]
-    fn preview_names_the_existing_checkout() {
-        let path = PathBuf::from("/home/u/dev/github.com/acme/billing-api");
-        let Preview::Text(text) = repo_preview(&repos()[0], Some(&path)) else {
-            panic!("a repo preview must not spawn a command");
-        };
-        assert!(text.contains("already cloned at"), "{text}");
-        assert!(text.contains("Rust"), "{text}");
-        assert!(text.contains("Meters usage"), "{text}");
-    }
-
-    #[test]
-    fn preview_handles_a_missing_description() {
-        let Preview::Text(text) = repo_preview(&repos()[1], None) else {
-            panic!("expected text");
-        };
-        assert!(text.contains("(no description)"), "{text}");
-        assert!(!text.contains("already cloned"), "{text}");
     }
 }
