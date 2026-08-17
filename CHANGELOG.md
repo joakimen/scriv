@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.8.0
+
+*Released 2026-08-17*
+
 ### Added
 
 - A selector now says what it can do, in a line under the prompt, and can do
@@ -22,7 +26,6 @@ raised, never by hand.
   another search. In a repository list, f1 opens it on GitHub.
 - ctrl-v hides and shows the preview pane in every selector that has one, which
   is what a row too wide to read wants.
-
 - The repositories and files you actually work in are offered first.
   `repo sel`, `repo open`, `file sel` and `edit --tracked` now lead with what
   you have chosen before — frequently and recently both count — instead of
