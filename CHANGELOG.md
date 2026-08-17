@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.7.2
+
+*Released 2026-08-17*
+
 ### Changed
 
 - `scriv history` no longer offers scriv's own key bindings back. Pressing
