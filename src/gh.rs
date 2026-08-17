@@ -803,6 +803,22 @@ pub fn owners() -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Whether `gh` can act as someone on GitHub: `gh auth status` tests the stored
+/// token against the host, so this catches an expired or revoked one as well as
+/// no login at all.
+///
+/// A network round trip, and therefore for `config check` alone — nothing on a
+/// keystroke path may ask this.
+pub fn authenticated() -> bool {
+    Command::new("gh")
+        .args(["auth", "status", "--active"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// Run `gh` with the terminal attached, in the working directory scriv was
 /// invoked from. `gh` writes its own diagnostics, so a failure is [`Reported`].
 fn run(args: &[&str]) -> Result<()> {

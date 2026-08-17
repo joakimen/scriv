@@ -160,6 +160,9 @@ enum Command {
     ///
     /// The date is shown but never searched: it is digits at the front of every
     /// row, and matching it would rank timestamps above commands.
+    ///
+    /// scriv's own `scriv-` shell functions are left out — pressing ctrl-o
+    /// records one, and a key press is not a command anyone typed.
     #[command(visible_alias = "h")]
     History {
         #[command(subcommand)]
@@ -544,10 +547,14 @@ enum ConfigCmd {
     /// Check everything scriv depends on and report what is wrong
     ///
     /// Looks at the config file, the paths it names, the repositories
-    /// discovery actually finds, your editor, `git`, `gh`, fish's history file
-    /// and the tracked-file list — all in one pass, each with what to do about
-    /// it. Exits non-zero only when something is genuinely broken, so it is
-    /// worth putting in a setup script; a warning still leaves scriv working.
+    /// discovery actually finds, your editor, `git`, `gh` and whether it is
+    /// still logged in, fish's history file and the tracked-file list — all in
+    /// one pass, each with what to do about it. Exits non-zero only when
+    /// something is genuinely broken, so it is worth putting in a setup script;
+    /// a warning still leaves scriv working.
+    ///
+    /// The login is asked of GitHub, so this is the one command here that waits
+    /// on the network.
     Check,
 }
 

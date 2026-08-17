@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 
 use crate::path::expand_home_dir;
-use crate::{Ctx, files, history, repo, term};
+use crate::{Ctx, files, gh, history, repo, term};
 
 /// A commented starter config. Settings are grouped by the command that reads
 /// them; users edit it to taste.
@@ -266,6 +266,35 @@ fn tool_check(name: &'static str, program: &str, required: bool, note: &str) -> 
     }
 }
 
+/// What the `gh` row says when `gh` is not installed at all.
+const GH_NOTE: &str = "only `pr` and `repo clone`/`open` need it (https://cli.github.com)";
+
+/// What the `gh` row says once it is installed: which version, and whether it
+/// can act as anyone. An expired token fails `pr` exactly as completely as a
+/// missing binary does, which is why one row covers both — but neither stops
+/// the rest of scriv, so it is a warning.
+fn gh_state(version: &str, authenticated: bool) -> (Status, String) {
+    if authenticated {
+        (Status::Ok, format!("{version}, authenticated"))
+    } else {
+        (
+            Status::Warn,
+            format!("{version}, not authenticated — run `gh auth login`"),
+        )
+    }
+}
+
+/// `gh`: installed, and logged in. The login is asked of GitHub, which is the
+/// slowest thing in the report and the reason this is not a [`tool_check`].
+fn gh_check() -> Check {
+    if on_path("gh").is_none() {
+        return Check::warn("gh", format!("not on PATH — {GH_NOTE}"));
+    }
+    let version = version_of("gh").unwrap_or_else(|| "found".into());
+    let (status, detail) = gh_state(&version, gh::authenticated());
+    Check::new("gh", status, detail)
+}
+
 /// The config file itself: whether there is one, and where. Reaching this point
 /// means it parsed, so the only question left is whether one exists — and
 /// absent is a warning, since the known-files commands work without one.
@@ -375,7 +404,11 @@ fn history_check(ctx: &Ctx) -> Check {
         ),
         Err(e) => Check::fail("fish history", format!("{shown}: {e}")),
         Ok(data) => {
-            let entries = history::recent_first(history::parse(&String::from_utf8_lossy(&data)));
+            // The same list `history sel` offers, so the count is the one the
+            // selector will show rather than one that counts key presses.
+            let entries = history::recent_first(history::typed_only(history::parse(
+                &String::from_utf8_lossy(&data),
+            )));
             Check::ok(
                 "fish history",
                 format!("{} unique command(s) in {shown}", entries.len()),
@@ -428,12 +461,7 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         true,
         "`branch` and `repo` cannot work without it",
     ));
-    checks.push(tool_check(
-        "gh",
-        "gh",
-        false,
-        "only `pr` and `repo clone`/`open` need it (https://cli.github.com)",
-    ));
+    checks.push(gh_check());
     // `kill` gets no row: it ships in the same base system `ps` does.
     checks.push(tool_check(
         "ps",
@@ -562,6 +590,21 @@ mod tests {
         ];
         let column = |row: &str| row.rfind("  ").map(|i| i + 2);
         assert_eq!(column(&rows[0]), column(&rows[1]), "{rows:?}");
+    }
+
+    #[test]
+    fn an_unauthenticated_gh_is_a_warning_that_names_the_way_out() {
+        let (status, detail) = gh_state("gh version 2.97.0", false);
+        assert_eq!(status, Status::Warn, "a login nobody has is not fatal");
+        assert!(detail.contains("gh auth login"), "{detail}");
+        assert!(
+            detail.contains("2.97.0"),
+            "the version went missing: {detail}"
+        );
+
+        let (status, detail) = gh_state("gh version 2.97.0", true);
+        assert_eq!(status, Status::Ok);
+        assert!(!detail.contains("gh auth login"), "{detail}");
     }
 
     #[test]

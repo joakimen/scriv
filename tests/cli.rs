@@ -321,6 +321,36 @@ fn pr_open_current_outside_a_repository_says_so() {
     );
 }
 
+/// Every `pr` verb needs a repository to be about, and left to `gh` the answer
+/// is git's `fatal: not a git repository` — a sentence about git, from a
+/// command that was asked about pull requests.
+#[test]
+fn pr_outside_a_repository_says_so_before_gh_does() {
+    let sandbox = Sandbox::new();
+    for verb in [&["ls"][..], &["sel"][..], &["checkout", "1"][..]] {
+        let mut args = vec!["pr"];
+        args.extend_from_slice(verb);
+        let run = sandbox.run(&args);
+        run.code(1);
+        assert!(
+            run.stderr.contains("not inside a git repository"),
+            "`pr {}`: {}",
+            verb.join(" "),
+            run.stderr
+        );
+        assert!(
+            run.stderr.contains("GH_REPO"),
+            "the way to run this anyway went unmentioned: {}",
+            run.stderr
+        );
+        assert!(
+            !run.stderr.contains("fatal:"),
+            "gh was reached after all: {}",
+            run.stderr
+        );
+    }
+}
+
 #[test]
 fn every_registry_exposes_sel() {
     let sandbox = Sandbox::new();
@@ -533,6 +563,37 @@ fn config_check_does_not_report_one_problem_twice() {
 
 // --- repo discovery ---------------------------------------------------------
 
+/// The two ways to have nowhere to look need opposite advice. Someone who has
+/// just run `config init` and not yet filled in the root must not be sent back
+/// to `config init`, which refuses to overwrite the file it just wrote.
+#[test]
+fn a_missing_root_is_answered_by_where_the_user_actually_is() {
+    let sandbox = Sandbox::new();
+
+    let fresh = sandbox.run(&["repo", "ls"]);
+    fresh.code(1);
+    assert!(
+        fresh.stderr.contains("scriv config init"),
+        "{}",
+        fresh.stderr
+    );
+
+    let path = sandbox.write_config("[repo]\nignore = [\"target\"]\n");
+    let written = sandbox.run(&["repo", "ls"]);
+    written.code(1);
+    assert!(
+        written.stderr.contains(path.to_str().unwrap()),
+        "the error did not say which file to edit: {}",
+        written.stderr
+    );
+    assert!(written.stderr.contains("[repo] root"), "{}", written.stderr);
+    assert!(
+        !written.stderr.contains("config init"),
+        "sent back to a command that will refuse: {}",
+        written.stderr
+    );
+}
+
 #[test]
 fn repo_ls_finds_repositories_under_the_root() {
     let sandbox = Sandbox::new();
@@ -589,17 +650,6 @@ fn repo_ls_skips_ignored_directories() {
     let run = sandbox.run(&["repo", "ls"]);
     run.ok();
     assert_eq!(run.lines(), vec!["~/dev/github.com/acme/billing"]);
-}
-
-#[test]
-fn repo_ls_without_a_root_says_what_to_do() {
-    let sandbox = Sandbox::new();
-    sandbox.write_config("[selector]\nheight = \"40%\"\n");
-
-    let run = sandbox.run(&["repo", "ls"]);
-    run.code(1);
-    assert!(run.stderr.contains("root"), "{}", run.stderr);
-    assert!(run.stderr.contains("config init"), "{}", run.stderr);
 }
 
 #[test]
@@ -1188,6 +1238,31 @@ fn history_ls_status_dates_every_row_in_one_column() {
         "an undated row did not hold the column open: {undated:?}"
     );
     assert!(undated.trim_end().ends_with("undated"), "{undated:?}");
+}
+
+/// ctrl-o reaches the selector by handing `scriv-repo-cd` to fish, which
+/// records it. Offered back, those rows sit at the top of ctrl-r — the newest
+/// commands in the file — and none of them is a command anyone can use.
+#[test]
+fn the_key_bindings_scriv_emits_are_not_listed_as_history() {
+    let sandbox = Sandbox::new();
+    write_history(
+        &sandbox,
+        "- cmd: git status\n  when: 100\n\
+         - cmd: scriv-repo-cd\n  when: 200\n\
+         - cmd: scriv-history-select\n  when: 300\n\
+         - cmd: scriv repo sel\n  when: 400\n\
+         - cmd: fe -t\n  when: 500\n",
+    );
+
+    let run = sandbox.run(&["history", "ls"]);
+    run.ok();
+    assert_eq!(
+        run.lines(),
+        vec!["fe -t", "scriv repo sel", "git status"],
+        "stderr: {}",
+        run.stderr
+    );
 }
 
 #[test]
