@@ -160,8 +160,9 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
 /// The path is printed absolute so a shell shim can `cd` to it directly.
 pub fn sel(ctx: &Ctx) -> Result<()> {
     let repos = discover(ctx)?;
-    let rows = repo_rows(ctx, &repos);
+    let (rows, now) = ctx.by_recency(repo_rows(ctx, &repos), |row| row.value());
     let choice = select::select_one(rows, "Select a repository", &ctx.config.selector)?;
+    ctx.remember(&choice, now);
     println!("{choice}");
     Ok(())
 }
@@ -195,8 +196,9 @@ pub fn open(ctx: &Ctx, force_select: bool) -> Result<()> {
     }
 
     let repos = discover(ctx)?;
-    let rows = repo_rows(ctx, &repos);
+    let (rows, now) = ctx.by_recency(repo_rows(ctx, &repos), |row| row.value());
     let choice = select::select_one(rows, "Open a repository on GitHub", &ctx.config.selector)?;
+    ctx.remember(&choice, now);
     gh::view_repo_web(Path::new(&choice))
 }
 

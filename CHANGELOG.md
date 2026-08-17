@@ -15,6 +15,14 @@ raised, never by hand.
 
 ### Added
 
+- The repositories and files you actually work in are offered first.
+  `repo sel`, `repo open`, `file sel` and `edit --tracked` now lead with what
+  you have chosen before — frequently and recently both count — instead of
+  making you type your way past a hundred and ninety-five repositories to reach
+  the five you are living in. Everything unchosen keeps its old order below.
+  `[selector] recent = false` turns it off and stops the choices being
+  recorded; `ls` is unaffected, so anything piping it sees no change. The
+  record lives in `recent`, beside your config.
 - `scriv worktree add` creates a working tree and picks where it goes:
   `.worktrees/<branch>` inside the repository, or wherever `[worktree] root`
   says. A branch that does not exist yet is created, a remote-only one arrives
