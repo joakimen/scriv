@@ -38,9 +38,39 @@ fn self_pid() -> i32 {
 }
 
 /// The process table, minus what must never be offered: scriv itself and
-/// everything above it in the parent chain.
-fn processes() -> Result<Vec<Process>> {
-    Ok(proc::selectable(&table()?, self_pid()))
+/// everything above it in the parent chain. With a `port`, narrowed to what is
+/// listening on it.
+fn processes(port: Option<u16>) -> Result<Vec<Process>> {
+    let procs = proc::selectable(&table()?, self_pid());
+    let Some(port) = port else {
+        return Ok(procs);
+    };
+    let pids = listeners(port)?;
+    let procs = proc::with_pids(&procs, &pids);
+    if procs.is_empty() {
+        bail!("nothing scriv may signal is listening on port {port}");
+    }
+    Ok(procs)
+}
+
+/// The pids listening on `port`, via `lsof`.
+///
+/// `lsof` exits 1 when it matched nothing, which for a port nobody is using is
+/// an answer rather than a failure — hence reading the status only far enough
+/// to tell that apart from `lsof` being absent.
+fn listeners(port: u16) -> Result<Vec<i32>> {
+    let output = Command::new("lsof")
+        .args(proc::lsof_args(port))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|err| match err.kind() {
+            ErrorKind::NotFound => {
+                anyhow!("`lsof` was not found on PATH — `--port` asks it which process holds one")
+            }
+            _ => anyhow!(err).context("running lsof"),
+        })?;
+    Ok(proc::parse_pids(&String::from_utf8_lossy(&output.stdout)))
 }
 
 fn spawn_error(err: std::io::Error) -> anyhow::Error {
@@ -51,8 +81,8 @@ fn spawn_error(err: std::io::Error) -> anyhow::Error {
 }
 
 /// `scriv proc ls` — print the running processes, busiest first.
-pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
-    let procs = processes()?;
+pub fn ls(ctx: &Ctx, status: bool, port: Option<u16>) -> Result<()> {
+    let procs = processes(port)?;
     let width = proc::user_width(&procs);
     let mut out = term::Listing::stdout();
     for p in &procs {
@@ -70,8 +100,8 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
 }
 
 /// `scriv proc sel` — fuzzy-select a process and print its pid.
-pub fn sel(ctx: &Ctx) -> Result<()> {
-    let procs = processes()?;
+pub fn sel(ctx: &Ctx, port: Option<u16>) -> Result<()> {
+    let procs = processes(port)?;
     if procs.is_empty() {
         bail!("no processes to select from");
     }
@@ -84,11 +114,19 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
 ///
 /// Several pids are signalled one at a time, so a refusal is reported against
 /// the row it belongs to and does not hide the ones that worked.
-pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal) -> Result<()> {
+pub fn kill(ctx: &Ctx, pids: &[i32], signal: Signal, port: Option<u16>) -> Result<()> {
     let table = table()?;
     let procs = proc::selectable(&table, self_pid());
 
-    let targets = if pids.is_empty() {
+    let targets = if let Some(port) = port {
+        // No selector: a port names its processes as precisely as a pid does,
+        // and the whole point of asking by one is not to have to look.
+        let holding = processes(Some(port))?;
+        for p in &holding {
+            eprintln!("port {port}: {}", proc::plain_row(p));
+        }
+        holding.iter().map(|p| p.pid).collect()
+    } else if pids.is_empty() {
         match choose(ctx, &procs, signal)? {
             Some(targets) => targets,
             None => return Ok(()),

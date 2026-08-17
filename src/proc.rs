@@ -150,6 +150,44 @@ pub fn selectable(processes: &[Process], self_pid: i32) -> Vec<Process> {
     visible
 }
 
+/// The `lsof` arguments that list what is listening on a TCP port: numeric
+/// addresses and ports (`-nP`, so nothing is looked up over the network), the
+/// port itself, listening sockets only, and terse output — one pid per line.
+///
+/// Listening rather than connected: "what is holding 3000" is a question about
+/// the process that owns the port, not about everything talking to it.
+pub fn lsof_args(port: u16) -> [String; 4] {
+    [
+        "-nP".to_string(),
+        format!("-iTCP:{port}"),
+        "-sTCP:LISTEN".to_string(),
+        "-t".to_string(),
+    ]
+}
+
+/// Parse `lsof -t` output: one pid per line, and nothing else.
+///
+/// The same pid appears once per socket it holds — a server bound to both
+/// address families is two lines — so they are deduplicated, in the order they
+/// were first seen.
+pub fn parse_pids(text: &str) -> Vec<i32> {
+    let mut seen = HashSet::new();
+    text.lines()
+        .filter_map(|line| line.trim().parse::<i32>().ok())
+        .filter(|pid| seen.insert(*pid))
+        .collect()
+}
+
+/// The processes among `procs` holding `pids`, in the order `procs` was in.
+pub fn with_pids(procs: &[Process], pids: &[i32]) -> Vec<Process> {
+    let wanted: HashSet<i32> = pids.iter().copied().collect();
+    procs
+        .iter()
+        .filter(|p| wanted.contains(&p.pid))
+        .cloned()
+        .collect()
+}
+
 /// A plain listing row: the pid and the command, one space apart, so
 /// `scriv proc ls | grep node | cut -d' ' -f1` reaches the pid.
 pub fn plain_row(p: &Process) -> String {
@@ -295,6 +333,33 @@ joakim            501     1   12.3  1.5    03:12:44 /usr/local/bin/node server.j
 root              1       0    0.0  0.1 12-04:11:02 /sbin/launchd
 joakim          70123 70100    0.0  0.4       01:20 -fish
 ";
+
+    #[test]
+    fn a_pid_holding_two_sockets_is_one_row() {
+        // What `lsof -t` writes for a server bound to both address families.
+        assert_eq!(parse_pids("501\n501\n733\n"), vec![501, 733]);
+        assert_eq!(parse_pids(""), Vec::<i32>::new());
+        assert_eq!(parse_pids("not a pid\n\n42\n"), vec![42]);
+    }
+
+    #[test]
+    fn the_port_lookup_never_waits_on_a_name_server() {
+        let args = lsof_args(3000);
+        assert!(args.contains(&"-nP".to_string()), "{args:?}");
+        assert_eq!(args[1], "-iTCP:3000");
+        assert!(args.contains(&"-sTCP:LISTEN".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn only_the_processes_named_by_the_port_survive() {
+        let procs = sample();
+        let kept: Vec<i32> = with_pids(&procs, &[70123, 999])
+            .iter()
+            .map(|p| p.pid)
+            .collect();
+        assert_eq!(kept, vec![70123]);
+        assert!(with_pids(&procs, &[]).is_empty());
+    }
 
     fn sample() -> Vec<Process> {
         parse(SAMPLE)

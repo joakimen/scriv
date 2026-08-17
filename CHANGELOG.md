@@ -27,6 +27,10 @@ raised, never by hand.
   whether git can see its commits have landed. Answering the question is what
   lets an unmerged branch go — a repository that squashes its merges has no
   other kind. Remote branches are never offered: deleting one is a push.
+- `scriv proc --port 3000` narrows `ls`, `sel` and `kill` to what is listening
+  on a TCP port, so "what is holding 3000" no longer means reading a pid out of
+  `lsof`. `kill --port` opens no selector — a port names its processes as
+  precisely as a pid does — and prints what it found as it signals them.
 
 ### Changed
 
