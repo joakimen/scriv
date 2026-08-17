@@ -26,6 +26,17 @@ const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
   scriv branch switch          Select a branch and switch to it
   scriv history sel            Search the commands you have already run";
 
+/// What `--help` opens with. The two keys every selector answers to live here
+/// rather than in each selector's header: a header is one line competing with
+/// the preview pane for the width, and it earns its place by naming what *this*
+/// selector can do and another cannot.
+const LONG_ABOUT: &str = "Provides fuzzy-completion for various local and remote resources.
+
+Every selector hides and shows its preview pane on ctrl-v, and takes several \
+rows on tab wherever several are allowed. Whatever else one can do — open a \
+pull request in the browser, refresh the list from GitHub — is named in its \
+own header.";
+
 /// Help styling matching cargo: bright-green bold headers and usage,
 /// bright-cyan bold literals (command and flag names), cyan placeholders.
 const STYLES: Styles = Styles::styled()
@@ -42,6 +53,7 @@ const STYLES: Styles = Styles::styled()
     name = "scriv",
     version = scriv::VERSION,
     about = "Provides fuzzy-completion for various local and remote resources.",
+    long_about = LONG_ABOUT,
     after_help = EXAMPLES,
     styles = STYLES,
     disable_help_subcommand = true
@@ -134,6 +146,11 @@ enum Command {
     ///
     /// In a pull request selector, ctrl-r asks GitHub again and reloads the list
     /// in place, for when a check has finished while you were looking at it.
+    ///
+    /// f2 opens the highlighted pull request in the browser and f7 checks it
+    /// out, whichever verb the selector was opened for — the same keys that do
+    /// those things from the prompt in fish. Answering "which one" is the work;
+    /// which verb you meant is a key, not another command.
     Pr {
         #[command(subcommand)]
         command: PrCmd,
@@ -230,6 +247,10 @@ enum RepoCmd {
     /// the rest stay in path order below them. `[selector] recent = false`
     /// turns that off, and stops the choices being recorded. `ls` is unaffected
     /// — the set it prints keeps one order so it can be piped.
+    ///
+    /// f1 opens the highlighted repository on GitHub instead of printing it,
+    /// as it does from the prompt in fish. Nothing is printed then, which the
+    /// `cd` wrapper already treats as nothing to do.
     Sel,
     /// Open a repository's GitHub page in the browser
     ///

@@ -107,6 +107,11 @@ for `proc`.
 `scriv init fish` also defines `fe` (`scriv edit`, arguments passed through) and
 `kl` (`scriv proc kill --force`).
 
+Inside a selector, `ctrl-v` hides and shows the preview pane and `tab` takes
+several rows where several are allowed. Anything else a selector answers to is
+named in its own header — `f2` and `f7` mean the same in a pull request list as
+they do at the prompt, and `f1` does in a repository list.
+
 Flags are documented in `scriv --help`, settings in the generated
 `config.toml`.
 

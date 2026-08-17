@@ -269,10 +269,29 @@ fn items(prs: &[PullRequest], tint: Tint) -> Vec<SelectItem> {
         .collect()
 }
 
+/// Open the highlighted pull request in the browser, from any of these
+/// selectors. f2 is what opens one from the prompt in fish, and means the same
+/// thing here.
+const OPEN: select::Action = select::Action::new("f2", "open");
+
+/// Check the highlighted pull request out, from any of these selectors — f7 at
+/// the prompt, and f7 here.
+const CHECKOUT: select::Action = select::Action::new("f7", "check out");
+
 /// Fuzzy-select one pull request and return its number, with
 /// [`REFRESH_KEY`](select::REFRESH_KEY) asking `gh` again in place. A failed
 /// reload leaves the rows as they were and says so once the selector closes.
-fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Result<u64> {
+///
+/// `actions` are the verbs this selector offers beside the one it was opened
+/// for; the key that was pressed comes back with the number.
+fn select(
+    ctx: &Ctx,
+    state: &str,
+    limit: usize,
+    prompt: &str,
+    tint: Tint,
+    actions: &'static [select::Action],
+) -> Result<(u64, Option<&'static str>)> {
     let prs = collect(ctx, state, limit)?;
     // Built before the shared list exists: a `known.lock()` written inline in
     // the `select_one_reloading` call below would hold its guard for the whole
@@ -302,26 +321,53 @@ fn select(ctx: &Ctx, state: &str, limit: usize, prompt: &str, tint: Tint) -> Res
         })
     };
 
-    let choice = select::select_one_reloading(rows, prompt, &ctx.config.selector, reload)?;
+    let chosen = select::select_one_reloading(rows, prompt, &ctx.config.selector, reload, actions)?;
 
     if let Some(err) = failure.lock().expect("failure slot poisoned").take() {
         eprintln!("warning: could not refresh pull requests: {err}");
     }
-    choice
+    let number = chosen
+        .value
         .parse()
-        .map_err(|_| anyhow::anyhow!("unexpected selector result: {choice}"))
+        .map_err(|_| anyhow::anyhow!("unexpected selector result: {}", chosen.value))?;
+    Ok((number, chosen.action))
+}
+
+/// Do what the key the selector closed on asked for, or `Ok(false)` when it was
+/// enter and the command it was opened for is what should happen.
+fn acted_on(number: u64, action: Option<&'static str>) -> Result<bool> {
+    match action {
+        Some(key) if key == OPEN.key => gh::view_web(number).map(|()| true),
+        Some(key) if key == CHECKOUT.key => gh::checkout(number).map(|()| true),
+        _ => Ok(false),
+    }
 }
 
 /// `scriv pr sel` — fuzzy-select a pull request and print its number, so it
 /// composes with `gh`: `gh pr view (scriv pr sel)`.
 pub fn sel(ctx: &Ctx, state: &str, limit: usize) -> Result<()> {
     ensure_target(ctx)?;
-    let number = select(ctx, state, limit, "Select a pull request", Tint::State)?;
+    let (number, action) = select(
+        ctx,
+        state,
+        limit,
+        "Select a pull request",
+        Tint::State,
+        &[OPEN, CHECKOUT],
+    )?;
+    if acted_on(number, action)? {
+        // The number is not printed: nothing is waiting for it, and a caller
+        // substituting this command asked for a number rather than for the
+        // browser to open.
+        return Ok(());
+    }
     println!("{number}");
     Ok(())
 }
 
-/// Resolve the pull request to act on: the number given, or one the user selects.
+/// Resolve the pull request to act on: the number given, or one the user
+/// selects — in which case they may have asked for something else on the way,
+/// which the caller learns from the returned key.
 fn resolve(
     ctx: &Ctx,
     number: Option<u64>,
@@ -329,10 +375,11 @@ fn resolve(
     limit: usize,
     prompt: &str,
     tint: Tint,
-) -> Result<u64> {
+    actions: &'static [select::Action],
+) -> Result<(u64, Option<&'static str>)> {
     match number {
-        Some(number) => Ok(number),
-        None => select(ctx, state, limit, prompt, tint),
+        Some(number) => Ok((number, None)),
+        None => select(ctx, state, limit, prompt, tint, actions),
     }
 }
 
@@ -341,14 +388,19 @@ fn resolve(
 /// handles fork PRs and sets the upstream.
 pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result<()> {
     ensure_target(ctx)?;
-    let number = resolve(
+    // Only `open` beside it: `check out` is what enter already does.
+    let (number, action) = resolve(
         ctx,
         number,
         state,
         limit,
         "Check out a pull request",
         Tint::State,
+        &[OPEN],
     )?;
+    if acted_on(number, action)? {
+        return Ok(());
+    }
     gh::checkout(number)
 }
 
@@ -365,14 +417,18 @@ pub fn open(
     if current {
         return open_current(ctx);
     }
-    let number = resolve(
+    let (number, action) = resolve(
         ctx,
         number,
         state,
         limit,
         "Open a pull request",
         Tint::State,
+        &[CHECKOUT],
     )?;
+    if acted_on(number, action)? {
+        return Ok(());
+    }
     gh::view_web(number)
 }
 
@@ -432,14 +488,20 @@ pub fn merge(
     auto: bool,
 ) -> Result<()> {
     ensure_target(ctx)?;
-    let number = resolve(
+    // `open` above all: reading a pull request before merging it is the thing
+    // most likely to be wanted between choosing one and merging it.
+    let (number, action) = resolve(
         ctx,
         number,
         state,
         limit,
         "Merge a pull request",
         Tint::Readiness,
+        &[OPEN],
     )?;
+    if acted_on(number, action)? {
+        return Ok(());
+    }
     gh::merge(number, method, delete_branch, auto)
 }
 
