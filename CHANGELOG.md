@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv repo clone` colours its list by who can see a repository: private is
+  yellow, internal magenta, public the terminal's own foreground. A repository
+  you already have stays grey.
+- `scriv repo clone --archived` lists an owner's archived repositories, which
+  are now left out by default.
+
 ## v0.5.1
 
 *Released 2026-08-13*

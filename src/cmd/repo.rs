@@ -295,7 +295,13 @@ fn repo_preview(repo: &Repo, present: Option<&Path>) -> Preview {
     if !repo.pushed_date().is_empty() {
         facts.push(format!("pushed {}", repo.pushed_date()));
     }
-    facts.extend(repo.tags().iter().map(|t| t.to_string()));
+    let visibility = repo.visibility();
+    for tag in repo.tags() {
+        facts.push(match visibility.color() {
+            Some(color) if tag == visibility.tag() => term::paint(tag, color, true),
+            _ => tag.to_string(),
+        });
+    }
     if !facts.is_empty() {
         out.push_str(&facts.join("  ·  "));
         out.push('\n');
@@ -346,10 +352,15 @@ fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
             );
             let item = SelectItem::new(label.trim_end(), repo.name_with_owner.clone())
                 .preview(repo_preview(repo, present.then_some(dest.as_path())));
-            if present {
-                item.color(PRESENT_COLOR)
+            // Being on disk outranks visibility: it is the one thing that
+            // changes what selecting the row does.
+            match if present {
+                Some(PRESENT_COLOR)
             } else {
-                item
+                repo.visibility().color()
+            } {
+                Some(color) => item.color(color),
+                None => item,
             }
         })
         .collect()
@@ -405,9 +416,10 @@ fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
 ///
 /// With no argument, select an owner (from the config, the root, and `gh`, with
 /// anything typed accepted), then one or more of that owner's repositories.
-/// `owner/repo` skips both selectors. Everything lands at
+/// `owner/repo` skips both selectors, `archived` widens the list to the
+/// repositories GitHub has retired. Everything lands at
 /// `<root>/<owner>/<repo>`, which is where discovery looks.
-pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
+pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize, archived: bool) -> Result<()> {
     let root = clone_root(ctx)?;
 
     // `owner/repo` names a repository outright; there is nothing to choose.
@@ -424,11 +436,11 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
     // as an argument and gets the same check.
     check_slug(&owner)?;
 
-    let repos = gh::list_repos(&owner, limit)?;
+    let repos = gh::list_repos(&owner, limit, archived)?;
     ctx.log
         .info(&format!("{} repositories for {owner}", repos.len()));
     if repos.is_empty() {
-        bail!("no repositories found for {owner}");
+        bail!("{}", empty_message(&owner, archived));
     }
     if repos.len() == limit {
         eprintln!(
@@ -445,6 +457,17 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize) -> Result<()> {
         return Ok(());
     }
     finish(ctx, &root, chosen)
+}
+
+/// What to say when an owner has nothing to offer. An owner whose every
+/// repository is archived looks exactly like a misspelt one, so the default
+/// filter names itself rather than leaving the user to doubt the owner.
+fn empty_message(owner: &str, archived: bool) -> String {
+    if archived {
+        format!("no repositories found for {owner}")
+    } else {
+        format!("no unarchived repositories found for {owner}; pass --archived to include those")
+    }
 }
 
 /// Reject a name that is not one GitHub could have issued. A slug is both a
@@ -494,10 +517,10 @@ mod tests {
         gh::parse_repos(
             r#"[
             {"nameWithOwner":"acme/billing-api","description":"Meters usage",
-             "isPrivate":true,"isArchived":false,"isFork":false,
+             "visibility":"PRIVATE","isArchived":false,"isFork":false,
              "primaryLanguage":{"name":"Rust"},"pushedAt":"2026-07-27T09:12:33Z"},
             {"nameWithOwner":"acme/old-thing","description":"",
-             "isPrivate":false,"isArchived":true,"isFork":true,
+             "visibility":"PUBLIC","isArchived":true,"isFork":true,
              "primaryLanguage":null,"pushedAt":"2024-01-02T00:00:00Z"}
         ]"#,
         )
@@ -595,6 +618,32 @@ mod tests {
         assert_eq!(items[1].color, None);
         // The value is still the slug, so selecting it is well-defined.
         assert_eq!(items[0].value(), "acme/billing-api");
+    }
+
+    #[test]
+    fn visibility_colours_a_row_that_is_not_on_disk_yet() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let items = repo_items(&repos(), tmp.path());
+        assert_eq!(items[0].color, gh::Visibility::Private.color());
+        assert_eq!(items[1].color, None, "a public repository is left bare");
+    }
+
+    #[test]
+    fn an_owner_with_nothing_to_show_names_the_archive_filter() {
+        assert!(empty_message("acme", false).contains("--archived"));
+        assert!(!empty_message("acme", true).contains("--archived"));
+    }
+
+    #[test]
+    fn preview_paints_the_visibility_tag() {
+        let Preview::Text(text) = repo_preview(&repos()[0], None) else {
+            panic!("expected text");
+        };
+        let color = gh::Visibility::Private.color().unwrap();
+        assert!(
+            text.contains(&term::paint("private", color, true)),
+            "{text}"
+        );
     }
 
     #[test]

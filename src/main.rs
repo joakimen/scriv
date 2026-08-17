@@ -240,7 +240,9 @@ enum RepoCmd {
     ///
     /// Everything lands at `<root>/<owner>/<repo>`, so a clone is in
     /// `scriv repo sel` immediately afterwards. Repositories you already have
-    /// are listed but greyed, and are skipped rather than re-cloned.
+    /// are listed but greyed, and are skipped rather than re-cloned; private
+    /// ones are yellow and internal ones magenta. Archived repositories are
+    /// left out unless you ask for them.
     Clone {
         /// `owner` to select from, or `owner/repo` to clone directly
         #[arg(value_name = "OWNER[/REPO]")]
@@ -248,6 +250,9 @@ enum RepoCmd {
         /// Maximum number of repositories to fetch for an owner
         #[arg(short = 'L', long, default_value_t = 1000)]
         limit: usize,
+        /// Also list an owner's archived repositories
+        #[arg(long)]
+        archived: bool,
     },
 }
 
@@ -571,7 +576,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             RepoCmd::Ls { absolute_paths } => cmd::repo::ls(&ctx, absolute_paths),
             RepoCmd::Sel => cmd::repo::sel(&ctx),
             RepoCmd::Open { select } => cmd::repo::open(&ctx, select),
-            RepoCmd::Clone { target, limit } => cmd::repo::clone(&ctx, target.as_deref(), limit),
+            RepoCmd::Clone {
+                target,
+                limit,
+                archived,
+            } => cmd::repo::clone(&ctx, target.as_deref(), limit, archived),
         },
         Command::File { command } => match command {
             FileCmd::Ls {

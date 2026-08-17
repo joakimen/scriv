@@ -533,7 +533,7 @@ pub fn merge(
 /// JSON fields requested from `gh repo list`: only what a selector row and its
 /// preview can use.
 const REPO_FIELDS: &str =
-    "nameWithOwner,description,isPrivate,isArchived,isFork,primaryLanguage,pushedAt";
+    "nameWithOwner,description,visibility,isArchived,isFork,primaryLanguage,pushedAt";
 
 /// A repository on GitHub, as much of it as the clone selector needs.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -543,8 +543,10 @@ pub struct Repo {
     pub name_with_owner: String,
     #[serde(default)]
     pub description: String,
+    /// GitHub's own word: `PUBLIC`, `PRIVATE` or `INTERNAL`. Read through
+    /// [`Repo::visibility`].
     #[serde(default)]
-    pub is_private: bool,
+    pub visibility: String,
     #[serde(default)]
     pub is_archived: bool,
     #[serde(default)]
@@ -560,6 +562,49 @@ pub struct Repo {
 pub struct Language {
     #[serde(default)]
     pub name: String,
+}
+
+/// Who can see a repository. `Internal` exists only under an enterprise, where
+/// it means every member of that enterprise rather than the wider internet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Public,
+    Private,
+    Internal,
+}
+
+impl Visibility {
+    /// Anything GitHub did not say is public: the safe direction to be wrong in
+    /// is the one that leaves a private repository looking unremarkable rather
+    /// than announcing a private repository that is not one.
+    pub fn parse(raw: &str) -> Self {
+        if is(raw, &["PRIVATE"]) {
+            Self::Private
+        } else if is(raw, &["INTERNAL"]) {
+            Self::Internal
+        } else {
+            Self::Public
+        }
+    }
+
+    /// The tag for a list row, empty for the case that says nothing.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Public => "",
+            Self::Private => "private",
+            Self::Internal => "internal",
+        }
+    }
+
+    /// ANSI 256-colour index, or `None` for public — the ordinary case, which
+    /// keeps the terminal's own foreground so the restricted ones stand out.
+    pub fn color(self) -> Option<u8> {
+        match self {
+            Self::Public => None,
+            Self::Private => Some(3),  // yellow — yours alone
+            Self::Internal => Some(5), // magenta — your enterprise's
+        }
+    }
 }
 
 impl Repo {
@@ -587,6 +632,10 @@ impl Repo {
         self.pushed_at.split('T').next().unwrap_or_default()
     }
 
+    pub fn visibility(&self) -> Visibility {
+        Visibility::parse(&self.visibility)
+    }
+
     /// The one-word tags worth showing: what makes this repository unusual.
     /// A public, unarchived, non-fork repository is the default and says
     /// nothing.
@@ -595,8 +644,9 @@ impl Repo {
         if self.is_archived {
             tags.push("archived");
         }
-        if self.is_private {
-            tags.push("private");
+        let visibility = self.visibility().tag();
+        if !visibility.is_empty() {
+            tags.push(visibility);
         }
         if self.is_fork {
             tags.push("fork");
@@ -640,19 +690,31 @@ pub fn valid_slug(slug: &str) -> bool {
         })
 }
 
-/// Every repository belonging to `owner`. `--limit` drives `gh`'s pagination,
-/// and is exposed so an org larger than it is not silently truncated.
-pub fn list_repos(owner: &str, limit: usize) -> Result<Vec<Repo>> {
-    let limit = limit.to_string();
-    let out = capture(&[
+/// The `gh repo list` invocation for `owner`. Archived repositories are
+/// dropped by GitHub rather than by scriv, so an org whose history is mostly
+/// archived does not spend its `--limit` on rows nobody asked for.
+fn list_repos_args<'a>(owner: &'a str, limit: &'a str, archived: bool) -> Vec<&'a str> {
+    let mut args = vec![
         "repo",
         "list",
         owner,
         "--json",
         REPO_FIELDS,
         "--limit",
-        &limit,
-    ])?;
+        limit,
+    ];
+    if !archived {
+        args.push("--no-archived");
+    }
+    args
+}
+
+/// Every repository belonging to `owner`, archived ones only when `archived`.
+/// `--limit` drives `gh`'s pagination, and is exposed so an org larger than it
+/// is not silently truncated.
+pub fn list_repos(owner: &str, limit: usize, archived: bool) -> Result<Vec<Repo>> {
+    let limit = limit.to_string();
+    let out = capture(&list_repos_args(owner, &limit, archived))?;
     parse_repos(&out)
 }
 
@@ -1047,5 +1109,50 @@ mod tests {
         assert_eq!(MergeMethod::Merge.flag(), "--merge");
         assert_eq!(MergeMethod::Squash.flag(), "--squash");
         assert_eq!(MergeMethod::Rebase.flag(), "--rebase");
+    }
+
+    #[test]
+    fn visibility_parses_what_github_says() {
+        assert_eq!(Visibility::parse("PRIVATE"), Visibility::Private);
+        assert_eq!(Visibility::parse("internal"), Visibility::Internal);
+        assert_eq!(Visibility::parse("PUBLIC"), Visibility::Public);
+        // A field GitHub did not send must not read as restricted.
+        assert_eq!(Visibility::parse(""), Visibility::Public);
+    }
+
+    #[test]
+    fn each_visibility_reads_differently() {
+        let colors = [
+            Visibility::Public.color(),
+            Visibility::Private.color(),
+            Visibility::Internal.color(),
+        ];
+        let mut distinct = colors.to_vec();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), colors.len(), "two visibilities look alike");
+        assert_eq!(
+            Visibility::Public.color(),
+            None,
+            "the ordinary case is bare"
+        );
+    }
+
+    #[test]
+    fn archived_repositories_are_left_to_github_to_filter() {
+        assert!(list_repos_args("acme", "1000", false).contains(&"--no-archived"));
+        assert!(!list_repos_args("acme", "1000", true).contains(&"--no-archived"));
+        assert_eq!(
+            list_repos_args("acme", "50", true),
+            [
+                "repo",
+                "list",
+                "acme",
+                "--json",
+                REPO_FIELDS,
+                "--limit",
+                "50"
+            ]
+        );
     }
 }
