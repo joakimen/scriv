@@ -33,9 +33,9 @@ install:
 hooks:
 	prek install --hook-type pre-commit --hook-type pre-push
 
-# Releasing has no target here. It is two cargo-release commands around an
-# ordinary pull request, spelled out in README.md, and a target wrapping them
-# would only hide which of the two a half-finished release stopped after.
+# Releasing has no target here, and cannot have one: release-plz tags the merge
+# of the pull request it keeps open, and dist builds and publishes what that tag
+# starts. Both run in CI — see README.md under Releasing.
 
 # Re-record docs/demo.gif. Local only — the render depends on installed fonts.
 # Requires vhs (brew install vhs).
