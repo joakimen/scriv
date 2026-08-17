@@ -145,6 +145,9 @@ enum Command {
     /// it was started with rather than by its name alone. scriv's own process
     /// and everything that spawned it are never listed: killing the shell or
     /// the terminal is not a thing to be one keystroke away from.
+    ///
+    /// `--port` narrows all three verbs to what is listening on a TCP port,
+    /// which is `lsof`'s answer rather than `ps`'s.
     #[command(visible_alias = "pc")]
     Proc {
         #[command(subcommand)]
@@ -513,6 +516,18 @@ enum PrCmd {
     },
 }
 
+/// Narrow a `proc` listing to what holds a TCP port, shared by all three.
+#[derive(clap::Args)]
+struct PortScope {
+    /// Only the process listening on this TCP port
+    ///
+    /// Answers "what is holding 3000" without a pid, through `lsof`. Listening
+    /// sockets only: the process that owns the port, not everything talking
+    /// to it.
+    #[arg(short, long, value_name = "PORT")]
+    port: Option<u16>,
+}
+
 #[derive(Subcommand)]
 enum ProcCmd {
     /// List running processes, busiest first
@@ -524,15 +539,23 @@ enum ProcCmd {
         /// the pid without a parser.
         #[arg(long)]
         status: bool,
+        #[command(flatten)]
+        scope: PortScope,
     },
     /// Fuzzy-select a process and print its pid
-    Sel,
+    Sel {
+        #[command(flatten)]
+        scope: PortScope,
+    },
     /// Signal processes; omit the pids to select them
     ///
     /// `tab` selects several in the selector and they are signalled together.
     /// The default signal is `TERM`, which a process can catch to flush its
     /// buffers and clean up after itself; `--force` sends `KILL`, which it
     /// cannot.
+    ///
+    /// `--port` opens no selector: a port names its processes as precisely as
+    /// a pid does, and what it named is printed as they are signalled.
     Kill {
         /// Processes to signal, by pid; omit to select interactively
         #[arg(value_name = "PID")]
@@ -543,6 +566,8 @@ enum ProcCmd {
         /// Send `KILL` instead, which cannot be caught or ignored
         #[arg(short = '9', long, conflicts_with = "signal")]
         force: bool,
+        #[command(flatten)]
+        scope: PortScope,
     },
 }
 
@@ -713,12 +738,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             ),
         },
         Command::Proc { command } => match command {
-            ProcCmd::Ls { status } => cmd::proc::ls(&ctx, status),
-            ProcCmd::Sel => cmd::proc::sel(&ctx),
+            ProcCmd::Ls { status, scope } => cmd::proc::ls(&ctx, status, scope.port),
+            ProcCmd::Sel { scope } => cmd::proc::sel(&ctx, scope.port),
             ProcCmd::Kill {
                 pids,
                 signal,
                 force,
+                scope,
             } => {
                 // `--force` and `--signal` conflict, so this is a choice
                 // between the flag and the default.
@@ -727,7 +753,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 } else {
                     scriv::proc::Signal::parse(&signal)?
                 };
-                cmd::proc::kill(&ctx, &pids, signal)
+                cmd::proc::kill(&ctx, &pids, signal, scope.port)
             }
         },
         Command::History { command } => match command {

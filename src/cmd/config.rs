@@ -472,7 +472,8 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         "`branch` and `repo` cannot work without it",
     ));
     checks.push(gh_check());
-    // `kill` gets no row: it ships in the same base system `ps` does.
+    // `kill` and `lsof` get no row: both ship in the same base system `ps`
+    // does, and a report of three lines saying the same thing is one line.
     checks.push(tool_check(
         "ps",
         "ps",

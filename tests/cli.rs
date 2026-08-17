@@ -1244,6 +1244,39 @@ fn proc_ls_offers_neither_scriv_nor_the_process_that_ran_it() {
     }
 }
 
+/// Port 0 is the one port nothing can be listening on, which is what makes
+/// this a test of the flag rather than of whatever the machine happens to be
+/// running.
+#[test]
+fn a_port_nothing_holds_says_so_rather_than_listing_everything() {
+    let sandbox = Sandbox::new();
+    for verb in [&["ls"][..], &["sel"][..], &["kill"][..]] {
+        let mut args = vec!["proc"];
+        args.extend_from_slice(verb);
+        args.extend_from_slice(&["--port", "0"]);
+        let run = sandbox.run(&args);
+        run.code(1);
+        assert!(
+            run.stderr.contains("port 0"),
+            "`proc {}`: {}",
+            verb.join(" "),
+            run.stderr
+        );
+        assert!(
+            run.stdout.is_empty(),
+            "listed processes the port did not name: {}",
+            run.stdout
+        );
+    }
+}
+
+#[test]
+fn a_port_has_to_be_one() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["proc", "ls", "--port", "not-a-port"]).code(2);
+    sandbox.run(&["proc", "ls", "--port", "70000"]).code(2);
+}
+
 #[test]
 fn proc_ls_status_adds_columns_ahead_of_the_command() {
     let sandbox = Sandbox::new();
