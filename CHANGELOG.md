@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.8.0
+
+*Released 2026-08-17*
+
 ### Added
 
 - A selector now says what it can do, in a line under the prompt, and can do
