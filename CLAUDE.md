@@ -38,11 +38,16 @@ Cutting a release is part of that authorisation, not a step past it. scriv is
 the maintainer's own daily tool, so a feature sitting on `main` behind an
 unmerged release pull request is a feature nobody can use — merging the feature
 is not where delivering it ends. Once something in `src/` a user would feel — a
-command, a flag, a fix — has landed green and settled, merge the release pull
-request release-plz keeps open, let the tag's dist run publish, then
-`mise upgrade "github:joakimen/scriv"` and say which version `scriv --version`
-reports. That is roughly nine minutes of CI end to end; do not wait on it idly
-when there is other work.
+command, a flag, a fix — has landed green and settled, `make install` it from
+the checkout and merge the release pull request release-plz keeps open.
+
+Installing comes first, and does not wait for the release. Building here takes
+about twenty-five seconds; the path from a feature merge to a downloadable
+archive — release-plz rebuilding its branch, that pull request's own checks,
+the tag, dist — is four sequential CI cycles and roughly nine minutes. The
+release is what everyone else installs, not what puts the feature in the
+maintainer's hands. Arm the merge, say the version it will publish, and get on
+with the next thing rather than watching it.
 
 A run of pull requests that only touched docs, `demo/`, CI, `prek.toml` or this
 file earns no release. Leaving that pull request open is how the version holds
