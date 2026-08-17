@@ -2,15 +2,18 @@
 //! they take environment and home values as arguments — so the only I/O is the
 //! file read in [`load_config`].
 //!
-//! Two files live side by side under the config directory:
+//! Three files live side by side under the config directory:
 //!
 //! - `config.toml` — hand-edited settings, grouped by the command that reads
-//!   them: `[repo]` for discovery and labelling, `[history]` for the shell
-//!   history to search, `[selector]` for the finder every command shares. A
-//!   legacy `config.json` is still read when no TOML file is present.
+//!   them: `[repo]` for discovery and labelling, `[worktree]` for where a new
+//!   tree goes, `[history]` for the shell history to search, `[selector]` for
+//!   the finder every command shares. A legacy `config.json` is still read when
+//!   no TOML file is present.
 //! - `files` — the known-files list, rewritten programmatically by
 //!   `scriv file add`/`rm`/`prune`. Kept separate so machine writes never
 //!   clobber hand-written settings or comments.
+//! - `recent` — what has been selected before, rewritten on every selection.
+//!   See [`crate::recent`]; kept separate for the same reason.
 //!
 //! A key belongs in a command's table when exactly one command reads it;
 //! anything genuinely shared stays at the top level.
@@ -181,6 +184,10 @@ pub struct SelectorConfig {
     /// Preview pane layout in skim's syntax, e.g. `"right:50%"`, `"down:40%"`,
     /// or `"right:50%:hidden"` to start collapsed.
     pub preview_window: String,
+    /// Whether repositories and files you have chosen before are offered first.
+    /// Off, every such list keeps the order the command built it in, and
+    /// nothing is recorded.
+    pub recent: bool,
 }
 
 /// How `repo ls`/`sel` renders each repository's path.
@@ -214,6 +221,7 @@ impl Default for SelectorConfig {
             height: "50%".to_string(),
             preview: true,
             preview_window: "right:50%".to_string(),
+            recent: true,
         }
     }
 }
@@ -252,6 +260,7 @@ struct RawSelector {
     height: Option<String>,
     preview: Option<bool>,
     preview_window: Option<String>,
+    recent: Option<bool>,
     /// Superseded by `[repo] display`, present for detection only.
     display: Option<RepoDisplay>,
 }
@@ -263,6 +272,7 @@ impl From<RawSelector> for SelectorConfig {
             height: raw.height.unwrap_or(default.height),
             preview: raw.preview.unwrap_or(default.preview),
             preview_window: raw.preview_window.unwrap_or(default.preview_window),
+            recent: raw.recent.unwrap_or(default.recent),
         }
     }
 }
@@ -969,6 +979,18 @@ preview = false
             parse_toml("[selector]\npreview = false\npreview_window = \"down:40%\"\n").unwrap();
         assert!(!cfg.selector.preview);
         assert_eq!(cfg.selector.preview_window, "down:40%");
+    }
+
+    #[test]
+    fn recent_ordering_is_on_unless_turned_off() {
+        assert!(parse_toml("").unwrap().selector.recent);
+        assert!(parse_toml("[selector]\n").unwrap().selector.recent);
+        assert!(
+            !parse_toml("[selector]\nrecent = false\n")
+                .unwrap()
+                .selector
+                .recent
+        );
     }
 
     #[test]

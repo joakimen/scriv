@@ -62,6 +62,7 @@ ignore = ["node_modules", "target"]
 # The built-in fuzzy selector, shared by every command that opens one.
 [selector]
 height = "50%"        # finder height, e.g. "50%" or "20"
+# recent = true        # offer repositories and files you have chosen before first
 # preview = true       # show a preview pane for the highlighted row
 # preview_window = "right:50%" # preview layout: [up|down|left|right][:SIZE][:hidden]
 "#;

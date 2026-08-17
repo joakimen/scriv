@@ -15,6 +15,7 @@ pub mod history;
 pub mod logger;
 pub mod path;
 pub mod proc;
+pub mod recent;
 pub mod repo;
 pub mod select;
 pub mod shell;
@@ -34,6 +35,24 @@ pub const VERSION: &str = env!("SCRIV_VERSION");
 
 use config::Config;
 use logger::Logger;
+
+/// The wall clock, in Unix seconds, as [`recent`] counts it. Before 1970 is not
+/// a time anything here has to represent.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Write the store, creating its directory — the config directory exists on
+/// every machine that has a config, and not on one that has never had one.
+fn write_recent(path: &Path, contents: &str) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))
+}
 
 /// A subprocess that already explained its own failure on stderr. Propagated
 /// instead of a message so the command exits with the child's status without
@@ -61,6 +80,8 @@ pub struct Ctx {
     pub config_path: PathBuf,
     /// The known-files list, beside the config file.
     pub files_path: PathBuf,
+    /// What has been selected before, beside the config file.
+    pub recent_path: PathBuf,
     /// The standalone `kf` tool's config, read once to migrate its list.
     pub legacy_kf_path: PathBuf,
     /// fish's history file, which `scriv history` reads.
@@ -114,6 +135,7 @@ impl Ctx {
             |p| p.exists(),
         );
         let files_path = config::files_path(&config_path);
+        let recent_path = recent::path(&config_path);
         let legacy_kf_path = config::legacy_kf_path(xdg_env.as_deref(), &home);
         let config = config::load_config(&config_path)?;
 
@@ -145,6 +167,7 @@ impl Ctx {
             home,
             config_path,
             files_path,
+            recent_path,
             legacy_kf_path,
             history_path,
             utc_offset,
@@ -203,6 +226,39 @@ impl Ctx {
 
     pub fn pwd_str(&self) -> &str {
         &self.pwd_s
+    }
+
+    /// Reorder `items` so what has been selected before comes first, and hand
+    /// back the clock reading it was ordered against — [`Ctx::remember`] dates
+    /// the selection with the same one, so a row cannot be scored against a
+    /// moment before it was chosen.
+    ///
+    /// A store that cannot be read leaves the order alone: an unreadable file
+    /// of past selections is not a reason to fail the selection in hand.
+    pub fn by_recency<T>(&self, items: Vec<T>, key: impl Fn(&T) -> &str) -> (Vec<T>, i64) {
+        let now = unix_now();
+        if !self.config.selector.recent {
+            return (items, now);
+        }
+        let uses = recent::parse(&std::fs::read_to_string(&self.recent_path).unwrap_or_default());
+        (recent::order(items, key, &uses, now), now)
+    }
+
+    /// Record that `key` was selected at `now`.
+    ///
+    /// Best effort: the selection has already happened and been acted on, and
+    /// failing it afterwards over a file that only decides an ordering would be
+    /// reporting the wrong thing.
+    pub fn remember(&self, key: &str, now: i64) {
+        if !self.config.selector.recent {
+            return;
+        }
+        let uses = recent::parse(&std::fs::read_to_string(&self.recent_path).unwrap_or_default());
+        let uses = recent::bump(uses, key, now);
+        if let Err(err) = write_recent(&self.recent_path, &recent::render(&uses)) {
+            self.log
+                .warn(&format!("could not record the selection: {err:#}"));
+        }
     }
 
     /// Copy the standalone `kf` tool's list into place on first use.

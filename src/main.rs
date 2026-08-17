@@ -225,6 +225,11 @@ enum RepoCmd {
         absolute_paths: bool,
     },
     /// Fuzzy-select a repository and print its absolute path
+    ///
+    /// The ones you have chosen before come first, most-used-recently first;
+    /// the rest stay in path order below them. `[selector] recent = false`
+    /// turns that off, and stops the choices being recorded. `ls` is unaffected
+    /// — the set it prints keeps one order so it can be piped.
     Sel,
     /// Open a repository's GitHub page in the browser
     ///
@@ -279,6 +284,9 @@ enum FileCmd {
         exists: bool,
     },
     /// Fuzzy-select a known file and print its absolute path
+    ///
+    /// Ordered like `repo sel`: what you have opened before comes first. The
+    /// same list, and the same order, as `scriv edit --tracked`.
     Sel,
     /// Add a file; omit the path to select one from the current directory
     Add {

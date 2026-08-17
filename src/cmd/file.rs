@@ -243,7 +243,9 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
         })
         .collect();
 
+    let (items, now) = ctx.by_recency(items, |row| row.value());
     let choice = select::select_one(items, "Select a file", &ctx.config.selector)?;
+    ctx.remember(&choice, now);
     println!("{choice}");
     Ok(())
 }

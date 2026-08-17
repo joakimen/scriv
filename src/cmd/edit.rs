@@ -111,7 +111,14 @@ fn select_tracked(ctx: &Ctx) -> Result<Option<Vec<String>>> {
         })
         .collect();
 
-    cancellable(select::select_many(items, "Edit", &ctx.config.selector))
+    let (items, now) = ctx.by_recency(items, |row| row.value());
+    let chosen = cancellable(select::select_many(items, "Edit", &ctx.config.selector))?;
+    // Every file opened together counts: the next selector is being asked
+    // which of them you reach for, not which you happened to list first.
+    for file in chosen.iter().flatten() {
+        ctx.remember(file, now);
+    }
+    Ok(chosen)
 }
 
 /// Map a cancelled selector to `None`, leaving real errors alone.
