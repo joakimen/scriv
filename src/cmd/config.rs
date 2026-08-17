@@ -40,6 +40,16 @@ ignore = ["node_modules", "target"]
 # `[repo.labels]` header would swallow every `[repo]` key written after it.
 # labels = { personal = ["your-github-user"], work = ["acme", "acme-labs"] }
 
+# `scriv worktree`: where `worktree add` creates a tree.
+[worktree]
+
+# One directory per branch, with `/` written as `-`. A relative path is inside
+# the repository the tree belongs to, and is added to that clone's
+# .git/info/exclude the first time, so nothing else offers the tree twice. An
+# absolute path holds the trees of every repository, under the repository's own
+# name.
+# root = ".worktrees"
+
 # `scriv history`: which shell history to search.
 [history]
 

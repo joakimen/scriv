@@ -13,6 +13,21 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv worktree add` creates a working tree and picks where it goes:
+  `.worktrees/<branch>` inside the repository, or wherever `[worktree] root`
+  says. A branch that does not exist yet is created, a remote-only one arrives
+  tracking its remote, and the path is printed — `cd (scriv worktree add
+  feat/x)` lands in the new tree. A root inside the repository is added to that
+  clone's `.git/info/exclude`, so nothing else offers the tree twice.
+- `scriv worktree rm` removes trees, several at a time. Neither the main tree
+  nor the one you are standing in is offered.
+- `scriv branch rm` deletes local branches, several at a time, each listed with
+  whether git can see its commits have landed. Answering the question is what
+  lets an unmerged branch go — a repository that squashes its merges has no
+  other kind. Remote branches are never offered: deleting one is a push.
+
 ### Changed
 
 - `scriv history` no longer offers scriv's own key bindings back. Pressing

@@ -680,28 +680,38 @@ fn mk_worktree_repo(root: &Path) -> (PathBuf, PathBuf) {
         &["commit", "--allow-empty", "-m", "init"][..],
         &["worktree", "add", "-b", "feat", "../feat"][..],
     ] {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(&main)
-            .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("HOME", root)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GIT_AUTHOR_NAME", "scriv tests")
-            .env("GIT_AUTHOR_EMAIL", "tests@example.invalid")
-            .env("GIT_COMMITTER_NAME", "scriv tests")
-            .env("GIT_COMMITTER_EMAIL", "tests@example.invalid")
-            .output()
-            .expect("running git");
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr),
-        );
+        git_in(&main, root, args);
     }
 
     (main, root.join("feat"))
+}
+
+/// Run git in `dir`, sealed off the way [`Sandbox`] seals scriv off.
+///
+/// The sandbox has no git identity to commit with — hence the author and
+/// committer in the environment, and the two `GIT_CONFIG_*` variables that keep
+/// the machine running the test out of the result.
+fn git_in(dir: &Path, home: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "scriv tests")
+        .env("GIT_AUTHOR_EMAIL", "tests@example.invalid")
+        .env("GIT_COMMITTER_NAME", "scriv tests")
+        .env("GIT_COMMITTER_EMAIL", "tests@example.invalid")
+        .output()
+        .expect("running git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 /// git reports the real path of a worktree, and a temporary directory on macOS
@@ -772,6 +782,189 @@ fn worktree_ls_outside_a_repository_says_so() {
         "{}",
         run.stderr
     );
+}
+
+#[test]
+fn worktree_add_creates_the_tree_beside_the_checkout_and_prints_its_path() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+
+    let run = sandbox.run_in(&main, &["worktree", "add", "work/x"]);
+    run.ok();
+
+    let path = main.join(".worktrees/work-x");
+    assert!(
+        path.is_dir(),
+        "no tree at {}: {}",
+        path.display(),
+        run.stderr
+    );
+    // The path is stdout and git's narration is not, so `cd (scriv worktree
+    // add …)` lands in the tree rather than in a sentence about it.
+    assert_eq!(run.lines(), vec![real(&path)]);
+    assert_eq!(
+        git_in(
+            &path,
+            sandbox.home(),
+            &["rev-parse", "--abbrev-ref", "HEAD"]
+        )
+        .trim(),
+        "work/x",
+        "the tree is not on the branch it was asked for",
+    );
+}
+
+/// Untracked trees inside the repository are files `git status` reports and
+/// every `.gitignore`-honouring walker offers a second time.
+#[test]
+fn a_tree_inside_the_repository_is_excluded_from_it() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+
+    let run = sandbox.run_in(&main, &["worktree", "add", "work/x"]);
+    run.ok();
+    assert!(run.stderr.contains("info/exclude"), "{}", run.stderr);
+
+    let status = git_in(&main, sandbox.home(), &["status", "--short"]);
+    assert!(
+        status.trim().is_empty(),
+        "the tree shows as untracked: {status}"
+    );
+
+    // Written once: a second tree finds the rule already there.
+    let again = sandbox.run_in(&main, &["worktree", "add", "work/y"]);
+    again.ok();
+    let exclude = std::fs::read_to_string(main.join(".git/info/exclude")).unwrap();
+    assert_eq!(exclude.matches(".worktrees/").count(), 1, "{exclude}");
+}
+
+#[test]
+fn an_absolute_worktree_root_keeps_each_repository_apart() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    sandbox.write_config("[worktree]\nroot = \"~/trees\"\n");
+
+    let run = sandbox.run_in(&main, &["worktree", "add", "work/x"]);
+    run.ok();
+
+    let path = sandbox.home().join("trees/scriv/work-x");
+    assert!(
+        path.is_dir(),
+        "no tree at {}: {}",
+        path.display(),
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("info/exclude"),
+        "a tree outside the repository has nothing to hide from it: {}",
+        run.stderr
+    );
+}
+
+#[test]
+fn worktree_add_refuses_a_path_that_is_already_a_tree() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    sandbox.run_in(&main, &["worktree", "add", "work/x"]).ok();
+
+    let again = sandbox.run_in(&main, &["worktree", "add", "work/x"]);
+    again.code(1);
+    assert!(again.stderr.contains("already exists"), "{}", again.stderr);
+}
+
+#[test]
+fn worktree_rm_removes_the_tree_it_is_given() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    sandbox.run_in(&main, &["worktree", "add", "work/x"]).ok();
+    let path = main.join(".worktrees/work-x");
+
+    let run = sandbox.run_in(&main, &["worktree", "rm", path.to_str().unwrap(), "--yes"]);
+    run.ok();
+    assert!(
+        !path.exists(),
+        "{} survived: {}",
+        path.display(),
+        run.stderr
+    );
+}
+
+/// The question cannot be asked without a terminal, and a removal is not the
+/// kind of thing to answer on the user's behalf.
+#[test]
+fn worktree_rm_without_a_terminal_names_the_flag_that_skips_the_question() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    sandbox.run_in(&main, &["worktree", "add", "work/x"]).ok();
+    let path = main.join(".worktrees/work-x");
+
+    let run = sandbox.run_in(&main, &["worktree", "rm", path.to_str().unwrap()]);
+    run.code(1);
+    assert!(run.stderr.contains("--yes"), "{}", run.stderr);
+    assert!(path.exists(), "the tree went without being confirmed");
+}
+
+// --- branch deletion --------------------------------------------------------
+
+#[test]
+fn branch_rm_deletes_the_branches_it_is_given_and_says_what_had_landed() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    git_in(&main, sandbox.home(), &["branch", "landed"]);
+    git_in(&main, sandbox.home(), &["branch", "other"]);
+
+    let run = sandbox.run_in(&main, &["branch", "rm", "landed", "other", "--yes"]);
+    run.ok();
+
+    // Both point at HEAD, so git can see both have landed.
+    assert!(run.stdout.contains("landed  merged"), "{}", run.stdout);
+    assert!(run.stdout.contains("Deleted landed"), "{}", run.stdout);
+
+    let left = git_in(
+        &main,
+        sandbox.home(),
+        &["branch", "--format=%(refname:short)"],
+    );
+    let left: Vec<&str> = left.lines().collect();
+    assert_eq!(left, vec!["feat", "main"], "{left:?}");
+}
+
+/// A branch git cannot see has landed is still deletable — a repository that
+/// squashes its merges has no other kind — but the list says so first.
+#[test]
+fn an_unmerged_branch_is_marked_rather_than_refused() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    git_in(&main, sandbox.home(), &["checkout", "-b", "work"]);
+    git_in(
+        &main,
+        sandbox.home(),
+        &["commit", "--allow-empty", "-m", "wip"],
+    );
+    git_in(&main, sandbox.home(), &["checkout", "main"]);
+
+    let run = sandbox.run_in(&main, &["branch", "rm", "work", "--yes"]);
+    run.ok();
+    assert!(run.stdout.contains("work  not merged"), "{}", run.stdout);
+    assert!(run.stdout.contains("Deleted work"), "{}", run.stdout);
+}
+
+#[test]
+fn branch_rm_without_a_terminal_names_the_flag_that_skips_the_question() {
+    let sandbox = Sandbox::new();
+    let (main, _) = mk_worktree_repo(sandbox.home());
+    git_in(&main, sandbox.home(), &["branch", "keep"]);
+
+    let run = sandbox.run_in(&main, &["branch", "rm", "keep"]);
+    run.code(1);
+    assert!(run.stderr.contains("--yes"), "{}", run.stderr);
+
+    let left = git_in(
+        &main,
+        sandbox.home(),
+        &["branch", "--format=%(refname:short)"],
+    );
+    assert!(left.contains("keep"), "the branch went unconfirmed: {left}");
 }
 
 // --- the known-files list ---------------------------------------------------

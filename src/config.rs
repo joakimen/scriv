@@ -44,6 +44,7 @@ pub type Labels = IndexMap<String, Vec<String>>;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
     pub repo: RepoConfig,
+    pub worktree: WorktreeConfig,
     pub history: HistoryConfig,
     pub selector: SelectorConfig,
 }
@@ -107,6 +108,31 @@ impl RepoConfig {
         self.labels.values().flatten().map(String::as_str).collect()
     }
 }
+
+/// `[worktree]` — where `scriv worktree add` puts a new working tree.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct WorktreeConfig {
+    /// The directory new trees are created in, one per branch.
+    ///
+    /// A relative path is inside the repository the tree belongs to, so its
+    /// trees sit beside the checkout they came from. An absolute path — or one
+    /// beginning with `~` — is one directory of trees for every repository, and
+    /// the repository's own name becomes a level of it.
+    pub root: String,
+}
+
+impl Default for WorktreeConfig {
+    fn default() -> Self {
+        Self {
+            root: DEFAULT_WORKTREE_ROOT.to_string(),
+        }
+    }
+}
+
+/// Where trees go when nothing says otherwise: beside the checkout, in a
+/// directory git itself will not confuse for part of it.
+const DEFAULT_WORKTREE_ROOT: &str = ".worktrees";
 
 /// `[history]` — which shell history `scriv history` searches.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
@@ -199,6 +225,8 @@ impl Default for SelectorConfig {
 struct RawToml {
     #[serde(default)]
     repo: RepoConfig,
+    #[serde(default)]
+    worktree: WorktreeConfig,
     #[serde(default)]
     history: HistoryConfig,
     #[serde(default)]
@@ -478,6 +506,7 @@ fn parse_toml(data: &str) -> Result<Config> {
     }
     Ok(Config {
         repo: raw.repo,
+        worktree: raw.worktree,
         history: raw.history,
         selector: raw.selector.into(),
     })
@@ -899,6 +928,18 @@ preview = false
         assert_eq!(cfg.repo.display, RepoDisplay::Tilde);
         assert_eq!(cfg.selector.height, "30%");
         assert!(!cfg.selector.preview);
+    }
+
+    #[test]
+    fn worktree_root_defaults_to_a_directory_beside_the_checkout() {
+        assert_eq!(parse_toml("").unwrap().worktree.root, ".worktrees");
+        assert_eq!(
+            parse_toml("[worktree]\nroot = \"~/dev/worktrees\"\n")
+                .unwrap()
+                .worktree
+                .root,
+            "~/dev/worktrees"
+        );
     }
 
     #[test]
