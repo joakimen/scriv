@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.7.0
+
+*Released 2026-08-17*
+
 ### Added
 
 - `scriv pr open --current` opens the pull request for the branch you have
