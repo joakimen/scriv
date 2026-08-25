@@ -44,6 +44,9 @@ jobs:
         with:
           command: release
           # Pinned separately from the action: the tag above moves on its own.
+          # The comment below is how Renovate sees this line at all — see
+          # .github/renovate.json5, which groups it with the action.
+          # renovate: datasource=crate depName=release-plz
           version: "0.3.160"
 
   release-pr:
@@ -59,6 +62,7 @@ jobs:
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
+          # renovate: datasource=crate depName=release-plz
           version: "0.3.160"
 
       # Amended into release-plz's own commit rather than added beside it: the
