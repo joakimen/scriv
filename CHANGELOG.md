@@ -13,6 +13,38 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv note new` starts a note and drops you straight into your editor. It
+  asks nothing first — being asked to name a note is being asked what it is
+  about before writing it — so with no name it calls the file after the date and
+  time, to the minute. A name with a `/` in it makes the directory. The file
+  itself is left for the editor to write, so a note started and abandoned is one
+  that never existed rather than an empty one in every listing after it.
+- `scriv note rg` searches inside every note as you type. The query goes to
+  ripgrep rather than to the fuzzy matcher, so the list is every matching *line*
+  in the vault, rebuilt on each keystroke, with the note around the match in the
+  preview pane. `tab` takes several; what you pick opens at its line and the
+  rest land in the quickfix list behind it. `ctrl-q` switches to filtering what
+  came back.
+- `[note] labels` names the directories directly below your vault, one label to
+  many directories — the same shape as `[repo] labels`, and the same colours, so
+  `work` reads the same in both. Label two of five directories and the other
+  three still show up, under their own names.
+
+### Changed
+
+- A note row is laid out differently. The note's own name comes first, where it
+  is what the eye runs down and what the query matches, and everything else is
+  an attribute in a column of its own with a colour that says which: the label
+  or directory it is filed under, the folders below that, its tags, how many of
+  its tasks are still open, and — no longer leading the row — how long ago it
+  was modified and created. The dates and the task count are drawn but never
+  searched, so typing `3` finds the note you meant rather than every note that
+  is three days old. A column nothing in your vault fills is not drawn at all.
+- The preview pane's header now names the label and spells out how many tasks a
+  note has left.
+
 ## v0.9.0
 
 *Released 2026-08-25*

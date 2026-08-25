@@ -36,9 +36,9 @@ cargo install --git https://github.com/joakimen/scriv
 Supported platform: macOS on Apple Silicon. `scriv proc` depends on Darwin's
 signal numbers, and the crate refuses to compile for any other target.
 
-External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, a
-fish history file for `history`, and `$VISUAL` or `$EDITOR` for `edit` — or
-`[note] editor` for `note`. `scriv config check` reports on each.
+External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, `rg`
+for `note rg`, a fish history file for `history`, and `$VISUAL` or `$EDITOR` for
+`edit` — or `[note] editor` for `note`. `scriv config check` reports on each.
 
 ## Setup
 
@@ -69,7 +69,8 @@ ignore = ["node_modules", "target"]
 
 [note]
 root = "~/notes"    # an Obsidian vault, or any tree of Markdown files
-editor = "nvim"     # what `note edit` opens one with; unset, $VISUAL / $EDITOR
+editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
+# labels = { work = ["projects", "clients"], personal = ["journal"] }
 ```
 
 ## Commands
@@ -78,7 +79,7 @@ editor = "nvim"     # what `note edit` opens one with; unset, $VISUAL / $EDITOR
 | --- | --- |
 | `scriv repo` | `ls` `sel` `open` `clone` |
 | `scriv file` | `ls` `sel` `add` `rm` `prune` |
-| `scriv note` | `ls` `sel` `edit` |
+| `scriv note` | `ls` `sel` `new` `edit` `rg` |
 | `scriv branch` | `ls` `sel` `checkout` `rm` |
 | `scriv worktree` | `ls` `sel` `add` `rm` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
@@ -87,6 +88,12 @@ editor = "nvim"     # what `note edit` opens one with; unset, $VISUAL / $EDITOR
 | `scriv edit` | `file` `dir` — found below `$PWD`, opened in `$EDITOR` |
 | `scriv config` | `init` `print` `path` `check` |
 | `scriv init` | `fish` and every other shell — see Setup |
+
+A note row leads with what the note calls itself and then says what is true of
+it in a colour-coded column each: the label its directory carries, the folders
+below that, its tags, how many of its tasks are still open, and how long ago it
+was modified and created. `note rg` searches inside every note as you type and
+turns what you pick into a quickfix list.
 
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.

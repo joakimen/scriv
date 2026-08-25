@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 
-use crate::config::{Labels, RepoDisplay};
+use crate::config::{RepoDisplay, label_colors};
 use crate::gh::{self, Repo};
 use crate::path::{display_path, expand_home_dir, relative_label};
 use crate::repo::FoundRepo;
@@ -72,54 +72,6 @@ pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
     }
     out.finish()?;
     Ok(())
-}
-
-/// ANSI 256-colour indices used to tint labels, in assignment order.
-/// Standard hues (cyan, green, yellow, magenta, blue, red) so they read well and
-/// follow the terminal theme; cycles if there are more labels than colours.
-const LABEL_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
-
-/// Labels whose colour is fixed by name rather than by config order, so the hue
-/// means the same thing in every checkout. Everything else takes the next
-/// unused hue, in config order.
-const NAMED_LABEL_COLORS: &[(&str, u8)] = &[("work", 6), ("personal", 2)];
-
-/// The fixed colour for `label`, if it is one of the conventional names.
-fn named_color(label: &str) -> Option<u8> {
-    NAMED_LABEL_COLORS
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(label))
-        .map(|&(_, color)| color)
-}
-
-/// Map each configured label to a colour.
-/// [`UNLABELLED`](crate::config::UNLABELLED) is deliberately absent: it is not a
-/// label competing for a hue, and stays the terminal's default foreground.
-fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
-    // Hues spoken for by a named label actually present, so an unnamed label
-    // never collides with `work`'s cyan.
-    let taken: Vec<u8> = labels.keys().filter_map(|l| named_color(l)).collect();
-    let mut free: Vec<u8> = LABEL_COLORS
-        .iter()
-        .copied()
-        .filter(|c| !taken.contains(c))
-        .collect();
-    if free.is_empty() {
-        free = LABEL_COLORS.to_vec();
-    }
-
-    let mut next = 0;
-    labels
-        .keys()
-        .map(|label| {
-            let color = named_color(label).unwrap_or_else(|| {
-                let color = free[next % free.len()];
-                next += 1;
-                color
-            });
-            (label.as_str(), color)
-        })
-        .collect()
 }
 
 /// The selector rows for the discovered repositories: each prefixed with its
@@ -569,6 +521,7 @@ fn finish(ctx: &Ctx, root: &Path, chosen: Vec<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Labels;
 
     fn repos() -> Vec<Repo> {
         gh::parse_repos(

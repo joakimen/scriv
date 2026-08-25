@@ -59,6 +59,14 @@ ignore = ["node_modules", "target"]
 # YAML front matter. Without this, `scriv note` has nowhere to look.
 # root = "~/notes"
 
+# Labels for the directories directly below the root, one label to many
+# directories — the same idea as `[repo] labels`, and the same colours, so
+# `work` reads the same in both. A directory with no label still shows up in
+# the label column, under its own name and uncoloured.
+#
+# Written inline, on one line, for the reason `[repo] labels` is.
+# labels = { work = ["projects", "clients"], personal = ["journal"] }
+
 # What `note edit` launches, split on whitespace like $EDITOR. Its own setting
 # because a note is as often read as written — `glow` and `nvim` are both
 # answers. Unset, it is $VISUAL then $EDITOR, as `scriv edit` uses.
@@ -148,6 +156,12 @@ pub fn print(ctx: &Ctx) -> Result<()> {
         "root: {}",
         ctx.config.note.root.as_deref().unwrap_or("(unset)")
     );
+    if !ctx.config.note.labels.is_empty() {
+        println!("labels:");
+        for (label, dirs) in &ctx.config.note.labels {
+            println!("  {label}: {}", dirs.join(", "));
+        }
+    }
     println!(
         "editor: {}",
         ctx.note_editor_setting()
@@ -542,6 +556,12 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         "`branch` and `repo` cannot work without it",
     ));
     checks.push(gh_check());
+    checks.push(tool_check(
+        "rg",
+        "rg",
+        false,
+        "only `note rg` needs it (https://github.com/BurntSushi/ripgrep)",
+    ));
     // `kill` and `lsof` get no row: both ship in the same base system `ps`
     // does, and a report of three lines saying the same thing is one line.
     checks.push(tool_check(
