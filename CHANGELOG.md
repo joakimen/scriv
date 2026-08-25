@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.9.0
+
+*Released 2026-08-25*
+
 ### Added
 
 - `scriv note` reads a directory of Markdown files — an Obsidian vault, or any
