@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.11.0
+
+*Released 2026-08-25*
+
 ### Added
 
 - `scriv note scratch` opens the one permanent note that is filed nowhere —
