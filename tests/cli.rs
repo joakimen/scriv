@@ -1991,3 +1991,125 @@ fn note_cleanup_offers_the_three_kinds_and_leaves_real_notes_alone() {
         run.stdout
     );
 }
+
+/// A vault is named by whoever writes in it, and this one's owner writes
+/// Norwegian. `note cleanup` panicked on `Prosjektø` — the eighth byte of the
+/// name is half an `ø`, and `untitled` is eight bytes long — so every note verb
+/// a script can reach is run over a vault full of characters that are not
+/// ASCII. A panic anywhere is the bug this is here for.
+#[test]
+fn every_note_command_survives_a_vault_that_is_not_ascii() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notater");
+
+    // The shape that crashed it, and the only one that does: `untitled` is
+    // eight bytes, so the name must have a character *straddling* its eighth —
+    // seven ASCII bytes and then a two-byte `ø`. `Prosjektø` has eight before
+    // the `ø` and is therefore fine, which is what makes this so easy to miss.
+    mk_note(
+        &vault,
+        "Oppgaveøkt.md",
+        "en økt med ganske mange ord i seg\n",
+        5_000,
+    );
+    mk_note(
+        &vault,
+        "Notater—2024.md",
+        "notater fra hele året, ganske mange\n",
+        4_500,
+    );
+    // The near misses, kept so the test covers both sides of the boundary.
+    mk_note(
+        &vault,
+        "Prosjektø.md",
+        "et prosjekt med mange ord i seg\n",
+        4_200,
+    );
+    mk_note(
+        &vault,
+        "øvelser.md",
+        "øvelser og løsninger, ganske mange\n",
+        4_000,
+    );
+    // Non-ASCII directories, front matter, tags and body.
+    mk_note(
+        &vault,
+        "møter/årsmøte.md",
+        "---\ntitle: Årsmøte\ntags: [løsning, ærlig]\ncreated: 2024-03-01\n---\n\n# Årsmøte\n\n- [ ] følge opp\nse [[nøtter/møte]] og #løsning\n",
+        3_000,
+    );
+    // The three cleanup shapes, in Norwegian and beyond it.
+    mk_note(&vault, "Untitled ø.md", "", 2_000);
+    mk_note(
+        &vault,
+        "日本語/ノート.md",
+        "日本語のノートです、かなり長い文章\n",
+        1_000,
+    );
+    mk_note(
+        &vault,
+        "2026-08-25 1043.md",
+        "notert i all hast, uten navn\n",
+        900,
+    );
+
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\nlabels = {{ arbeid = [\"møter\"] }}\n",
+        vault.display().to_string()
+    ));
+
+    sandbox.run(&["note", "ls"]).ok();
+    sandbox.run(&["note", "ls", "--status"]).ok();
+    sandbox.run(&["note", "edit", "øvelser.md"]).ok();
+    sandbox.run(&["note", "new", "Løsningsforslag"]).ok();
+    sandbox.run(&["note", "scratch"]).ok();
+    sandbox.run(&["config", "check"]);
+
+    // The one that crashed. Without a terminal it stops at the selector, which
+    // is past every byte offset that was the bug.
+    let cleanup = sandbox.run(&["note", "cleanup"]);
+    assert_eq!(
+        cleanup.code,
+        Some(1),
+        "note cleanup did not reach the selector\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        cleanup.stdout,
+        cleanup.stderr,
+    );
+    assert!(
+        cleanup.stderr.contains("needs a terminal"),
+        "note cleanup failed before the selector: {}",
+        cleanup.stderr,
+    );
+    assert!(
+        !cleanup.stderr.contains("panicked"),
+        "note cleanup panicked: {}",
+        cleanup.stderr,
+    );
+}
+
+/// The label, the folder and the name all come off one path by cutting it up,
+/// and a Norwegian directory makes every one of those cuts land differently.
+#[test]
+fn note_ls_status_reads_a_norwegian_vault_correctly() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notater");
+    mk_note(
+        &vault,
+        "møter/årsmøte.md",
+        "---\ntags: [løsning]\ncreated: 2024-03-01\n---\n\nærlig talt\n",
+        1_000,
+    );
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\nlabels = {{ arbeid = [\"møter\"] }}\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "ls", "--status"]);
+    run.ok();
+
+    let row = run.lines()[0].to_string();
+    assert!(row.starts_with("~/notater/møter/årsmøte.md"), "{row}");
+    assert!(row.contains("arbeid"), "{row}");
+    assert!(row.contains("#løsning"), "{row}");
+    assert!(row.ends_with("2024-03-01"), "{row}");
+}

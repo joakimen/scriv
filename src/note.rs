@@ -159,26 +159,6 @@ impl Note {
         labels.label_of(&self.dir).is_some()
     }
 
-    /// The directories the note is filed under that the group column has not
-    /// already named.
-    ///
-    /// Which ones those are depends on the group: a *label* is a word of the
-    /// user's own — `work` says nothing about which directory — so the whole
-    /// path below the root is still news. An unlabelled group is the directory
-    /// itself, already drawn one column to the left, so only what sits below it
-    /// is. Between them the two columns spell out the note's path exactly once.
-    pub fn folder<'a>(&'a self, cfg: &'a crate::config::NoteConfig) -> &'a str {
-        let below = match self.labelled(cfg) {
-            true => &self.rel[..],
-            // The separator too, which is why this is not `dir.len()`.
-            false => &self.rel[(self.dir.len() + 1).min(self.rel.len())..],
-        };
-        match below.rfind('/') {
-            Some(at) => &below[..at],
-            None => "",
-        }
-    }
-
     /// The path a *report* shows: absolute, with the home directory collapsed
     /// to `~`.
     ///
@@ -1012,17 +992,6 @@ mod tests {
         );
     }
 
-    /// The folder is what sits between the group's directory and the note, so
-    /// a row never writes the group twice.
-    #[test]
-    fn a_note_at_the_vault_root_is_filed_under_nothing() {
-        let bare = crate::config::NoteConfig::default();
-        assert_eq!(note("inbox.md", Front::default()).folder(&bare), "");
-        assert_eq!(note("a/c.md", Front::default()).folder(&bare), "");
-        assert_eq!(note("a/b/c.md", Front::default()).folder(&bare), "b");
-        assert_eq!(note("a/b/c/d.md", Front::default()).folder(&bare), "b/c");
-    }
-
     /// The filesystem dates a synced or freshly cloned vault the day it
     /// arrived, which is why front matter wins.
     #[test]
@@ -1254,6 +1223,70 @@ mod tests {
         assert_eq!(junk(&titled, &body_of(20)), None);
     }
 
+    /// A name is whatever the writer typed, and this repository's owner writes
+    /// Norwegian. Every one of these panicked when a byte offset — the length
+    /// of `untitled`, or the length of a directory plus one — landed inside a
+    /// character rather than between two.
+    ///
+    /// Byte offsets into a name are the bug, not any one name: `&s[..8]` is a
+    /// panic waiting for the eighth byte to be the middle of `ø`. These are the
+    /// shapes that reach a byte offset, so this is where they are held.
+    #[test]
+    fn a_name_that_is_not_ascii_does_not_panic_anywhere() {
+        let names = [
+            "Løsninger",
+            "Møtereferat",
+            "Størrelsesorden",
+            "ø",
+            "Untitled ø",
+            "Untitledø",
+            "ÅRSMØTE",
+            "日本語のノート",
+            "café",
+            "naïveté",
+            "emoji 🎉 note",
+            "Prosjektø",
+        ];
+        let cfg = config();
+        for name in names {
+            for rel in [
+                format!("{name}.md"),
+                format!("{name}/{name}.md"),
+                format!("work/{name}.md"),
+                format!("{name}/deeper/{name}.md"),
+            ] {
+                let note = note(&rel, Front::default());
+                // Every accessor a row, a report or the cleanup list reaches
+                // for. A panic in any is the bug this is here for.
+                let _ = note.title();
+                let _ = note.group(&cfg);
+                let _ = note.tag_column();
+                let _ = note.shown("/home/me");
+                let _ = row(&note);
+                let _ = prefix(&note, utc());
+                let _ = junk(&note, "");
+                let _ = junk(&note, &"word ".repeat(20));
+                let widths = Widths::of(std::slice::from_ref(&note), &cfg, "/home/me");
+                let _ = status_row(&note, &cfg, &widths, utc(), "/home/me");
+                let _ = junk_row(&note, Junk::Untitled, 10, &widths);
+            }
+        }
+    }
+
+    /// The name that crashed it: `untitled` is eight bytes, and the eighth byte
+    /// of a Norwegian filename is as likely as not to be half of an `ø`.
+    #[test]
+    fn a_name_whose_eighth_byte_is_inside_a_character_is_not_untitled() {
+        for name in ["Prosjektø", "Løsningø", "abcdefgø", "Størrelse"] {
+            let note = note(&format!("{name}.md"), Front::default());
+            assert_ne!(
+                junk(&note, &"word ".repeat(20)),
+                Some(Junk::Untitled),
+                "{name}"
+            );
+        }
+    }
+
     /// The reason is what the list is read for, so it leads and it is coloured.
     #[test]
     fn a_cleanup_row_says_why_the_note_is_on_the_list() {
@@ -1322,6 +1355,54 @@ mod tests {
 
     fn drawn(line: &str) -> String {
         markdown_line(line, &mut false)
+    }
+
+    /// The renderer scans a line by byte offset — advancing a cursor, slicing
+    /// out a wikilink, measuring a tag. Every one of those is the same class of
+    /// bug as the one that crashed `note cleanup`, so every one is held here.
+    #[test]
+    fn a_body_that_is_not_ascii_renders_without_panicking() {
+        let lines = [
+            "# Størrelsesorden",
+            "møte med Kjærsti om løsningen",
+            "- [ ] ærlig talt",
+            "- [x] åpne saker",
+            "> sitat på norsk",
+            "se [[nøtter/møter]] og #løsning",
+            "#ø",
+            "ø",
+            "日本語 [[ノート]] #タグ",
+            "🎉 [[emoji]] #party 🎉",
+            "  - [[øy]]",
+            "1. tåler dette",
+            "---",
+            "```rust",
+            "let x = \"ø\";",
+            "```",
+        ];
+        let mut fenced = false;
+        for line in lines {
+            let _ = markdown_line(line, &mut fenced);
+        }
+
+        let text = format!(
+            "---\ntitle: Årsmøte\ntags: [løsning, ærlig]\n---\n{}",
+            lines.join("\n")
+        );
+        let note = note("nøtter/møte.md", front(&text));
+        let rendered = preview(&note, &config(), &text, 0, utc());
+        assert!(rendered.contains("Årsmøte"), "{rendered}");
+        assert!(rendered.contains("#løsning #ærlig"), "{rendered}");
+        assert!(rendered.contains("Størrelsesorden"), "{rendered}");
+    }
+
+    /// Front matter is read character by character too, and a Norwegian tag is
+    /// exactly as valid as an English one.
+    #[test]
+    fn front_matter_that_is_not_ascii_parses() {
+        let parsed = front("---\ntitle: Årsmøte\ntags: [løsning, ærlig, 日本語]\n---\n");
+        assert_eq!(parsed.title.as_deref(), Some("Årsmøte"));
+        assert_eq!(parsed.tags, vec!["løsning", "ærlig", "日本語"]);
     }
 
     #[test]
@@ -1644,6 +1725,32 @@ mod search_tests {
         assert_eq!(found.line, 7);
     }
 
+    /// A search row is built by slicing a ripgrep line at byte offsets, and a
+    /// vault's paths and prose are as Norwegian as its names.
+    #[test]
+    fn a_match_in_a_norwegian_note_parses_and_draws() {
+        let found =
+            parse_match("/vault/nøtter/møte.md:12:5:ærlig talt, en løsning", &root()).unwrap();
+        assert_eq!(found.rel, "nøtter/møte.md");
+        assert_eq!((found.line, found.column), (12, 5));
+        assert_eq!(found.text, "ærlig talt, en løsning");
+
+        let (row, tints) = match_row(&found, 40);
+        assert!(row.contains("nøtter/møte.md"), "{row:?}");
+        // Tints are character ranges, so they must land on characters.
+        for tint in &tints {
+            assert!(
+                row.chars().count() >= tint.range.end,
+                "a tint ran past the row: {tint:?} in {row:?}"
+            );
+        }
+        let back = decode_match(&encode_match(&found), &root()).unwrap();
+        assert_eq!(back.rel, found.rel);
+
+        let rendered = match_preview(&found, "første\nandre\nærlig talt, en løsning\n");
+        assert!(rendered.contains("løsning"), "{rendered}");
+    }
+
     #[test]
     fn a_line_that_is_not_a_match_is_not_one() {
         for line in ["", "no colons at all", "/vault/a.md:not:a:number"] {
@@ -1806,14 +1913,20 @@ pub fn junk(note: &Note, body: &str) -> Option<Junk> {
 /// Whether a name is the one an editor gives a file nobody named: `Untitled`,
 /// and the `Untitled 1`, `untitled-2` it goes on to.
 fn is_untitled(name: &str) -> bool {
-    let rest = match name.len() >= UNTITLED.len()
-        && name[..UNTITLED.len()].eq_ignore_ascii_case(UNTITLED)
-    {
-        true => &name[UNTITLED.len()..],
-        false => return false,
-    };
-    rest.chars()
-        .all(|c| c.is_ascii_digit() || c == ' ' || c == '-' || c == '_')
+    // Character by character, never `name[..UNTITLED.len()]`. A name is
+    // whatever its writer typed, and a byte offset into one is a panic waiting
+    // for that byte to be the middle of a character rather than the start of
+    // it — `untitled` is eight bytes, and the eighth byte of a name like
+    // `Oppgaveøkt` is half of the `ø`.
+    let mut rest = name.chars();
+    let matched = UNTITLED.chars().all(|want| {
+        rest.next()
+            .is_some_and(|got| got.eq_ignore_ascii_case(&want))
+    });
+    if !matched {
+        return false;
+    }
+    rest.all(|c| c.is_ascii_digit() || c == ' ' || c == '-' || c == '_')
 }
 
 const UNTITLED: &str = "untitled";

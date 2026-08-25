@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Fixed
+
+- `scriv note cleanup` crashed on a vault whose note names are not all English.
+  It compared the first eight *bytes* of a name against `untitled`, and the
+  eighth byte of a name like `Oppgaveøkt` is the middle of the `ø` rather than
+  the end of a letter — which Rust refuses to slice at, taking the whole
+  command down with it. Names are now read a character at a time.
+
 ## v0.11.0
 
 *Released 2026-08-25*
