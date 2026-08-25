@@ -130,13 +130,22 @@ fn cancellable(result: Result<Vec<String>>) -> Result<Option<Vec<String>>> {
     }
 }
 
-/// Launch the editor on `targets`, inheriting the terminal. A non-zero exit is
-/// [`Reported`], since the editor has already had the terminal.
+/// Launch `$VISUAL`/`$EDITOR` on `targets`.
 fn open(ctx: &Ctx, targets: &[String]) -> Result<()> {
-    let editor = ctx.editor()?;
+    launch(ctx, &ctx.editor()?, targets)
+}
+
+/// Launch `editor` — a program and its arguments — on `targets`, inheriting the
+/// terminal. A non-zero exit is [`Reported`], since the editor has already had
+/// the terminal and said whatever it had to say on it.
+///
+/// Shared with [`crate::cmd::note`], which launches a different command over
+/// the same contract: `--` first, the terminal inherited, the child's status
+/// passed through.
+pub(crate) fn launch(ctx: &Ctx, editor: &[String], targets: &[String]) -> Result<()> {
     let (program, args) = editor
         .split_first()
-        .expect("Ctx::editor rejects an empty command");
+        .expect("an editor command is resolved non-empty");
 
     ctx.log
         .info(&format!("opening {} file(s) with {program}", targets.len()));

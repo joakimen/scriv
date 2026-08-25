@@ -10,9 +10,9 @@
 Provides fuzzy-completion for various local and remote resources.
 
 A single fuzzy selector over resources that would otherwise each need their own
-command and output parser: Git repositories, tracked files, branches,
-worktrees, GitHub pull requests, system processes and fish history. Each group
-lists its set, selects from it, and acts on the selection.
+command and output parser: Git repositories, tracked files, Markdown notes,
+branches, worktrees, GitHub pull requests, system processes and fish history.
+Each group lists its set, selects from it, and acts on the selection.
 
 The finder is linked into the binary — no `fzf` dependency and no subprocess.
 `scriv init fish` emits shell functions, key bindings and completions.
@@ -37,8 +37,8 @@ Supported platform: macOS on Apple Silicon. `scriv proc` depends on Darwin's
 signal numbers, and the crate refuses to compile for any other target.
 
 External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, a
-fish history file for `history`, and `$VISUAL` or `$EDITOR` for `edit`.
-`scriv config check` reports on each.
+fish history file for `history`, and `$VISUAL` or `$EDITOR` for `edit` — or
+`[note] editor` for `note`. `scriv config check` reports on each.
 
 ## Setup
 
@@ -66,6 +66,10 @@ that must be set: repositories are located at `<root>/<owner>/<repo>`.
 root = "~/dev/github.com"
 ignore = ["node_modules", "target"]
 # labels = { personal = ["your-github-user"], work = ["acme", "acme-labs"] }
+
+[note]
+root = "~/notes"    # an Obsidian vault, or any tree of Markdown files
+editor = "nvim"     # what `note edit` opens one with; unset, $VISUAL / $EDITOR
 ```
 
 ## Commands
@@ -74,6 +78,7 @@ ignore = ["node_modules", "target"]
 | --- | --- |
 | `scriv repo` | `ls` `sel` `open` `clone` |
 | `scriv file` | `ls` `sel` `add` `rm` `prune` |
+| `scriv note` | `ls` `sel` `edit` |
 | `scriv branch` | `ls` `sel` `checkout` `rm` |
 | `scriv worktree` | `ls` `sel` `add` `rm` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
@@ -85,8 +90,8 @@ ignore = ["node_modules", "target"]
 
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.
-Groups abbreviate to one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c`, and `pc`
-for `proc`.
+Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c`, and
+`pc` for `proc`.
 
 ## Key bindings
 
@@ -103,6 +108,7 @@ for `proc`.
 | `f2` | open this branch's pull request, or the list if it has none |
 | `f3` | open a tracked file in `$EDITOR` |
 | `f7` | check out a pull request |
+| `f10` | open a note from your vault |
 
 `scriv init fish` also defines `fe` (`scriv edit`, arguments passed through) and
 `kl` (`scriv proc kill --force`).

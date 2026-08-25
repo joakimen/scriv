@@ -6,9 +6,9 @@
 //!
 //! - `config.toml` — hand-edited settings, grouped by the command that reads
 //!   them: `[repo]` for discovery and labelling, `[worktree]` for where a new
-//!   tree goes, `[history]` for the shell history to search, `[selector]` for
-//!   the finder every command shares. A legacy `config.json` is still read when
-//!   no TOML file is present.
+//!   tree goes, `[note]` for the vault and what opens a note, `[history]` for
+//!   the shell history to search, `[selector]` for the finder every command
+//!   shares. A legacy `config.json` is still read when no TOML file is present.
 //! - `files` — the known-files list, rewritten programmatically by
 //!   `scriv file add`/`rm`/`prune`. Kept separate so machine writes never
 //!   clobber hand-written settings or comments.
@@ -48,6 +48,7 @@ pub type Labels = IndexMap<String, Vec<String>>;
 pub struct Config {
     pub repo: RepoConfig,
     pub worktree: WorktreeConfig,
+    pub note: NoteConfig,
     pub history: HistoryConfig,
     pub selector: SelectorConfig,
 }
@@ -136,6 +137,22 @@ impl Default for WorktreeConfig {
 /// Where trees go when nothing says otherwise: beside the checkout, in a
 /// directory git itself will not confuse for part of it.
 const DEFAULT_WORKTREE_ROOT: &str = ".worktrees";
+
+/// `[note]` — where the notes are, and what opens one.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
+pub struct NoteConfig {
+    /// The directory the notes live in — an Obsidian vault, or any tree of
+    /// Markdown files. Unset, `scriv note` has nowhere to look.
+    pub root: Option<String>,
+    /// What `note edit` launches, split on whitespace like `$EDITOR`. Unset, it
+    /// is `$VISUAL` then `$EDITOR`.
+    ///
+    /// A key of its own because a note is not source: the thing that opens one
+    /// is as often a Markdown reader as it is the editor the rest of scriv
+    /// hands a file to.
+    pub editor: Option<String>,
+}
 
 /// `[history]` — which shell history `scriv history` searches.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
@@ -235,6 +252,8 @@ struct RawToml {
     repo: RepoConfig,
     #[serde(default)]
     worktree: WorktreeConfig,
+    #[serde(default)]
+    note: NoteConfig,
     #[serde(default)]
     history: HistoryConfig,
     #[serde(default)]
@@ -517,6 +536,7 @@ fn parse_toml(data: &str) -> Result<Config> {
     Ok(Config {
         repo: raw.repo,
         worktree: raw.worktree,
+        note: raw.note,
         history: raw.history,
         selector: raw.selector.into(),
     })

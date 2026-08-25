@@ -2,10 +2,10 @@
 //! dispatch to the [`cmd`] implementations. All decision logic lives in the
 //! library crate.
 //!
-//! Top-level commands: `repo`, `file`, `branch`, `worktree`, `pr`, `proc` and
-//! `history` work with the things scriv finds; `edit` opens a file from the
-//! directory the user is in; `config` manages its configuration; `init` prints
-//! shell integration.
+//! Top-level commands: `repo`, `file`, `note`, `branch`, `worktree`, `pr`,
+//! `proc` and `history` work with the things scriv finds; `edit` opens a file
+//! from the directory the user is in; `config` manages its configuration;
+//! `init` prints shell integration.
 
 use std::process::ExitCode;
 
@@ -116,6 +116,23 @@ enum Command {
         /// Select from your tracked files instead of the current directory
         #[arg(short, long, conflicts_with = "files")]
         tracked: bool,
+    },
+    /// Manage the notes in your vault
+    ///
+    /// The set is every Markdown file under `[note] root` — an Obsidian vault,
+    /// or any tree of notes — most recently modified first.
+    ///
+    /// A row is what the note calls itself, the folder it is filed under and
+    /// its tags, behind two dim columns: how long ago it was modified, then how
+    /// long ago it was created. Both are spelled out in the preview pane, which
+    /// is drawn by scriv rather than by `bat`.
+    ///
+    /// Titles, tags and creation dates come from a note's YAML front matter and
+    /// from nowhere else — inline `#tags` in the body are not indexed.
+    #[command(visible_alias = "n")]
+    Note {
+        #[command(subcommand)]
+        command: NoteCmd,
     },
     /// Manage local and remote Git branches
     ///
@@ -350,6 +367,40 @@ impl BranchScope {
     fn filter(&self) -> Filter {
         Filter::from_flags(self.local, self.remote)
     }
+}
+
+#[derive(Subcommand)]
+enum NoteCmd {
+    /// List every note in the vault, most recently modified first
+    #[command(visible_alias = "list")]
+    Ls {
+        /// Return absolute file paths
+        #[arg(short = 'A', long)]
+        absolute_paths: bool,
+        /// Also show each note's tags, when it was last modified, and when it
+        /// was created
+        ///
+        /// Modified carries a time of day and created does not: a creation date
+        /// may have come from front matter, which names a day.
+        #[arg(long)]
+        status: bool,
+    },
+    /// Fuzzy-select a note and print its absolute path
+    Sel,
+    /// Open notes; omit the names to select them
+    ///
+    /// `tab` selects several and they open together. A name is a path below the
+    /// vault, exactly as `note ls` prints it.
+    ///
+    /// The command is `[note] editor`, falling back to `$VISUAL` then
+    /// `$EDITOR`. It is a setting of its own because a note is as often read as
+    /// written — `glow` and `nvim` are both answers. The fish integration binds
+    /// this to f10.
+    Edit {
+        /// Notes to open; omit to select interactively
+        #[arg(value_name = "NAME")]
+        notes: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -717,6 +768,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         } => match command.unwrap_or(EditCmd::File { files, tracked }) {
             EditCmd::File { files, tracked } => cmd::edit::file(&ctx, &files, tracked),
             EditCmd::Dir { dirs } => cmd::edit::dir(&ctx, &dirs),
+        },
+        Command::Note { command } => match command {
+            NoteCmd::Ls {
+                absolute_paths,
+                status,
+            } => cmd::note::ls(&ctx, absolute_paths, status),
+            NoteCmd::Sel => cmd::note::sel(&ctx),
+            NoteCmd::Edit { notes } => cmd::note::edit(&ctx, &notes),
         },
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {
