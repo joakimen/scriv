@@ -56,6 +56,14 @@ pub enum Preview {
     /// counterpart, and deferred for the same reason — the directory walk is
     /// streamed too.
     Dir,
+    /// Text scriv builds itself, the moment the row is highlighted.
+    ///
+    /// [`Preview::Text`] for a pane too expensive to hold one of per row: a
+    /// vault of two thousand notes read and rendered up front is two thousand
+    /// panes nobody looks at. Runs on skim's preview thread, so it is held to
+    /// the same bar as a [`Preview::Command`] — local, bounded, tens of
+    /// milliseconds — and ANSI escapes in what it returns are honoured.
+    Deferred(Box<dyn Fn() -> String + Send + Sync>),
 }
 
 /// Quote `arg` for the shell that runs a [`Preview::Command`], so a branch name
@@ -278,6 +286,7 @@ impl SkimItem for SkItem {
             Some(Preview::Command(cmd)) => ItemPreview::Command(cmd.clone()),
             Some(Preview::File) => ItemPreview::Command(file_preview_cmd(self.item.value())),
             Some(Preview::Dir) => ItemPreview::Command(dir_preview_cmd(self.item.value())),
+            Some(Preview::Deferred(build)) => ItemPreview::AnsiText(build()),
             // Blank rather than `Global`, which would run the empty global
             // preview command.
             None => ItemPreview::Text(String::new()),

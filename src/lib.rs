@@ -1,5 +1,5 @@
-//! `scriv` — select repositories, files, git branches and worktrees, GitHub
-//! pull requests and running processes from one fuzzy finder.
+//! `scriv` — select repositories, files, notes, git branches and worktrees,
+//! GitHub pull requests and running processes from one fuzzy finder.
 //!
 //! The crate is split into an I/O-free core and an imperative shell: the
 //! [`cmd`] modules read the environment, touch the filesystem, shell out to
@@ -13,6 +13,7 @@ pub mod gh;
 pub mod git;
 pub mod history;
 pub mod logger;
+pub mod note;
 pub mod path;
 pub mod proc;
 pub mod recent;
@@ -90,6 +91,9 @@ pub struct Ctx {
     utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
+    /// The command `scriv note edit` launches: `[note] editor`, else the one
+    /// above. Resolved here so no command looks the environment up itself.
+    note_editor: Option<String>,
     /// `GH_REPO`, which names the repository `gh` acts on when the working
     /// directory is not one.
     gh_repo: Option<String>,
@@ -157,6 +161,17 @@ impl Ctx {
             std::env::var("EDITOR").ok().as_deref(),
         );
 
+        // `[note] editor` first, since it exists to be something other than
+        // the editor: `glow` reads a note where `nvim` writes one.
+        let note_editor = config
+            .note
+            .editor
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(str::to_string)
+            .or_else(|| editor.clone());
+
         let gh_repo = std::env::var("GH_REPO")
             .ok()
             .filter(|repo| !repo.trim().is_empty());
@@ -172,6 +187,7 @@ impl Ctx {
             history_path,
             utc_offset,
             editor,
+            note_editor,
             gh_repo,
             color: color.for_stdout(),
             config,
@@ -200,6 +216,27 @@ impl Ctx {
         let parts = config::split_editor(command);
         if parts.is_empty() {
             anyhow::bail!("the configured editor is empty");
+        }
+        Ok(parts)
+    }
+
+    /// The command `scriv note edit` launches, or `None` when neither
+    /// `[note] editor` nor the environment names one. For reporting;
+    /// [`Ctx::note_editor`] is what launching goes through.
+    pub fn note_editor_setting(&self) -> Option<&str> {
+        self.note_editor.as_deref()
+    }
+
+    /// The command `scriv note edit` launches, split into program and
+    /// arguments.
+    pub fn note_editor(&self) -> Result<Vec<String>> {
+        let command = self
+            .note_editor
+            .as_deref()
+            .context("no editor set — set `[note] editor`, $VISUAL or $EDITOR")?;
+        let parts = config::split_editor(command);
+        if parts.is_empty() {
+            anyhow::bail!("the configured note editor is empty");
         }
         Ok(parts)
     }

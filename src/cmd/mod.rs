@@ -9,6 +9,7 @@ pub mod config;
 pub mod edit;
 pub mod file;
 pub mod history;
+pub mod note;
 pub mod pr;
 pub mod proc;
 pub mod repo;

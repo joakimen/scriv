@@ -104,6 +104,12 @@ function kl --description "Fuzzy-select running processes and kill them"
     command scriv proc kill --force $argv
 end
 
+# `scriv note edit` spawns its own editor, which may be a reader rather than an
+# editor — hence a wrapper here and not a `cd` helper.
+function scriv-note-edit --description "Select a note and open it"
+    command scriv note edit
+end
+
 function scriv-branch-checkout --description "Select a git branch and check it out"
     command scriv branch checkout
 end
@@ -150,8 +156,8 @@ end
 # around the cursor, which is worth less than a jump between worktrees — and up
 # over `up-line`, which scriv-history-up hands back wherever the selector would
 # be wrong. ctrl-p/ctrl-n are deliberately left as `up-line`/`down-line`. f1, f2,
-# f3 and f7 displace nothing; f4 and f5 are skipped because users' own tools
-# cluster there. alt-<letter> is not free: fish presets alt-b, alt-e, alt-o and
+# f3, f7 and f10 displace nothing; f4 and f5 are skipped because users' own
+# tools cluster there. alt-<letter> is not free: fish presets alt-b, alt-e, alt-o and
 # alt-p among others.
 #
 # Rebind by calling `bind` yourself after `scriv_key_bindings`; the last binding
@@ -168,6 +174,7 @@ function scriv_key_bindings --description "Bind scriv selectors to keys"
     bind f3     "scriv-run-as-command scriv-file-edit"
     bind ctrl-g "scriv-run-as-command scriv-branch-checkout"
     bind f7     "scriv-run-as-command scriv-pr-checkout"
+    bind f10    "scriv-run-as-command scriv-note-edit"
     bind ctrl-r "scriv-history-select; commandline -f repaint"
     bind up     "scriv-history-up; commandline -f repaint"
 end
@@ -193,6 +200,7 @@ mod tests {
         assert!(out.contains("function scriv-file-edit"));
         assert!(out.contains("function fe"));
         assert!(out.contains("function kl"));
+        assert!(out.contains("function scriv-note-edit"));
         assert!(out.contains("function scriv-branch-checkout"));
         assert!(out.contains("function scriv-pr-checkout"));
         assert!(out.contains("function scriv-pr-open"));
@@ -211,6 +219,7 @@ mod tests {
         assert!(out.contains("bind f2"));
         assert!(out.contains("bind f3"));
         assert!(out.contains("bind f7"));
+        assert!(out.contains("bind f10"));
         assert!(out.contains("bind ctrl-g"));
         assert!(out.contains("bind ctrl-r"));
         assert!(out.contains("bind up"));
@@ -310,7 +319,7 @@ mod tests {
     #[test]
     fn bindings_that_produce_output_run_through_the_command_line() {
         let out = integration(Shell::Fish, &mut dummy());
-        for key in ["ctrl-o", "ctrl-t", "f1", "f2", "f3", "ctrl-g", "f7"] {
+        for key in ["ctrl-o", "ctrl-t", "f1", "f2", "f3", "ctrl-g", "f7", "f10"] {
             let bind = binding_for(&out, key);
             assert!(
                 bind.contains("scriv-run-as-command"),

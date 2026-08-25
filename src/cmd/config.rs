@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 
 use crate::path::expand_home_dir;
-use crate::{Ctx, files, gh, history, repo, term};
+use crate::{Ctx, cmd, files, gh, history, repo, term};
 
 /// A commented starter config. Settings are grouped by the command that reads
 /// them; users edit it to taste.
@@ -49,6 +49,20 @@ ignore = ["node_modules", "target"]
 # absolute path holds the trees of every repository, under the repository's own
 # name.
 # root = ".worktrees"
+
+# `scriv note`: where your notes are, and what opens one.
+[note]
+
+# The directory holding them — an Obsidian vault, or any tree of Markdown
+# files. Notes below it are listed most recently modified first, and what each
+# one is called, which tags it carries and when it was created come from its
+# YAML front matter. Without this, `scriv note` has nowhere to look.
+# root = "~/notes"
+
+# What `note edit` launches, split on whitespace like $EDITOR. Its own setting
+# because a note is as often read as written — `glow` and `nvim` are both
+# answers. Unset, it is $VISUAL then $EDITOR, as `scriv edit` uses.
+# editor = "nvim"
 
 # `scriv history`: which shell history to search.
 [history]
@@ -127,6 +141,18 @@ pub fn print(ctx: &Ctx) -> Result<()> {
             println!("  {label}: {}", owners.join(", "));
         }
     }
+
+    println!();
+    println!("[note]");
+    println!(
+        "root: {}",
+        ctx.config.note.root.as_deref().unwrap_or("(unset)")
+    );
+    println!(
+        "editor: {}",
+        ctx.note_editor_setting()
+            .unwrap_or("(unset — set `[note] editor`, $VISUAL or $EDITOR)")
+    );
 
     println!();
     println!("[history]");
@@ -404,6 +430,49 @@ fn editor_check(ctx: &Ctx) -> Check {
     }
 }
 
+/// The notes vault: where it is, and how many notes are in it.
+///
+/// One row rather than two — a root that resolves and a count of what is under
+/// it are the same question — and a warning rather than a failure when it is
+/// unset, since every other group works without one.
+fn note_checks(ctx: &Ctx) -> Vec<Check> {
+    let mut checks = Vec::new();
+
+    if ctx.config.note.root.is_none() {
+        checks.push(Check::warn(
+            "note vault",
+            "`[note] root` not set — `scriv note` has nowhere to look",
+        ));
+    } else {
+        checks.push(match cmd::note::vault_summary(ctx) {
+            Err(err) => Check::fail("note vault", format!("{err:#}")),
+            Ok((root, 0)) => Check::warn(
+                "note vault",
+                format!("{} holds no Markdown files", root.display()),
+            ),
+            Ok((root, count)) => Check::ok(
+                "note vault",
+                format!("{count} note(s) in {}", root.display()),
+            ),
+        });
+    }
+
+    // Only when it is set: unset, it is the editor the row above already
+    // reported, and a second row saying so is a second row saying so.
+    if let Some(setting) = ctx.config.note.editor.as_deref() {
+        let program = setting.split_whitespace().next().unwrap_or(setting);
+        checks.push(match on_path(program) {
+            Some(found) => Check::ok("note editor", format!("{setting} ({})", found.display())),
+            None => Check::fail(
+                "note editor",
+                format!("{setting} — `{program}` is not on PATH"),
+            ),
+        });
+    }
+
+    checks
+}
+
 /// fish's history file: whether it is where scriv looked, and how much is in
 /// it.
 fn history_check(ctx: &Ctx) -> Check {
@@ -483,6 +552,7 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
     ));
     checks.push(history_check(ctx));
     checks.push(files_check(ctx));
+    checks.extend(note_checks(ctx));
     checks
 }
 

@@ -13,6 +13,30 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv note` reads a directory of Markdown files — an Obsidian vault, or any
+  tree of notes — as one more thing to select from. `ls` prints them,
+  `sel` prints the path of the one you pick, and `edit` opens what you pick,
+  several at a time on `tab`. Point `[note] root` at the vault to turn it on.
+  fish binds `f10` to `note edit`.
+- A note list is ordered by what you touched last, and each row carries what
+  the note calls itself, the folder it is filed under and its tags, behind two
+  dim columns saying how long ago it was modified and created. Titles, tags and
+  creation dates are read from YAML front matter, which is also why a synced or
+  freshly cloned vault still shows the dates you wrote rather than the afternoon
+  the files arrived. Inline `#tags` in the body are not indexed.
+- The preview pane for a note is drawn by scriv rather than by `bat`: the
+  header spells out both dates and the tags, and the body arrives with its
+  headings, quotes, lists, task boxes, wikilinks and tags coloured, with the
+  front matter left out since the header has already said it. Nothing is
+  spawned, so it keeps up with a held-down arrow key through a vault of
+  thousands.
+- `[note] editor` chooses what opens a note, since that is as often a reader as
+  an editor — `glow` and `nvim` are both answers. Unset, it is `$VISUAL` then
+  `$EDITOR`, as `scriv edit` uses. `scriv config check` reports the vault, how
+  many notes are in it, and whether that editor is on `PATH`.
+
 ## v0.8.0
 
 *Released 2026-08-17*

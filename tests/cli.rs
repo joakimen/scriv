@@ -259,6 +259,7 @@ fn the_documented_abbreviations_resolve() {
         &["w", "--help"][..],
         &["f", "--help"][..],
         &["h", "--help"][..],
+        &["n", "--help"][..],
         &["pc", "--help"][..],
         &["branch", "co", "--help"][..],
         &["repo", "list", "--help"][..],
@@ -355,7 +356,7 @@ fn pr_outside_a_repository_says_so_before_gh_does() {
 fn every_registry_exposes_sel() {
     let sandbox = Sandbox::new();
     for group in [
-        "repo", "file", "branch", "worktree", "pr", "proc", "history",
+        "repo", "file", "note", "branch", "worktree", "pr", "proc", "history",
     ] {
         sandbox.run(&[group, "sel", "--help"]).ok();
     }
@@ -1603,4 +1604,162 @@ fn init_works_before_there_is_any_config() {
     let sandbox = Sandbox::new();
     assert!(!sandbox.config_path().exists());
     sandbox.run(&["init", "fish"]).ok();
+}
+
+// --- notes ------------------------------------------------------------------
+
+/// Write a note into `<home>/notes`, dated `modified` seconds after the epoch
+/// so a listing's order is decided rather than raced for.
+fn mk_note(vault: &Path, rel: &str, body: &str, modified: u64) {
+    let path = vault.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, body).unwrap();
+    let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(when))
+        .unwrap();
+}
+
+/// A vault of three notes, the newest last in the alphabet so ordering by name
+/// and ordering by date cannot be mistaken for each other.
+fn mk_vault(sandbox: &Sandbox) -> PathBuf {
+    let vault = sandbox.home().join("notes");
+    mk_note(
+        &vault,
+        "archive/old.md",
+        "---\ntags: [done]\n---\n\nold\n",
+        1_000,
+    );
+    mk_note(
+        &vault,
+        "inbox.md",
+        "---\ntitle: Inbox\ntags:\n  - todo\n  - work\ncreated: 2024-03-01\n---\n\n# Inbox\n",
+        3_000,
+    );
+    mk_note(&vault, "zeta.md", "no front matter\n", 2_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\n",
+        vault.display().to_string()
+    ));
+    vault
+}
+
+#[test]
+fn note_ls_names_every_note_below_the_vault_newest_first() {
+    let sandbox = Sandbox::new();
+    mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "ls"]);
+    run.ok();
+    assert_eq!(run.lines(), vec!["inbox.md", "zeta.md", "archive/old.md"]);
+}
+
+/// The vault holds an attachment and an Obsidian settings directory, neither of
+/// which is a note.
+#[test]
+fn note_ls_offers_markdown_and_not_the_rest_of_the_vault() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    std::fs::write(vault.join("diagram.png"), "").unwrap();
+    std::fs::create_dir_all(vault.join(".obsidian")).unwrap();
+    std::fs::write(vault.join(".obsidian/app.md"), "").unwrap();
+
+    let run = sandbox.run(&["note", "ls"]);
+    run.ok();
+
+    assert!(!run.stdout.contains("diagram"), "{}", run.stdout);
+    assert!(!run.stdout.contains("obsidian"), "{}", run.stdout);
+}
+
+#[test]
+fn note_ls_absolute_paths_are_absolute() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "ls", "--absolute-paths"]);
+    run.ok();
+    for line in run.lines() {
+        assert!(line.starts_with(vault.to_str().unwrap()), "{line}");
+    }
+}
+
+/// The status listing is what a script reads a note's metadata out of, so the
+/// name it leads with has to be the one `note edit` takes back.
+#[test]
+fn note_ls_status_carries_the_tags_and_both_dates() {
+    let sandbox = Sandbox::new();
+    mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "ls", "--status"]);
+    run.ok();
+
+    let inbox = run.lines()[0].to_string();
+    assert!(inbox.starts_with("inbox.md"), "{inbox}");
+    assert!(inbox.contains("#todo #work"), "{inbox}");
+    // The front matter's creation date, not the file's: this vault was written
+    // moments ago.
+    assert!(inbox.ends_with("2024-03-01"), "{inbox}");
+}
+
+#[test]
+fn note_without_a_vault_says_which_key_is_missing() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[repo]\nroot = \"~/dev\"\n");
+    let run = sandbox.run(&["note", "ls"]);
+    run.code(1);
+    assert!(run.stderr.contains("[note] root"), "{}", run.stderr);
+}
+
+#[test]
+fn note_with_a_vault_that_is_not_there_says_so() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[note]\nroot = \"~/nowhere\"\n");
+    let run = sandbox.run(&["note", "ls"]);
+    run.code(1);
+    assert!(run.stderr.contains("not a directory"), "{}", run.stderr);
+}
+
+/// `[note] editor` is `echo` here, so what it was asked to open comes back on
+/// stdout. A name is a path below the vault — what `note ls` printed.
+#[test]
+fn note_edit_resolves_a_name_against_the_vault() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "edit", "archive/old.md"]);
+    run.ok();
+    assert_eq!(
+        run.stdout.trim(),
+        format!("-- {}", vault.join("archive/old.md").display())
+    );
+}
+
+/// The key exists so a note can be opened by something other than the editor
+/// the rest of scriv uses; with none set, it is that editor.
+#[test]
+fn note_edit_falls_back_to_the_environment_editor() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "a.md", "a\n", 1_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run_with_env(&["note", "edit", "a.md"], &[("EDITOR", "echo")]);
+    run.ok();
+    assert_eq!(
+        run.stdout.trim(),
+        format!("-- {}", vault.join("a.md").display())
+    );
+}
+
+/// `config check` is what a setup script runs, so a configured vault has to
+/// report as found rather than as a thing scriv knows nothing about.
+#[test]
+fn config_check_counts_the_notes_in_the_vault() {
+    let sandbox = Sandbox::new();
+    mk_vault(&sandbox);
+    let run = sandbox.run(&["config", "check"]);
+    assert!(run.stdout.contains("3 note(s)"), "{}", run.stdout);
+    assert!(run.stdout.contains("note editor"), "{}", run.stdout);
 }
