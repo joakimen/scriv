@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.11.1
+
+*Released 2026-08-25*
+
 ### Fixed
 
 - `scriv note cleanup` crashed on a vault whose note names are not all English.
