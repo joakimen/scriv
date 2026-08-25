@@ -115,6 +115,7 @@ fn file_preview_cmd(path: &str) -> String {
 /// Where [`SelectItem::color`] says something about the whole row, a tint says
 /// something about one column of it — so a row can carry two facts that are
 /// true of different parts of it without either claiming the line.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tint {
     pub range: Range<usize>,
     pub color: u8,

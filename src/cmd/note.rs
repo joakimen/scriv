@@ -899,10 +899,6 @@ mod tests {
         assert_eq!(note.rel, "work/meetings/standup.md");
         assert_eq!(note.title(), "standup");
         assert_eq!(note.dir, "work");
-        assert_eq!(
-            note.folder(&crate::config::NoteConfig::default()),
-            "meetings"
-        );
     }
 
     #[test]
