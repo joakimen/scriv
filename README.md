@@ -130,6 +130,12 @@ make demo         # re-record docs/demo.gif
 make demo-fixture # build the demo sandbox and poke at it by hand
 ```
 
+Dependency updates come from [Renovate](https://docs.renovatebot.com),
+configured in `.github/renovate.json5`: one grouped pull request a week, merged
+on its own once the checks pass and the release is three days old. Crate
+majors, the `skim`/`ratatui` pair and `dist` wait for a human instead, and
+`.github/workflows/release.yml` is left alone — `dist init` writes that file.
+
 ## Releasing
 
 A pushed tag is the release, and merging a pull request is what pushes it.
