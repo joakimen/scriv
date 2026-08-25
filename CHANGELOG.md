@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.10.0
+
+*Released 2026-08-25*
+
 ### Added
 
 - `scriv note new` starts a note and drops you straight into your editor. It
