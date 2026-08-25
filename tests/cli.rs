@@ -1648,13 +1648,22 @@ fn mk_vault(sandbox: &Sandbox) -> PathBuf {
     vault
 }
 
+/// `note ls` is read by other tools, so what it prints is a path they can
+/// open: absolute, one per line, newest first.
 #[test]
-fn note_ls_names_every_note_below_the_vault_newest_first() {
+fn note_ls_prints_absolute_paths_newest_first() {
     let sandbox = Sandbox::new();
-    mk_vault(&sandbox);
+    let vault = mk_vault(&sandbox);
     let run = sandbox.run(&["note", "ls"]);
     run.ok();
-    assert_eq!(run.lines(), vec!["inbox.md", "zeta.md", "archive/old.md"]);
+    assert_eq!(
+        run.lines(),
+        vec![
+            vault.join("inbox.md").to_str().unwrap(),
+            vault.join("zeta.md").to_str().unwrap(),
+            vault.join("archive/old.md").to_str().unwrap(),
+        ]
+    );
 }
 
 /// The vault holds an attachment and an Obsidian settings directory, neither of
@@ -1674,14 +1683,15 @@ fn note_ls_offers_markdown_and_not_the_rest_of_the_vault() {
     assert!(!run.stdout.contains("obsidian"), "{}", run.stdout);
 }
 
+/// Every path the listing prints opens, which is the point of printing them.
 #[test]
-fn note_ls_absolute_paths_are_absolute() {
+fn every_path_note_ls_prints_is_one_that_exists() {
     let sandbox = Sandbox::new();
-    let vault = mk_vault(&sandbox);
-    let run = sandbox.run(&["note", "ls", "--absolute-paths"]);
+    mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "ls"]);
     run.ok();
     for line in run.lines() {
-        assert!(line.starts_with(vault.to_str().unwrap()), "{line}");
+        assert!(Path::new(line).is_file(), "{line}");
     }
 }
 
@@ -1694,8 +1704,10 @@ fn note_ls_status_carries_the_tags_and_both_dates() {
     let run = sandbox.run(&["note", "ls", "--status"]);
     run.ok();
 
+    // `--status` is the listing a person reads, so the home directory it all
+    // sits under is collapsed rather than repeated down every row.
     let inbox = run.lines()[0].to_string();
-    assert!(inbox.starts_with("inbox.md"), "{inbox}");
+    assert!(inbox.starts_with("~/notes/inbox.md"), "{inbox}");
     assert!(inbox.contains("#todo #work"), "{inbox}");
     // The front matter's creation date, not the file's: this vault was written
     // moments ago.
@@ -1705,7 +1717,7 @@ fn note_ls_status_carries_the_tags_and_both_dates() {
     let old = run
         .lines()
         .iter()
-        .find(|l| l.starts_with("archive/old.md"))
+        .find(|l| l.contains("archive/old.md"))
         .expect("the archived note")
         .to_string();
     assert!(old.contains("old"), "{old}");
@@ -1856,4 +1868,126 @@ fn config_check_counts_the_notes_in_the_vault() {
     assert!(run.stdout.contains("note editor"), "{}", run.stdout);
     // `note rg` shells out to it, so the report says whether it is there.
     assert!(run.stdout.contains("rg"), "{}", run.stdout);
+}
+
+/// The scratch note is the same file every time, and its directory is made for
+/// it — otherwise the editor has nowhere to write.
+#[test]
+fn note_scratch_opens_one_permanent_file() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+
+    let first = sandbox.run(&["note", "scratch"]);
+    first.ok();
+    let second = sandbox.run(&["note", "scratch"]);
+    second.ok();
+
+    assert_eq!(first.stdout, second.stdout, "the scratch note moved");
+    assert_eq!(
+        first.stdout.trim(),
+        format!("-- {}", vault.join("scratch/scratch.md").display())
+    );
+    assert!(vault.join("scratch").is_dir(), "the directory was not made");
+}
+
+#[test]
+fn note_scratch_goes_where_the_config_says() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "a.md", "a\n", 1_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\nscratch = \"pad.md\"\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "scratch"]);
+    run.ok();
+    assert_eq!(
+        run.stdout.trim(),
+        format!("-- {}", vault.join("pad.md").display())
+    );
+}
+
+/// A mistyped name would otherwise open a new, empty buffer and say nothing,
+/// which is how a typo becomes a second note.
+#[test]
+fn note_edit_warns_when_the_note_named_is_not_there() {
+    let sandbox = Sandbox::new();
+    mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "edit", "inbx.md"]);
+    run.ok();
+    assert!(
+        run.stderr.contains("no note called inbx.md"),
+        "{}",
+        run.stderr
+    );
+}
+
+/// A vault where every note has a name and something in it has nothing to
+/// clean up, and says so rather than opening an empty selector.
+#[test]
+fn note_cleanup_says_so_when_there_is_nothing_to_do() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(
+        &vault,
+        "thoughts.md",
+        "a real note with rather more than a couple of dozen characters in it\n",
+        1_000,
+    );
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "cleanup"]);
+    run.ok();
+    assert!(run.stdout.contains("Nothing to clean up"), "{}", run.stdout);
+}
+
+/// The three kinds, and nothing else. Without a terminal the selector cannot
+/// open, so this proves what was classified rather than what was chosen.
+#[test]
+fn note_cleanup_offers_the_three_kinds_and_leaves_real_notes_alone() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "empty.md", "", 1_000);
+    mk_note(
+        &vault,
+        "Untitled 1.md",
+        "this one has plenty of words in it\n",
+        1_000,
+    );
+    mk_note(
+        &vault,
+        "2026-08-25 1043.md",
+        "jotted down in a hurry, no name\n",
+        1_000,
+    );
+    mk_note(
+        &vault,
+        "thoughts.md",
+        "a real note with rather more than a couple of dozen characters\n",
+        1_000,
+    );
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "cleanup"]);
+
+    // It got past classification and failed at the selector, which is the only
+    // thing a test without a terminal can reach.
+    run.code(1);
+    assert!(
+        run.stderr.contains("needs a terminal"),
+        "cleanup did not reach the selector: {}",
+        run.stderr
+    );
+    assert!(
+        !run.stdout.contains("Nothing to clean up"),
+        "three candidates were classified as none: {}",
+        run.stdout
+    );
 }

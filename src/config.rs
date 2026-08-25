@@ -205,6 +205,9 @@ pub struct NoteConfig {
     /// Written as an inline table — `labels = { work = ["projects"] }` — for
     /// the reason `[repo] labels` is.
     pub labels: Labels,
+    /// The one permanent note `note scratch` opens, as a path below
+    /// [`Self::root`]. Unset, it is `scratch/scratch.md`.
+    pub scratch: Option<String>,
     /// What `note edit` launches, split on whitespace like `$EDITOR`. Unset, it
     /// is `$VISUAL` then `$EDITOR`.
     ///

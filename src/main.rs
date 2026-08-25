@@ -376,13 +376,12 @@ impl BranchScope {
 #[derive(Subcommand)]
 enum NoteCmd {
     /// List every note in the vault, most recently modified first
+    ///
+    /// Paths are absolute and one per line, so the listing pipes into whatever
+    /// reads paths — `scriv note ls | xargs grep -l TODO`.
     #[command(visible_alias = "list")]
     Ls {
-        /// Return absolute file paths
-        #[arg(short = 'A', long)]
-        absolute_paths: bool,
-        /// Also show each note's tags, when it was last modified, and when it
-        /// was created
+        /// Also show each note's label, its tags, and both dates
         ///
         /// Modified carries a time of day and created does not: a creation date
         /// may have come from front matter, which names a day.
@@ -407,11 +406,36 @@ enum NoteCmd {
         #[arg(value_name = "NAME")]
         name: Option<String>,
     },
+    /// Open the one permanent scratch note
+    ///
+    /// Somewhere to put a thought without first deciding whether it is worth a
+    /// note of its own, and somewhere to find it again afterwards. The same
+    /// file every time: `[note] scratch`, or `scratch/scratch.md`.
+    Scratch,
+    /// Review the notes that were never really written, and delete them
+    ///
+    /// Offers three kinds and no more: a note with nothing in it, one still
+    /// called `Untitled`, and one whose name has no letters in it and whose
+    /// front matter gives it no title either. Each row says which it is.
+    ///
+    /// Nothing goes without being listed and then agreed to. `tab` selects
+    /// several, the preview shows what is in each, and what you chose is
+    /// printed before the question is asked.
+    Cleanup {
+        /// Delete without asking
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Search inside every note, as you type
     ///
     /// The query goes to `ripgrep` rather than to the fuzzy matcher, so the
     /// list is every matching *line* in the vault and it is rebuilt on each
     /// keystroke. `ctrl-q` switches to filtering what came back.
+    ///
+    /// Matching is fuzzy — the letters you typed, in order, anywhere on the
+    /// line — so `errhand` finds "error handling". `ctrl-x` searches for the
+    /// query exactly instead, for a phrase or a snippet of code, and `ctrl-f`
+    /// goes back; the header says which is in force.
     ///
     /// `tab` takes several. What you pick opens at its line, and anything else
     /// you picked lands in the quickfix list behind it — which needs a vim; any
@@ -804,14 +828,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             EditCmd::Dir { dirs } => cmd::edit::dir(&ctx, &dirs),
         },
         Command::Note { command } => match command {
-            NoteCmd::Ls {
-                absolute_paths,
-                status,
-            } => cmd::note::ls(&ctx, absolute_paths, status),
+            NoteCmd::Ls { status } => cmd::note::ls(&ctx, status),
             NoteCmd::Sel => cmd::note::sel(&ctx),
             NoteCmd::Edit { notes } => cmd::note::edit(&ctx, &notes),
             NoteCmd::New { name } => cmd::note::new(&ctx, name.as_deref()),
             NoteCmd::Rg { query } => cmd::note::rg(&ctx, query.as_deref()),
+            NoteCmd::Scratch => cmd::note::scratch(&ctx),
+            NoteCmd::Cleanup { yes } => cmd::note::cleanup(&ctx, yes),
         },
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {

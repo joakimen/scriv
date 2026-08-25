@@ -344,6 +344,7 @@ pub fn select_one_queried(
         query,
         reload: None,
         search: None,
+        modes: &[],
         actions: &[],
     };
     run_selector(Feed::batch(items), run, cfg)?
@@ -417,6 +418,7 @@ pub fn select_one_reloading(
         query: "",
         reload: Some(reload),
         search: None,
+        modes: &[],
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -435,6 +437,7 @@ pub fn select_one_acting(
         query: "",
         reload: None,
         search: None,
+        modes: &[],
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -520,9 +523,37 @@ pub struct Searching {
     pub stop: Box<dyn Fn() + Send + Sync>,
 }
 
-/// Produces the rows for a query. Called afresh on every keystroke, on a
-/// background thread, so it may block for as long as the search takes.
-pub type Search = Box<dyn FnMut(&str) -> Searching + Send>;
+/// Produces the rows for a query, in the manner `mode` names. Called afresh on
+/// every keystroke, on a background thread, so it may block for as long as the
+/// search takes.
+pub type Search = Box<dyn FnMut(&str, usize) -> Searching + Send>;
+
+/// One way a [`Search`] can read the query, offered on a key of its own.
+///
+/// Two keys rather than one that toggles, because a header cannot be made to
+/// alternate: skim's `set-header` writes a fixed string, and a binding that
+/// rebinds itself to the opposite mode would have to contain its own text.
+/// Deliberate keys also cost the same one keystroke and never leave a doubt
+/// about which mode is in force — which is the thing the header is for.
+pub struct Mode {
+    /// skim's spelling of the key — `ctrl-f`.
+    pub key: &'static str,
+    /// What the header calls it, once chosen.
+    pub label: &'static str,
+}
+
+impl Mode {
+    pub const fn new(key: &'static str, label: &'static str) -> Self {
+        Self { key, label }
+    }
+}
+
+/// The marker a mode key's reload puts in front of the query, so the collector
+/// can tell "search again in mode 2" from "the query changed".
+///
+/// A control character: skim expands the query into this template, and anything
+/// a user could type would be a query somebody means.
+const MODE_MARKER: char = '\u{2}';
 
 /// How many rows to hand skim at once, and how long the counted thread waits
 /// on the producer before looking up to see whether it has been called off.
@@ -548,10 +579,30 @@ fn unquote(quoted: &str) -> String {
     inner.replace(r"'\''", "'")
 }
 
+/// Split a mode marker off the front of what skim handed the collector.
+///
+/// A mode key reloads with `<marker><n><marker>` in front of the query; an
+/// ordinary keystroke reloads with the query alone. Either way what follows is
+/// still shell-quoted — skim expands `{q}` inside the template, not the
+/// template itself — so this runs before [`unquote`], never after.
+fn read_mode(command: &str) -> (Option<usize>, String) {
+    let Some(rest) = command.strip_prefix(MODE_MARKER) else {
+        return (None, command.to_string());
+    };
+    match rest.split_once(MODE_MARKER) {
+        Some((mode, query)) => (mode.parse().ok(), query.to_string()),
+        None => (None, command.to_string()),
+    }
+}
+
 /// The [`CommandCollector`] behind [`select_many_searching`]: skim thinks it is
 /// running a command per keystroke, and it is calling a closure.
 struct SearchCollector {
     search: Arc<Mutex<Search>>,
+    /// Which [`Mode`] the next search reads the query in. Held across
+    /// keystrokes because only the mode *keys* say anything about it: an
+    /// ordinary keystroke re-runs the template, which carries no marker.
+    mode: Arc<AtomicUsize>,
 }
 
 impl CommandCollector for SearchCollector {
@@ -562,7 +613,15 @@ impl CommandCollector for SearchCollector {
     ) -> (SkimItemReceiver, Sender<i32>) {
         let (tx_item, rx_item): (SkimItemSender, SkimItemReceiver) = unbounded();
         let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
-        let query = unquote(cmd);
+        // The marker first, then the quoting: skim quotes only the query it
+        // substituted for `{q}`, so a mode key's marker arrives outside the
+        // quotes rather than inside them.
+        let (mode, quoted) = read_mode(cmd);
+        let query = unquote(&quoted);
+        if let Some(mode) = mode {
+            self.mode.store(mode, Ordering::SeqCst);
+        }
+        let mode = self.mode.load(Ordering::SeqCst);
         let search = Arc::clone(&self.search);
 
         // Counted, and therefore never the thread blocked in the search: as
@@ -574,7 +633,7 @@ impl CommandCollector for SearchCollector {
             let (tx_stop, rx_stop) = std::sync::mpsc::channel::<Box<dyn Fn() + Send + Sync>>();
 
             std::thread::spawn(move || {
-                let mut searching = (search.lock().expect("search closure poisoned"))(&query);
+                let mut searching = (search.lock().expect("search closure poisoned"))(&query, mode);
                 // Handed over before the first row is read, so the thread
                 // below can call it off while this one is still blocked.
                 if tx_stop.send(searching.stop).is_err() {
@@ -649,6 +708,7 @@ pub fn select_many_searching(
     search: Search,
     prompt: &str,
     query: &str,
+    modes: &'static [Mode],
     cfg: &SelectorConfig,
 ) -> Result<Vec<String>> {
     let run = Run {
@@ -657,6 +717,7 @@ pub fn select_many_searching(
         query,
         reload: None,
         search: Some(search),
+        modes,
         actions: &[],
     };
     Ok(run_selector(Feed::none(true), run, cfg)?.values)
@@ -830,6 +891,9 @@ struct Run<'a> {
     reload: Option<Reload>,
     /// Given one, the query box drives this instead of filtering rows.
     search: Option<Search>,
+    /// The ways `search` can read the query, each on a key of its own. The
+    /// first is what the selector opens in.
+    modes: &'static [Mode],
     /// Keys that close the selector meaning something other than enter.
     actions: &'static [Action],
 }
@@ -842,6 +906,7 @@ impl<'a> Run<'a> {
             query: "",
             reload: None,
             search: None,
+            modes: &[],
             actions: &[],
         }
     }
@@ -900,7 +965,18 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     if previewing {
         builder
             .preview("")
-            .preview_window(cfg.preview_window.as_str());
+            .preview_window(cfg.preview_window.as_str())
+            // What clears the pane when the query stops matching anything.
+            //
+            // skim runs a row's own `preview()` only when a row is highlighted,
+            // and does nothing at all when none is — so the last match's pane
+            // stays on screen after the match itself is gone, describing a note
+            // no longer in the list. This callback is the branch skim takes
+            // instead in exactly that case, and returning nothing from it is
+            // what empties the pane.
+            .preview_fn(PreviewCallback::from(|_: Vec<Arc<dyn SkimItem>>| {
+                Vec::<String>::new()
+            }));
     }
 
     if !run.query.is_empty() {
@@ -915,7 +991,7 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
 
     let reloadable = run.reload.is_some();
     let searching = run.search.is_some();
-    let header = hints(actions, reloadable, multi, searching);
+    let header = hints(actions, reloadable, multi, run.modes);
 
     // The query drives the search rather than filtering rows, so skim runs it
     // through a "command" — `{q}` being skim's own spelling of what was typed.
@@ -923,6 +999,7 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     if let Some(search) = run.search {
         let collector = SearchCollector {
             search: Arc::new(Mutex::new(search)),
+            mode: Arc::new(AtomicUsize::new(0)),
         };
         builder
             .interactive(true)
@@ -942,10 +1019,16 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
             .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>);
     }
 
-    if !header.is_empty() {
-        builder.header(header.clone());
+    // A searching selector opens in its first mode, and the header says so
+    // from the outset rather than only after a key is pressed.
+    let opening = match run.modes.first() {
+        Some(_) => mode_header(run.modes, 0, &header),
+        None => header.clone(),
+    };
+    if !opening.is_empty() {
+        builder.header(opening);
     }
-    let binds = binds(actions, reloadable, previewing, &header);
+    let binds = binds(actions, reloadable, previewing, run.modes, &header);
     if !binds.is_empty() {
         builder.bind(binds);
     }
@@ -1008,7 +1091,7 @@ fn acted(output: &SkimOutput, actions: &'static [Action]) -> Option<&'static str
 ///
 /// Nothing at all when there is nothing to say, so a plain list of paths keeps
 /// the row for a path.
-fn hints(actions: &[Action], reloadable: bool, multi: bool, searching: bool) -> String {
+fn hints(actions: &[Action], reloadable: bool, multi: bool, modes: &[Mode]) -> String {
     let mut hints: Vec<String> = actions
         .iter()
         .map(|action| format!("{} {}", action.key, action.label))
@@ -1022,7 +1105,7 @@ fn hints(actions: &[Action], reloadable: bool, multi: bool, searching: bool) -> 
     // Worth a hint only where the query is not doing what a query usually
     // does: with the search taking it, `ctrl-q` is how you filter what came
     // back rather than searching again.
-    if searching {
+    if !modes.is_empty() {
         hints.push("ctrl-q filter".to_string());
     }
     hints.join(HINT_SEPARATOR)
@@ -1036,7 +1119,13 @@ const HINT_SEPARATOR: &str = " · ";
 ///
 /// `header` is what the reload puts back when it finishes, so the hints the
 /// selector opened with survive a refresh.
-fn binds(actions: &[Action], reloadable: bool, previewing: bool, header: &str) -> Vec<String> {
+fn binds(
+    actions: &[Action],
+    reloadable: bool,
+    previewing: bool,
+    modes: &[Mode],
+    header: &str,
+) -> Vec<String> {
     let mut binds: Vec<String> = actions
         .iter()
         .map(|action| format!("{}:accept", action.key))
@@ -1047,7 +1136,34 @@ fn binds(actions: &[Action], reloadable: bool, previewing: bool, header: &str) -
     if reloadable {
         binds.extend(refresh_binds(header));
     }
+    // Each mode key searches again in its own mode and says so in the header,
+    // which is the only place the current one can be read.
+    for (index, mode) in modes.iter().enumerate() {
+        binds.push(format!(
+            "{}:reload({MODE_MARKER}{index}{MODE_MARKER}{{q}})+set-header({})",
+            mode.key,
+            mode_header(modes, index, header),
+        ));
+    }
     binds
+}
+
+/// The header while `chosen` is the mode in force: what the selector could
+/// already do, with the mode named at the front of it.
+fn mode_header(modes: &[Mode], chosen: usize, header: &str) -> String {
+    let mut parts = vec![match modes.get(chosen) {
+        Some(mode) => format!("{} match", mode.label),
+        None => String::new(),
+    }];
+    for (index, mode) in modes.iter().enumerate() {
+        if index != chosen {
+            parts.push(format!("{} {}", mode.key, mode.label));
+        }
+    }
+    if !header.is_empty() {
+        parts.push(header.to_string());
+    }
+    parts.join(HINT_SEPARATOR)
 }
 
 /// The row an inline selector opens on, so it never draws over the prompt.
@@ -1127,6 +1243,7 @@ mod tests {
         fn collect(search: Search, quoted: &str) -> (Vec<String>, Arc<AtomicUsize>) {
             let mut collector = SearchCollector {
                 search: Arc::new(Mutex::new(search)),
+                mode: Arc::new(AtomicUsize::new(0)),
             };
             let counter = Arc::new(AtomicUsize::new(0));
             let (rx, _interrupt) = collector.invoke(quoted, Arc::clone(&counter));
@@ -1137,11 +1254,116 @@ mod tests {
             (rows, counter)
         }
 
+        /// A mode key reloads with a marker in front of the query; an
+        /// ordinary keystroke reloads with the query alone. Telling them apart
+        /// is the whole of how the mode survives typing.
+        #[test]
+        fn a_mode_marker_is_read_off_the_front_and_a_plain_query_is_left_alone() {
+            assert_eq!(read_mode("hello"), (None, "hello".to_string()));
+            assert_eq!(
+                read_mode(&format!("{MODE_MARKER}1{MODE_MARKER}hello")),
+                (Some(1), "hello".to_string())
+            );
+            // A marker with no closing one is not a marker.
+            assert_eq!(
+                read_mode(&format!("{MODE_MARKER}hello")),
+                (None, format!("{MODE_MARKER}hello"))
+            );
+        }
+
+        /// The mode is only ever named by a mode key. Every keystroke after one
+        /// re-runs the template, which carries no marker, so the collector has
+        /// to remember.
+        #[test]
+        fn a_mode_survives_the_keystrokes_that_follow_it() {
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let recorder = Arc::clone(&seen);
+            let search: Search = Box::new(move |_, mode| {
+                recorder.lock().unwrap().push(mode);
+                Searching {
+                    rows: Box::new(std::iter::empty()),
+                    stop: Box::new(|| {}),
+                }
+            });
+            let mut collector = SearchCollector {
+                search: Arc::new(Mutex::new(search)),
+                mode: Arc::new(AtomicUsize::new(0)),
+            };
+            let drain = |collector: &mut SearchCollector, cmd: &str| {
+                let (rx, _i) = collector.invoke(cmd, Arc::new(AtomicUsize::new(0)));
+                while rx.recv().is_ok() {}
+            };
+
+            // Exactly the shape skim builds: the marker is part of the
+            // template and only the query is quoted.
+            drain(&mut collector, "'a'");
+            drain(
+                &mut collector,
+                &format!("{MODE_MARKER}1{MODE_MARKER}{}", quote("ab")),
+            );
+            drain(&mut collector, "'abc'");
+
+            assert_eq!(*seen.lock().unwrap(), vec![0, 1, 1]);
+        }
+
+        /// skim quotes the query it substitutes for `{q}` and nothing else, so
+        /// a mode key's marker arrives outside the quotes. Reading it off
+        /// after unquoting would leave the query still wearing them.
+        #[test]
+        fn a_mode_key_still_delivers_the_query_unquoted() {
+            let seen = Arc::new(Mutex::new(String::new()));
+            let recorder = Arc::clone(&seen);
+            let search: Search = Box::new(move |query, _| {
+                *recorder.lock().unwrap() = query.to_string();
+                Searching {
+                    rows: Box::new(std::iter::empty()),
+                    stop: Box::new(|| {}),
+                }
+            });
+
+            collect(
+                search,
+                &format!("{MODE_MARKER}1{MODE_MARKER}{}", quote("it's here")),
+            );
+
+            assert_eq!(seen.lock().unwrap().as_str(), "it's here");
+        }
+
+        /// The header is the only place the mode can be read, so a mode key
+        /// names the mode it just chose and offers the other one.
+        #[test]
+        fn a_mode_key_says_which_mode_it_put_the_selector_in() {
+            let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
+            let header = mode_header(&modes, 0, "tab select");
+            assert!(header.starts_with("fuzzy match"), "{header}");
+            assert!(header.contains("ctrl-x exact"), "{header}");
+            assert!(!header.contains("ctrl-f"), "{header}");
+            assert!(header.contains("tab select"), "{header}");
+        }
+
+        #[test]
+        fn every_mode_gets_a_key_that_searches_again_and_sets_the_header() {
+            let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
+            let binds = binds(&[], false, false, &modes, "");
+            assert!(
+                binds.iter().any(|b| b.starts_with("ctrl-f:reload(")),
+                "{binds:?}"
+            );
+            assert!(
+                binds.iter().any(|b| b.starts_with("ctrl-x:reload(")),
+                "{binds:?}"
+            );
+            assert!(
+                binds.iter().all(|b| b.contains("set-header(")),
+                "a mode key that does not say so: {binds:?}"
+            );
+        }
+
         #[test]
         fn the_search_sees_what_was_typed_rather_than_what_a_shell_would_get() {
             let seen = Arc::new(Mutex::new(String::new()));
             let recorder = Arc::clone(&seen);
-            let search: Search = Box::new(move |query| {
+            let search: Search = Box::new(move |query, _mode| {
                 *recorder.lock().unwrap() = query.to_string();
                 Searching {
                     rows: Box::new(std::iter::empty()),
@@ -1156,7 +1378,7 @@ mod tests {
 
         #[test]
         fn every_row_the_search_produces_reaches_the_selector() {
-            let search: Search = Box::new(|_| Searching {
+            let search: Search = Box::new(|_, _| Searching {
                 rows: Box::new((0..1000).map(|n| SelectItem::plain(format!("row {n}")))),
                 stop: Box::new(|| {}),
             });
@@ -1179,7 +1401,7 @@ mod tests {
         fn interrupting_a_search_stops_it_even_while_it_is_blocked() {
             let stopped = Arc::new(AtomicBool::new(false));
             let flag = Arc::clone(&stopped);
-            let search: Search = Box::new(move |_| {
+            let search: Search = Box::new(move |_, _| {
                 let ended = Arc::new(AtomicBool::new(false));
                 let watched = Arc::clone(&ended);
                 let flag = Arc::clone(&flag);
@@ -1201,6 +1423,7 @@ mod tests {
 
             let mut collector = SearchCollector {
                 search: Arc::new(Mutex::new(search)),
+                mode: Arc::new(AtomicUsize::new(0)),
             };
             let counter = Arc::new(AtomicUsize::new(0));
             let (_rx, interrupt) = collector.invoke("'q'", Arc::clone(&counter));
@@ -1432,7 +1655,7 @@ mod tests {
             &[Action::new("f2", "open"), Action::new("f7", "check out")],
             true,
             true,
-            false,
+            &[],
         );
         for header in [BUSY_HEADER, every_hint.as_str(), HINT_SEPARATOR] {
             assert!(!header.contains(','), "{header:?} would split the binding");
@@ -1442,7 +1665,7 @@ mod tests {
 
     #[test]
     fn the_header_names_every_key_the_selector_answers_to() {
-        let full = hints(&[Action::new("f2", "open")], true, true, false);
+        let full = hints(&[Action::new("f2", "open")], true, true, &[]);
         assert_eq!(full, "f2 open · ctrl-r refresh · tab select");
     }
 
@@ -1450,13 +1673,13 @@ mod tests {
     /// path than as an empty hint line.
     #[test]
     fn a_selector_with_nothing_to_offer_draws_no_header() {
-        assert!(hints(&[], false, false, false).is_empty());
+        assert!(hints(&[], false, false, &[]).is_empty());
     }
 
     #[test]
     fn each_hint_appears_only_when_its_key_is_bound() {
-        assert_eq!(hints(&[], false, true, false), "tab select");
-        assert_eq!(hints(&[], true, false, false), "ctrl-r refresh");
+        assert_eq!(hints(&[], false, true, &[]), "tab select");
+        assert_eq!(hints(&[], true, false, &[]), "ctrl-r refresh");
     }
 
     /// skim binds `ctrl-r` to rotating the match mode and `tab` to toggling a
@@ -1467,8 +1690,8 @@ mod tests {
     #[test]
     fn every_key_the_header_names_is_bound() {
         let actions = [Action::new("f2", "open"), Action::new("f7", "check out")];
-        let header = hints(&actions, true, true, false);
-        let binds = binds(&actions, true, true, &header);
+        let header = hints(&actions, true, true, &[]);
+        let binds = binds(&actions, true, true, &[], &header);
 
         for hint in header.split(HINT_SEPARATOR) {
             let key = hint.split(' ').next().expect("a hint with no key");
@@ -1488,7 +1711,7 @@ mod tests {
     #[test]
     fn an_action_key_closes_the_selector_and_the_preview_key_does_not() {
         let actions = [Action::new("f2", "open")];
-        let binds = binds(&actions, false, true, "");
+        let binds = binds(&actions, false, true, &[], "");
         assert!(binds.contains(&"f2:accept".to_string()), "{binds:?}");
         assert!(
             binds.contains(&format!("{PREVIEW_KEY}:toggle-preview")),
@@ -1498,7 +1721,7 @@ mod tests {
 
     #[test]
     fn a_plain_selector_binds_nothing_of_its_own() {
-        assert!(binds(&[], false, false, "").is_empty());
+        assert!(binds(&[], false, false, &[], "").is_empty());
     }
 
     #[test]

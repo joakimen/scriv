@@ -70,6 +70,7 @@ ignore = ["node_modules", "target"]
 [note]
 root = "~/notes"    # an Obsidian vault, or any tree of Markdown files
 editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
+# scratch = "scratch/scratch.md"   # the one note `note scratch` opens
 # labels = { work = ["projects", "clients"], personal = ["journal"] }
 ```
 
@@ -79,7 +80,7 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 | --- | --- |
 | `scriv repo` | `ls` `sel` `open` `clone` |
 | `scriv file` | `ls` `sel` `add` `rm` `prune` |
-| `scriv note` | `ls` `sel` `new` `edit` `rg` |
+| `scriv note` | `ls` `sel` `new` `scratch` `edit` `rg` `cleanup` |
 | `scriv branch` | `ls` `sel` `checkout` `rm` |
 | `scriv worktree` | `ls` `sel` `add` `rm` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
@@ -89,11 +90,11 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 | `scriv config` | `init` `print` `path` `check` |
 | `scriv init` | `fish` and every other shell — see Setup |
 
-A note row leads with what the note calls itself and then says what is true of
-it in a colour-coded column each: the label its directory carries, the folders
-below that, its tags, how many of its tasks are still open, and how long ago it
-was modified and created. `note rg` searches inside every note as you type and
-turns what you pick into a quickfix list.
+A note row is the day it was created and what it calls itself, tinted by the
+label its directory carries; everything else about it is in the preview pane.
+`note rg` searches inside every note as you type — fuzzily, or exactly on
+`ctrl-x` — and turns what you pick into a quickfix list. `note ls` prints
+absolute paths, one per line, for piping into whatever reads paths.
 
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.

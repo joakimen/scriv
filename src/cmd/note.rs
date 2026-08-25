@@ -85,7 +85,8 @@ fn load(ctx: &Ctx) -> Result<Vec<Note>> {
         .info(&format!("{} note(s) under {}", notes.len(), root.display()));
     if notes.is_empty() {
         bail!(
-            "no notes under {} — `scriv note` lists Markdown files",
+            "no notes under {} — `scriv note` reads Markdown files, and \
+             `scriv note new` writes one",
             root.display()
         );
     }
@@ -104,14 +105,10 @@ fn read_note(path: &Path, root: &Path, offset: time::UtcOffset) -> Option<Note> 
     let birth = meta.created().ok().and_then(unix);
 
     let head = read_head(path, HEAD_BYTES).unwrap_or_default();
-    let (block, body) = note::split_front_matter(&head);
+    let (block, _) = note::split_front_matter(&head);
     let front = block.map_or_else(note::Front::default, |block| {
         note::parse_front(block, offset)
     });
-    // Counted from the bytes already read rather than from a second pass: a
-    // note longer than the bound is one whose last checkboxes go uncounted,
-    // which is a number slightly low rather than a vault read twice.
-    let tasks = note::count_tasks(body);
 
     let rel = path
         .strip_prefix(root)
@@ -125,7 +122,6 @@ fn read_note(path: &Path, root: &Path, offset: time::UtcOffset) -> Option<Note> 
         modified,
         created: note::created(front.created, birth, modified),
         front,
-        tasks,
     })
 }
 
@@ -156,18 +152,19 @@ fn unix(time: SystemTime) -> Option<i64> {
 /// Plain, one path below the vault per line, which is the name `note edit`
 /// takes. `--status` adds the tags and both dates; `--absolute-paths` prints
 /// what a pipe can open.
-pub fn ls(ctx: &Ctx, absolute_paths: bool, status: bool) -> Result<()> {
+pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     let notes = load(ctx)?;
     let cfg = &ctx.config.note;
-    let widths = Widths::of(&notes, cfg, crate::unix_now());
+    let widths = Widths::of(&notes, cfg, ctx.home_str());
     let offset = ctx.utc_offset();
 
     let mut out = term::Listing::stdout();
     for note in &notes {
-        let row = match (absolute_paths, status) {
-            (true, _) => note.path.display().to_string(),
-            (false, false) => note.rel.clone(),
-            (false, true) => note::status_row(note, cfg, &widths, offset),
+        let row = match status {
+            // Absolute and uncollapsed: the plain listing is what a pipe
+            // reads, and `~` is a thing only a shell expands.
+            false => note.path.to_string_lossy().into_owned(),
+            true => note::status_row(note, cfg, &widths, offset, ctx.home_str()),
         };
         if !out.line(&row)? {
             break;
@@ -197,10 +194,18 @@ pub fn edit(ctx: &Ctx, names: &[String]) -> Result<()> {
         }
     } else {
         let root = vault(ctx)?;
-        names
+        let targets: Vec<String> = names
             .iter()
             .map(|name| resolve(&root, ctx.home(), name))
-            .collect()
+            .collect();
+        // The editor would open a new, empty buffer at a mistyped path and say
+        // nothing about it, which is how a typo becomes a second note.
+        for (name, target) in names.iter().zip(&targets) {
+            if !Path::new(target).exists() {
+                eprintln!("warning: no note called {name} — the editor will open it as a new file");
+            }
+        }
+        targets
     };
 
     if targets.is_empty() {
@@ -230,8 +235,8 @@ fn select_notes(ctx: &Ctx) -> Result<Option<Vec<String>>> {
     }
 }
 
-/// Selector rows: the note's name first, then what is true of it, then the
-/// columns nobody searches for — see [`note::row`] and [`note::suffix`].
+/// Selector rows: the day a note was created, dim and unsearchable, then what
+/// it calls itself — coloured by its label where its directory carries one.
 ///
 /// Every pane is built when its row is highlighted rather than now — see
 /// [`Preview::Deferred`]. A vault read up front is one file read per note for
@@ -239,23 +244,24 @@ fn select_notes(ctx: &Ctx) -> Result<Option<Vec<String>>> {
 fn items(ctx: &Ctx, notes: &[Note]) -> Vec<SelectItem> {
     let now = crate::unix_now();
     let cfg = ctx.config.note.clone();
-    let widths = Widths::of(notes, &cfg, now);
     let offset = ctx.utc_offset();
 
     notes
         .iter()
         .map(|note| {
-            let (label, tints) = note::row(note, &cfg, &widths);
-            let (suffix, suffix_tints) = note::suffix(note, now, &widths);
+            let color = note::row_color(note, &cfg);
             let note = note.clone();
             let cfg = cfg.clone();
-            SelectItem::new(label, note.path.to_string_lossy().into_owned())
-                .tints(tints)
-                .suffix(suffix, suffix_tints)
-                .preview(Preview::Deferred(Box::new(move || {
-                    let text = read_head(&note.path, PREVIEW_BYTES).unwrap_or_default();
-                    note::preview(&note, &cfg, &text, now, offset)
-                })))
+            let item = SelectItem::new(note::row(&note), note.path.to_string_lossy().into_owned())
+                .prefix(note::prefix(&note, offset));
+            let item = match color {
+                Some(color) => item.color(color),
+                None => item,
+            };
+            item.preview(Preview::Deferred(Box::new(move || {
+                let text = read_head(&note.path, PREVIEW_BYTES).unwrap_or_default();
+                note::preview(&note, &cfg, &text, now, offset)
+            })))
         })
         .collect()
 }
@@ -307,6 +313,169 @@ fn with_extension(name: &str) -> String {
     }
 }
 
+/// `scriv note scratch` — open the one note that is filed nowhere.
+///
+/// A single permanent file rather than a new one each time, which is the whole
+/// point: somewhere to put a thought without deciding first whether it is worth
+/// a note, and somewhere to find it again afterwards. `[note] scratch` says
+/// where it lives, `scratch/scratch.md` by default.
+pub fn scratch(ctx: &Ctx) -> Result<()> {
+    let editor = ctx.note_editor()?;
+    let root = vault(ctx)?;
+    let path = root.join(
+        ctx.config
+            .note
+            .scratch
+            .as_deref()
+            .unwrap_or(note::DEFAULT_SCRATCH),
+    );
+
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    ctx.log.info(&format!("scratch note at {}", path.display()));
+    cmd::edit::launch(ctx, &editor, &[path.to_string_lossy().into_owned()])
+}
+
+// --- cleanup ----------------------------------------------------------------
+
+/// `scriv note cleanup` — look through the notes that were never really
+/// written, and delete the ones you agree about.
+///
+/// Nothing is deleted without being listed and then agreed to, and the listing
+/// says why each note is on it: three rules, applied without judgement, over a
+/// vault only its owner can actually read.
+pub fn cleanup(ctx: &Ctx, yes: bool) -> Result<()> {
+    let notes = load(ctx)?;
+    let candidates = junk(&notes);
+
+    if candidates.is_empty() {
+        println!(
+            "Nothing to clean up — all {} notes have a name and something in them",
+            notes.len()
+        );
+        return Ok(());
+    }
+    ctx.log.info(&format!(
+        "{} of {} notes are candidates",
+        candidates.len(),
+        notes.len()
+    ));
+
+    let chosen = match select::select_many(
+        junk_items(ctx, &candidates),
+        "Notes to delete (tab to select several)",
+        &ctx.config.selector,
+    ) {
+        Ok(chosen) => chosen,
+        Err(e) if e.is::<select::Cancelled>() => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if chosen.is_empty() {
+        println!("Nothing selected");
+        return Ok(());
+    }
+
+    // Printed before the question is put: "delete 4 notes?" is answerable only
+    // by someone who has already seen the four.
+    let total: u64 = candidates
+        .iter()
+        .filter(|(note, _, _)| chosen.contains(&note.path.to_string_lossy().into_owned()))
+        .map(|(_, _, bytes)| bytes)
+        .sum();
+    let mut out = term::Listing::stdout();
+    for path in &chosen {
+        if !out.line(&term::paint(path, note::Junk::Empty.color(), ctx.color()))? {
+            return Ok(());
+        }
+    }
+    out.finish()?;
+
+    match term::Confirm::resolve(yes) {
+        term::Confirm::Assumed => {}
+        term::Confirm::Ask => {
+            let question = format!(
+                "Delete {} {} ({})? This cannot be undone",
+                chosen.len(),
+                if chosen.len() == 1 { "note" } else { "notes" },
+                note::size(total),
+            );
+            if !term::confirm(&question)? {
+                println!("Nothing deleted");
+                return Ok(());
+            }
+        }
+        term::Confirm::Impossible => bail!(
+            "no terminal to ask for confirmation on — pass `--yes` to delete without being asked"
+        ),
+    }
+
+    let mut failed = 0;
+    for path in &chosen {
+        match std::fs::remove_file(path) {
+            Ok(()) => println!("Deleted {path}"),
+            Err(err) => {
+                failed += 1;
+                eprintln!("error: {path}: {err}");
+            }
+        }
+    }
+    if failed > 0 {
+        bail!("{failed} of {} could not be deleted", chosen.len());
+    }
+    Ok(())
+}
+
+/// Every note worth offering for deletion, with the reason and its size.
+///
+/// The whole file is read rather than the head bound the listing uses: "empty"
+/// is a claim about all of it, and a note that only looks empty for the first
+/// eight kilobytes is not one.
+fn junk(notes: &[Note]) -> Vec<(Note, note::Junk, u64)> {
+    notes
+        .iter()
+        .filter_map(|note| {
+            let bytes = note.path.metadata().map(|m| m.len()).unwrap_or(0);
+            let text = read_head(&note.path, CLEANUP_BYTES).unwrap_or_default();
+            let (_, body) = note::split_front_matter(&text);
+            note::junk(note, body).map(|reason| (note.clone(), reason, bytes))
+        })
+        .collect()
+}
+
+/// How much of a note is read to decide whether there is anything in it. Well
+/// past [`note::MIN_BODY`], and past any note this could call empty.
+const CLEANUP_BYTES: u64 = 64 * 1024;
+
+fn junk_items(ctx: &Ctx, candidates: &[(Note, note::Junk, u64)]) -> Vec<SelectItem> {
+    let now = crate::unix_now();
+    let cfg = ctx.config.note.clone();
+    let offset = ctx.utc_offset();
+    let widths = Widths::of(
+        &candidates
+            .iter()
+            .map(|(n, _, _)| n.clone())
+            .collect::<Vec<_>>(),
+        &cfg,
+        ctx.home_str(),
+    );
+
+    candidates
+        .iter()
+        .map(|(note, reason, bytes)| {
+            let (label, tints) = note::junk_row(note, *reason, *bytes, &widths);
+            let note = note.clone();
+            let cfg = cfg.clone();
+            SelectItem::new(label, note.path.to_string_lossy().into_owned())
+                .tints(tints)
+                .preview(Preview::Deferred(Box::new(move || {
+                    let text = read_head(&note.path, PREVIEW_BYTES).unwrap_or_default();
+                    note::preview(&note, &cfg, &text, now, offset)
+                })))
+        })
+        .collect()
+}
+
 // --- searching --------------------------------------------------------------
 
 /// The most matches one search hands back.
@@ -340,6 +509,7 @@ pub fn rg(ctx: &Ctx, query: Option<&str>) -> Result<()> {
         searcher(root.clone()),
         "Search notes",
         query.unwrap_or_default(),
+        MODES,
         &ctx.config.selector,
     ) {
         Ok(chosen) => chosen,
@@ -357,10 +527,22 @@ pub fn rg(ctx: &Ctx, query: Option<&str>) -> Result<()> {
     open_matches(ctx, &editor, &matches)
 }
 
+/// How `note rg` reads what is typed, fuzzy first.
+///
+/// Fuzzy is the default because it is what a finder is for: typing `errhand`
+/// should find "error handling", and a search that only matches what was typed
+/// exactly makes the user do the remembering. Exact is the other key for when
+/// the query is a phrase, a path or a snippet of code, where subsequence
+/// matching finds a hundred lines that merely contain the letters.
+const MODES: &[select::Mode] = &[
+    select::Mode::new("ctrl-f", "fuzzy"),
+    select::Mode::new("ctrl-x", "exact"),
+];
+
 /// The closure the selector calls on every keystroke: one ripgrep run per
 /// query, its rows streamed as ripgrep prints them.
 fn searcher(root: PathBuf) -> select::Search {
-    Box::new(move |query: &str| {
+    Box::new(move |query: &str, mode: usize| {
         // An empty pattern matches every line of every note, which is neither
         // an answer nor a cheap question.
         if query.trim().is_empty() {
@@ -369,7 +551,7 @@ fn searcher(root: PathBuf) -> select::Search {
                 stop: Box::new(|| {}),
             };
         }
-        match Search::start(&root, query) {
+        match Search::start(&root, query, Matching::of(mode)) {
             Ok(search) => search.into_searching(),
             // A failed spawn is an empty list: the selector is open and has
             // nowhere to report an error to, and the next keystroke tries
@@ -382,7 +564,61 @@ fn searcher(root: PathBuf) -> select::Search {
     })
 }
 
-/// One ripgrep run, read line by line.
+/// How a query becomes something ripgrep can look for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Matching {
+    /// The characters of the query, in order, with anything between them.
+    Fuzzy,
+    /// The query, as typed, meaning itself.
+    Exact,
+}
+
+impl Matching {
+    fn of(mode: usize) -> Self {
+        match mode {
+            0 => Self::Fuzzy,
+            _ => Self::Exact,
+        }
+    }
+}
+
+/// The pattern ripgrep is given, and whether it is a regular expression.
+///
+/// Fuzzy is a subsequence: every character of the query, in order, with
+/// anything but a line break allowed between them — which is what a fuzzy
+/// finder means and what ripgrep, having no fuzzy mode of its own, can be asked
+/// for. Whitespace is dropped, so `err hand` and `errhand` look for the same
+/// thing.
+///
+/// Every character is escaped either way. A query is being typed live, so it
+/// spends most of its life as an unfinished regular expression — a lone `(` or
+/// `[` would otherwise make the search fail rather than find nothing.
+fn pattern(query: &str, matching: Matching) -> (String, bool) {
+    match matching {
+        Matching::Exact => (query.to_string(), false),
+        Matching::Fuzzy => {
+            let pattern = query
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .map(regex_escape)
+                .collect::<Vec<_>>()
+                .join("[^\n]*");
+            (pattern, true)
+        }
+    }
+}
+
+/// One character as a regular expression matching only itself.
+fn regex_escape(c: char) -> String {
+    match c {
+        '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => {
+            format!("\\{c}")
+        }
+        _ => c.to_string(),
+    }
+}
+
+/// One ripgrep run, read line by line./// One ripgrep run, read line by line.
 ///
 /// The child is held behind a mutex the reader never takes, so
 /// [`select::Searching::stop`] can kill it from another thread while this one
@@ -396,7 +632,8 @@ struct Search {
 }
 
 impl Search {
-    fn start(root: &Path, query: &str) -> std::io::Result<Self> {
+    fn start(root: &Path, query: &str, matching: Matching) -> std::io::Result<Self> {
+        let (pattern, is_regex) = pattern(query, matching);
         let mut child = std::process::Command::new("rg")
             .args([
                 "--line-number",
@@ -411,10 +648,17 @@ impl Search {
                 "--glob=*.md",
                 "--glob=*.markdown",
             ])
+            // A fixed string in exact mode, so a query holding `.` or `(`
+            // looks for those characters rather than meaning something by them.
+            .args(if is_regex {
+                &[][..]
+            } else {
+                &["--fixed-strings"][..]
+            })
             // `-e` rather than a bare positional: a query beginning with `-`
             // is a pattern, not a flag, and the user is typing it live.
             .arg("-e")
-            .arg(query)
+            .arg(&pattern)
             .arg("--")
             .arg(root)
             .stdin(std::process::Stdio::null())
@@ -745,5 +989,77 @@ mod tests {
         );
         assert_eq!(resolve(root, home, "/elsewhere/a.md"), "/elsewhere/a.md");
         assert_eq!(resolve(root, home, "~/inbox.md"), "/home/me/inbox.md");
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    /// Typing `errhand` should find "error handling": the letters, in order,
+    /// with anything but a line break between them.
+    #[test]
+    fn a_fuzzy_query_becomes_a_subsequence() {
+        let (pattern, is_regex) = pattern("abc", Matching::Fuzzy);
+        assert_eq!(pattern, "a[^\n]*b[^\n]*c");
+        assert!(is_regex);
+    }
+
+    /// Whitespace is dropped, so `err hand` and `errhand` look for one thing.
+    #[test]
+    fn a_fuzzy_query_ignores_the_spaces_in_it() {
+        assert_eq!(
+            pattern("a b", Matching::Fuzzy).0,
+            pattern("ab", Matching::Fuzzy).0
+        );
+    }
+
+    /// A query is typed live, so it spends most of its life as an unfinished
+    /// regular expression. A lone `(` must find nothing, not fail the search.
+    #[test]
+    fn a_half_typed_query_is_not_a_broken_regex() {
+        for query in ["(", "[a", "a|", "*", "\\"] {
+            let (pattern, _) = pattern(query, Matching::Fuzzy);
+            assert!(
+                regex_is_sane(&pattern),
+                "{query:?} became {pattern:?}, which ripgrep would refuse"
+            );
+        }
+    }
+
+    /// Every metacharacter escaped, and every escape balanced — which is what
+    /// makes the pattern above one ripgrep accepts.
+    fn regex_is_sane(pattern: &str) -> bool {
+        let mut chars = pattern.chars().peekable();
+        let mut depth = 0i32;
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    if chars.next().is_none() {
+                        return false;
+                    }
+                }
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+        }
+        depth == 0
+    }
+
+    /// Exact means exact: a query holding `.` or `(` looks for those
+    /// characters rather than meaning something by them.
+    #[test]
+    fn an_exact_query_is_handed_over_untouched() {
+        let (pattern, is_regex) = pattern("a.c(", Matching::Exact);
+        assert_eq!(pattern, "a.c(");
+        assert!(!is_regex, "an exact query would be read as a regex");
+    }
+
+    #[test]
+    fn the_first_mode_is_the_fuzzy_one() {
+        assert_eq!(Matching::of(0), Matching::Fuzzy);
+        assert_eq!(Matching::of(1), Matching::Exact);
+        assert_eq!(MODES[0].label, "fuzzy");
     }
 }

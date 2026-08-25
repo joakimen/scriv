@@ -13,6 +13,41 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv note scratch` opens the one permanent note that is filed nowhere —
+  somewhere to put a thought without first deciding whether it is worth a note
+  of its own, and somewhere to find it again afterwards. The same file every
+  time: `[note] scratch`, or `scratch/scratch.md`.
+- `scriv note cleanup` goes through the notes that were never really written
+  and deletes the ones you agree about. Three kinds and no more: a note with
+  nothing in it, one still called `Untitled`, and one whose name has no letters
+  in it and whose front matter gives it no title either. Each row says which it
+  is, the preview shows what is in it, `tab` takes several, and what you chose
+  is printed before you are asked — nothing goes without being seen first.
+- `note rg` now matches fuzzily: the letters you typed, in order, anywhere on
+  the line, so `errhand` finds "error handling". `ctrl-x` searches for the query
+  exactly instead — for a phrase, a path, a snippet of code — and `ctrl-f` goes
+  back. The header says which is in force.
+
+### Changed
+
+- A note row is a date and a name again. The day it was created leads it, in
+  its own colour and never searched, and the name follows tinted by the label
+  its directory carries. The columns of tags, folders and task counts are gone
+  from the row and remain in the preview pane, which has the width for them.
+- `scriv note ls` prints absolute paths, one per line, so the listing pipes
+  into whatever reads paths. `--absolute-paths` is gone with nothing left to
+  do, and `--status` — the listing a person reads rather than a pipe — collapses
+  your home directory to `~` instead of repeating it down every row.
+- `scriv note edit` warns when the note you named is not there, rather than
+  letting the editor open a new empty buffer and say nothing about it.
+
+### Fixed
+
+- The preview pane no longer keeps the last match on screen after the query
+  stops matching anything. It described a note that was no longer in the list.
+
 ## v0.10.0
 
 *Released 2026-08-25*
