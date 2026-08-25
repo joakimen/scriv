@@ -122,13 +122,17 @@ enum Command {
     /// The set is every Markdown file under `[note] root` — an Obsidian vault,
     /// or any tree of notes — most recently modified first.
     ///
-    /// A row is what the note calls itself, the folder it is filed under and
-    /// its tags, behind two dim columns: how long ago it was modified, then how
-    /// long ago it was created. Both are spelled out in the preview pane, which
-    /// is drawn by scriv rather than by `bat`.
+    /// A row leads with what the note calls itself, then says what is true of
+    /// it in a column each: the label its directory carries — or the directory
+    /// itself, where it carries none — the folder below that, and its tags.
+    /// Behind those, and never searched, come how many of its tasks are still
+    /// open and how long ago it was modified and created.
     ///
     /// Titles, tags and creation dates come from a note's YAML front matter and
     /// from nowhere else — inline `#tags` in the body are not indexed.
+    ///
+    /// `[note] labels` names the directories directly below the root, one label
+    /// to many directories, the way `[repo] labels` names owners.
     #[command(visible_alias = "n")]
     Note {
         #[command(subcommand)]
@@ -387,6 +391,36 @@ enum NoteCmd {
     },
     /// Fuzzy-select a note and print its absolute path
     Sel,
+    /// Start a note and open it straight away
+    ///
+    /// No question is asked first: with no NAME the note is called after the
+    /// date and time, to the minute, and renaming it is what the editor is
+    /// already open for. A NAME with a `/` in it names a directory below the
+    /// vault, which is created if it is not there, and one with no `.` in it
+    /// gains `.md`.
+    ///
+    /// The file itself is left for the editor to write, so a note started and
+    /// abandoned is one that never existed rather than an empty one in every
+    /// listing after it.
+    New {
+        /// What to call it; omit for the date and time
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+    },
+    /// Search inside every note, as you type
+    ///
+    /// The query goes to `ripgrep` rather than to the fuzzy matcher, so the
+    /// list is every matching *line* in the vault and it is rebuilt on each
+    /// keystroke. `ctrl-q` switches to filtering what came back.
+    ///
+    /// `tab` takes several. What you pick opens at its line, and anything else
+    /// you picked lands in the quickfix list behind it — which needs a vim; any
+    /// other editor is handed the files and no line numbers.
+    Rg {
+        /// Text to open the search with
+        #[arg(value_name = "QUERY", allow_hyphen_values = true)]
+        query: Option<String>,
+    },
     /// Open notes; omit the names to select them
     ///
     /// `tab` selects several and they open together. A name is a path below the
@@ -776,6 +810,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             } => cmd::note::ls(&ctx, absolute_paths, status),
             NoteCmd::Sel => cmd::note::sel(&ctx),
             NoteCmd::Edit { notes } => cmd::note::edit(&ctx, &notes),
+            NoteCmd::New { name } => cmd::note::new(&ctx, name.as_deref()),
+            NoteCmd::Rg { query } => cmd::note::rg(&ctx, query.as_deref()),
         },
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {

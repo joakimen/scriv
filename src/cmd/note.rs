@@ -7,10 +7,10 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::note::{self, Note, Widths};
 use crate::path::expand_home_dir;
@@ -93,7 +93,7 @@ fn load(ctx: &Ctx) -> Result<Vec<Note>> {
 }
 
 /// One note, read: its times from the directory entry's metadata, its front
-/// matter from the first [`HEAD_BYTES`].
+/// matter and its checkboxes from the first [`HEAD_BYTES`].
 ///
 /// `None` for a file whose metadata cannot be read, which is one note missing
 /// from a listing rather than the listing failing — the same way the walk
@@ -104,21 +104,28 @@ fn read_note(path: &Path, root: &Path, offset: time::UtcOffset) -> Option<Note> 
     let birth = meta.created().ok().and_then(unix);
 
     let head = read_head(path, HEAD_BYTES).unwrap_or_default();
-    let front = match note::split_front_matter(&head) {
-        (Some(block), _) => note::parse_front(block, offset),
-        (None, _) => note::Front::default(),
-    };
+    let (block, body) = note::split_front_matter(&head);
+    let front = block.map_or_else(note::Front::default, |block| {
+        note::parse_front(block, offset)
+    });
+    // Counted from the bytes already read rather than from a second pass: a
+    // note longer than the bound is one whose last checkboxes go uncounted,
+    // which is a number slightly low rather than a vault read twice.
+    let tasks = note::count_tasks(body);
 
+    let rel = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned();
     Some(Note {
-        rel: path
-            .strip_prefix(root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned(),
+        dir: note::top_dir(&rel).to_string(),
+        rel,
         path: path.to_path_buf(),
         modified,
         created: note::created(front.created, birth, modified),
         front,
+        tasks,
     })
 }
 
@@ -151,7 +158,8 @@ fn unix(time: SystemTime) -> Option<i64> {
 /// what a pipe can open.
 pub fn ls(ctx: &Ctx, absolute_paths: bool, status: bool) -> Result<()> {
     let notes = load(ctx)?;
-    let widths = Widths::of(&notes, crate::unix_now());
+    let cfg = &ctx.config.note;
+    let widths = Widths::of(&notes, cfg, crate::unix_now());
     let offset = ctx.utc_offset();
 
     let mut out = term::Listing::stdout();
@@ -159,7 +167,7 @@ pub fn ls(ctx: &Ctx, absolute_paths: bool, status: bool) -> Result<()> {
         let row = match (absolute_paths, status) {
             (true, _) => note.path.display().to_string(),
             (false, false) => note.rel.clone(),
-            (false, true) => note::status_row(note, &widths, offset),
+            (false, true) => note::status_row(note, cfg, &widths, offset),
         };
         if !out.line(&row)? {
             break;
@@ -222,31 +230,391 @@ fn select_notes(ctx: &Ctx) -> Result<Option<Vec<String>>> {
     }
 }
 
-/// Selector rows: the dim age columns as a prefix, the title, folder and tags
-/// as the label, and the note's absolute path as the value.
+/// Selector rows: the note's name first, then what is true of it, then the
+/// columns nobody searches for — see [`note::row`] and [`note::suffix`].
 ///
 /// Every pane is built when its row is highlighted rather than now — see
 /// [`Preview::Deferred`]. A vault read up front is one file read per note for
 /// panes the user scrolls past.
 fn items(ctx: &Ctx, notes: &[Note]) -> Vec<SelectItem> {
     let now = crate::unix_now();
-    let widths = Widths::of(notes, now);
+    let cfg = ctx.config.note.clone();
+    let widths = Widths::of(notes, &cfg, now);
     let offset = ctx.utc_offset();
 
     notes
         .iter()
         .map(|note| {
-            let (label, tints) = note::row(note, &widths);
+            let (label, tints) = note::row(note, &cfg, &widths);
+            let (suffix, suffix_tints) = note::suffix(note, now, &widths);
             let note = note.clone();
+            let cfg = cfg.clone();
             SelectItem::new(label, note.path.to_string_lossy().into_owned())
-                .prefix(note::prefix(&note, now, &widths))
                 .tints(tints)
+                .suffix(suffix, suffix_tints)
                 .preview(Preview::Deferred(Box::new(move || {
                     let text = read_head(&note.path, PREVIEW_BYTES).unwrap_or_default();
-                    note::preview(&note, &text, now, offset)
+                    note::preview(&note, &cfg, &text, now, offset)
                 })))
         })
         .collect()
+}
+
+/// `scriv note new [NAME]` — start a note and open it.
+///
+/// No question is asked first. Being asked to name a note is being asked what
+/// it is about before writing it, and a note that has to be named before it can
+/// be started is one that does not get started; the generated name sorts, and
+/// renaming it afterwards is what the editor is already open for.
+///
+/// The file is not created here — the editor writes it, or nothing does. An
+/// abandoned note is then a note that never existed rather than an empty one in
+/// every listing from now on.
+pub fn new(ctx: &Ctx, name: Option<&str>) -> Result<()> {
+    let editor = ctx.note_editor()?;
+    let root = vault(ctx)?;
+
+    let named = match name {
+        Some(name) => with_extension(name),
+        None => note::generated_name(crate::unix_now(), ctx.utc_offset()),
+    };
+    let path = PathBuf::from(resolve(&root, ctx.home(), &named));
+
+    let dir = path.parent().unwrap_or(&root).to_path_buf();
+    let file = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| named.clone());
+    let file = note::free_name(&file, |candidate| dir.join(candidate).exists());
+
+    // The editor cannot write into a directory that is not there, and a name
+    // with a `/` in it is a request for one.
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+
+    let target = dir.join(file).to_string_lossy().into_owned();
+    ctx.log.info(&format!("new note at {target}"));
+    cmd::edit::launch(ctx, &editor, std::slice::from_ref(&target))
+}
+
+/// Give a name the extension a listing looks for, unless it already has one of
+/// its own. A name with no dot in it is a name; one with a dot has been spelled
+/// out and is left as typed.
+fn with_extension(name: &str) -> String {
+    let last = name.rsplit('/').next().unwrap_or(name);
+    match last.contains('.') {
+        true => name.to_string(),
+        false => format!("{name}.md"),
+    }
+}
+
+// --- searching --------------------------------------------------------------
+
+/// The most matches one search hands back.
+///
+/// A two-character query against a vault matches tens of thousands of lines,
+/// and a list nobody can reach the bottom of is not more useful than one they
+/// can. Reaching it stops ripgrep rather than reading the rest and dropping it.
+const MATCH_LIMIT: usize = 2000;
+
+/// The width a search row's `note:line` column is padded to. A fixed number
+/// rather than the widest in the batch, because rows arrive while the search is
+/// still running and there is no widest yet.
+const MATCH_COLUMN: usize = 40;
+
+/// `scriv note rg [QUERY]` — search every note as you type, and open what you
+/// pick.
+///
+/// The query goes to ripgrep rather than to the fuzzy matcher, so the list is
+/// every matching *line* in the vault rather than the notes whose names match.
+/// `tab` takes several; they become a quickfix list.
+pub fn rg(ctx: &Ctx, query: Option<&str>) -> Result<()> {
+    let root = vault(ctx)?;
+    let editor = ctx.note_editor()?;
+    if which("rg").is_none() {
+        bail!("`rg` is not on PATH — `scriv note rg` searches with ripgrep");
+    }
+
+    // A query given on the command line is where the selector opens, not a
+    // search run without one: what comes back is still chosen by hand.
+    let chosen = match select::select_many_searching(
+        searcher(root.clone()),
+        "Search notes",
+        query.unwrap_or_default(),
+        &ctx.config.selector,
+    ) {
+        Ok(chosen) => chosen,
+        Err(e) if e.is::<select::Cancelled>() => return Ok(()),
+        Err(e) => return Err(e),
+    };
+
+    let matches: Vec<note::Match> = chosen
+        .iter()
+        .filter_map(|value| note::decode_match(value, &root))
+        .collect();
+    if matches.is_empty() {
+        return Ok(());
+    }
+    open_matches(ctx, &editor, &matches)
+}
+
+/// The closure the selector calls on every keystroke: one ripgrep run per
+/// query, its rows streamed as ripgrep prints them.
+fn searcher(root: PathBuf) -> select::Search {
+    Box::new(move |query: &str| {
+        // An empty pattern matches every line of every note, which is neither
+        // an answer nor a cheap question.
+        if query.trim().is_empty() {
+            return select::Searching {
+                rows: Box::new(std::iter::empty()),
+                stop: Box::new(|| {}),
+            };
+        }
+        match Search::start(&root, query) {
+            Ok(search) => search.into_searching(),
+            // A failed spawn is an empty list: the selector is open and has
+            // nowhere to report an error to, and the next keystroke tries
+            // again.
+            Err(_) => select::Searching {
+                rows: Box::new(std::iter::empty()),
+                stop: Box::new(|| {}),
+            },
+        }
+    })
+}
+
+/// One ripgrep run, read line by line.
+///
+/// The child is held behind a mutex the reader never takes, so
+/// [`select::Searching::stop`] can kill it from another thread while this one
+/// is blocked waiting for output — which is the whole point, since the thing
+/// being waited on is exactly what has to stop.
+struct Search {
+    lines: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
+    child: Arc<Mutex<Option<std::process::Child>>>,
+    root: PathBuf,
+    found: usize,
+}
+
+impl Search {
+    fn start(root: &Path, query: &str) -> std::io::Result<Self> {
+        let mut child = std::process::Command::new("rg")
+            .args([
+                "--line-number",
+                "--column",
+                "--no-heading",
+                "--color=never",
+                "--smart-case",
+                // A minified file or a base64 attachment in a vault is one
+                // line several megabytes long, and drawing it is the only
+                // slow thing a row can do.
+                "--max-columns=400",
+                "--glob=*.md",
+                "--glob=*.markdown",
+            ])
+            // `-e` rather than a bare positional: a query beginning with `-`
+            // is a pattern, not a flag, and the user is typing it live.
+            .arg("-e")
+            .arg(query)
+            .arg("--")
+            .arg(root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            // ripgrep's complaints about an unfinished regex arrive on every
+            // keystroke and belong nowhere: the selector owns the screen.
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .expect("stdout was piped, so it is there to take");
+        Ok(Self {
+            lines: std::io::BufRead::lines(std::io::BufReader::new(stdout)),
+            child: Arc::new(Mutex::new(Some(child))),
+            root: root.to_path_buf(),
+            found: 0,
+        })
+    }
+
+    fn into_searching(self) -> select::Searching {
+        let child = Arc::clone(&self.child);
+        select::Searching {
+            rows: Box::new(self),
+            stop: Box::new(move || reap(&child)),
+        }
+    }
+}
+
+impl Iterator for Search {
+    type Item = SelectItem;
+
+    fn next(&mut self) -> Option<SelectItem> {
+        loop {
+            if self.found >= MATCH_LIMIT {
+                reap(&self.child);
+                return None;
+            }
+            // A line that is not valid UTF-8 ends the read: ripgrep is
+            // searching Markdown, and the alternative is a row nobody can see
+            // the text of anyway.
+            let line = self.lines.next()?.ok()?;
+            let Some(found) = note::parse_match(&line, &self.root) else {
+                continue;
+            };
+            self.found += 1;
+            let (label, tints) = note::match_row(&found, MATCH_COLUMN);
+            let path = found.path.clone();
+            let line = found.line;
+            return Some(
+                SelectItem::new(label, note::encode_match(&found))
+                    .tints(tints)
+                    .preview(Preview::Deferred(Box::new(move || {
+                        let text = read_head(&path, PREVIEW_BYTES).unwrap_or_default();
+                        note::match_preview(
+                            &note::Match {
+                                path: path.clone(),
+                                rel: path.to_string_lossy().into_owned(),
+                                line,
+                                column: 1,
+                                text: String::new(),
+                            },
+                            &text,
+                        )
+                    }))),
+            );
+        }
+    }
+}
+
+impl Drop for Search {
+    fn drop(&mut self) {
+        reap(&self.child);
+    }
+}
+
+/// Kill the search and collect it, so a vault-wide grep abandoned mid-word
+/// leaves neither a running ripgrep nor a zombie behind. Idempotent: `stop` and
+/// the drop both call it, and the selector may do so in either order.
+fn reap(child: &Arc<Mutex<Option<std::process::Child>>>) {
+    let mut held = child.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut child) = held.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Open what was selected: the first match in the editor at its line, and every
+/// other one in the quickfix list behind it.
+///
+/// Quickfix is a vim idea, so this is the shape of a vim command line. An
+/// editor that is not one of that family is handed the files and nothing else —
+/// there is no portable way to say "line 41" to an arbitrary program, and
+/// inventing one per editor is a list that is never finished.
+fn open_matches(ctx: &Ctx, editor: &[String], matches: &[note::Match]) -> Result<()> {
+    let (program, args) = editor
+        .split_first()
+        .expect("an editor is resolved non-empty");
+    if !vim_family(program) {
+        let mut files: Vec<String> = Vec::new();
+        for found in matches {
+            let path = found.path.to_string_lossy().into_owned();
+            if !files.contains(&path) {
+                files.push(path);
+            }
+        }
+        ctx.log.info(&format!(
+            "{program} takes no line number; opening the files"
+        ));
+        return cmd::edit::launch(ctx, editor, &files);
+    }
+
+    let list = QuickfixFile::write(matches)?;
+    let mut command = args.to_vec();
+    command.push("-c".into());
+    command.push("set errorformat=%f:%l:%c:%m".into());
+    command.push("-c".into());
+    command.push(format!(
+        "cfile {}",
+        vim_escape(&list.path.to_string_lossy())
+    ));
+    command.push("-c".into());
+    command.push("cfirst".into());
+    // One match is a jump, not a list to walk: the window would be a pane
+    // showing the line already on screen.
+    if matches.len() > 1 {
+        command.push("-c".into());
+        command.push("copen".into());
+    }
+
+    let status = std::process::Command::new(program)
+        .args(&command)
+        .status()
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => anyhow::anyhow!("`{program}` was not found on PATH"),
+            _ => anyhow::Error::new(e).context(format!("running {program}")),
+        })?;
+    if !status.success() {
+        return Err(crate::Reported(status.code().unwrap_or(1)).into());
+    }
+    Ok(())
+}
+
+/// The quickfix list on disk, removed when it goes out of scope — vim reads it
+/// at startup and never looks again, so it is scriv's to clean up.
+struct QuickfixFile {
+    path: PathBuf,
+}
+
+impl QuickfixFile {
+    fn write(matches: &[note::Match]) -> Result<Self> {
+        let path = std::env::temp_dir().join(format!("scriv-quickfix-{}.txt", std::process::id()));
+        let body: String = matches
+            .iter()
+            .map(|found| format!("{}\n", note::quickfix_line(found)))
+            .collect();
+        std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for QuickfixFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Whether `program` is a vim, and so understands a quickfix list.
+fn vim_family(program: &str) -> bool {
+    let name = Path::new(program)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| program.to_string());
+    matches!(
+        name.as_str(),
+        "vim" | "nvim" | "vi" | "view" | "gvim" | "mvim" | "nvim-qt"
+    )
+}
+
+/// Escape a path for a vim command line, where a space separates arguments and
+/// `%` and `#` name the current and alternate file.
+fn vim_escape(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for ch in path.chars() {
+        if matches!(ch, ' ' | '\t' | '%' | '#' | '|' | '"' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// Whether `program` resolves on `PATH`.
+fn which(program: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(program))
+            .find(|candidate| candidate.exists())
+    })
 }
 
 /// The `config check` row for the vault: where it is, and how much is in it.
@@ -286,7 +654,11 @@ mod tests {
 
         assert_eq!(note.rel, "work/meetings/standup.md");
         assert_eq!(note.title(), "standup");
-        assert_eq!(note.folder(), "work/meetings");
+        assert_eq!(note.dir, "work");
+        assert_eq!(
+            note.folder(&crate::config::NoteConfig::default()),
+            "meetings"
+        );
     }
 
     #[test]
@@ -330,6 +702,38 @@ mod tests {
         let note = read_note(&path, dir.path(), utc()).unwrap();
 
         assert!(note.created <= note.modified, "{note:?}");
+    }
+
+    #[test]
+    fn a_name_gains_the_extension_a_listing_looks_for() {
+        assert_eq!(with_extension("standup"), "standup.md");
+        assert_eq!(with_extension("work/standup"), "work/standup.md");
+        // Spelled out already, and left as typed.
+        assert_eq!(with_extension("standup.md"), "standup.md");
+        assert_eq!(with_extension("notes.v2.txt"), "notes.v2.txt");
+        // The dot is in a directory, not in the name.
+        assert_eq!(with_extension("v1.2/standup"), "v1.2/standup.md");
+    }
+
+    /// Only a vim has a quickfix list. Anything else is handed the files.
+    #[test]
+    fn only_a_vim_is_offered_a_quickfix_list() {
+        for editor in ["nvim", "vim", "/usr/bin/vi", "/opt/homebrew/bin/nvim"] {
+            assert!(vim_family(editor), "{editor}");
+        }
+        for editor in ["glow", "code", "hx", "emacs", "bat"] {
+            assert!(!vim_family(editor), "{editor}");
+        }
+    }
+
+    /// A space separates arguments on a vim command line, and `%` and `#` name
+    /// the current and alternate file — so a temp path holding one would open
+    /// something else entirely.
+    #[test]
+    fn a_path_handed_to_vim_is_escaped() {
+        assert_eq!(vim_escape("/tmp/a b.txt"), r"/tmp/a\ b.txt");
+        assert_eq!(vim_escape("/tmp/100%.txt"), r"/tmp/100\%.txt");
+        assert_eq!(vim_escape("/tmp/plain.txt"), "/tmp/plain.txt");
     }
 
     #[test]

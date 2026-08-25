@@ -25,6 +25,13 @@ use crate::select::Tint;
 /// skim's match highlighting has to be the brightest thing on the row.
 const FOLDER_COLOR: u8 = 4;
 const TAG_COLOR: u8 = 5;
+const OPEN_COLOR: u8 = 3;
+
+/// The task column's two glyphs: how many are left, or that none are. Shapes
+/// rather than colour alone, so the column still says something where the
+/// terminal's palette does not.
+const OPEN_TASK: &str = "\u{2610}";
+const ALL_DONE: &str = "\u{2713}";
 
 /// What a note's front matter said about it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -48,11 +55,90 @@ pub struct Note {
     /// Path below the vault root, extension and all. The name a note is known
     /// by on the command line.
     pub rel: String,
+    /// The directory directly below the root that the note is filed under, or
+    /// empty for a note at the root itself. What `[note] labels` labels.
+    pub dir: String,
     /// Last modified, in Unix seconds.
     pub modified: i64,
     /// Created, in Unix seconds. See [`created`].
     pub created: i64,
     pub front: Front,
+    pub tasks: Tasks,
+}
+
+/// The checkboxes in a note's body: how much of what it asked for is done.
+///
+/// The one thing a Markdown note says about itself that is neither its name nor
+/// its metadata, and the one worth a column: a vault is full of notes that are
+/// finished and notes that are still owed something, and nothing else on the
+/// row tells them apart.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tasks {
+    pub open: usize,
+    pub done: usize,
+}
+
+impl Tasks {
+    pub fn total(self) -> usize {
+        self.open + self.done
+    }
+
+    /// The column: how many are left, or a tick once none are.
+    fn column(self) -> String {
+        match (self.open, self.done) {
+            (0, 0) => String::new(),
+            (0, _) => ALL_DONE.to_string(),
+            (open, _) => format!("{open}{OPEN_TASK}"),
+        }
+    }
+
+    fn color(self) -> u8 {
+        if self.open == 0 {
+            DONE_COLOR
+        } else {
+            OPEN_COLOR
+        }
+    }
+}
+
+/// Count the checkboxes in a note's body. A task is a list item whose marker is
+/// followed by `[ ]` or `[x]`, which is the form every Markdown renderer that
+/// draws a checkbox agrees on.
+pub fn count_tasks(body: &str) -> Tasks {
+    let mut tasks = Tasks::default();
+    let mut fenced = false;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        // A checkbox inside a fence is an example of one, not one.
+        if fenced {
+            continue;
+        }
+        let Some((_, after)) = bullet(trimmed) else {
+            continue;
+        };
+        match ticked(after) {
+            Some(true) => tasks.done += 1,
+            Some(false) => tasks.open += 1,
+            None => {}
+        }
+    }
+    tasks
+}
+
+/// Whether the text opens with a ticked box, an empty one, or neither.
+fn ticked(text: &str) -> Option<bool> {
+    let mut chars = text.strip_prefix('[')?.chars();
+    let mark = chars.next()?;
+    chars.next().filter(|c| *c == ']')?;
+    match mark {
+        ' ' => Some(false),
+        'x' | 'X' => Some(true),
+        _ => None,
+    }
 }
 
 impl Note {
@@ -66,11 +152,40 @@ impl Note {
         }
     }
 
-    /// The directory the note sits in, below the vault root — empty for a note
-    /// at the root itself.
-    pub fn folder(&self) -> &str {
-        match self.rel.rfind('/') {
-            Some(at) => &self.rel[..at],
+    /// The group column: the label [`Note::dir`] carries, or the directory's
+    /// own name when it carries none.
+    ///
+    /// Unlike `repo`, which writes [`UNLABELLED`](crate::config::UNLABELLED)
+    /// for an owner with no label, an unlabelled directory names itself here.
+    /// A repository row still carries its owner in the path beside the label
+    /// column; a note row does not, and a vault of five directories with two of
+    /// them labelled would otherwise show three rows that say only `-`.
+    pub fn group<'a>(&'a self, labels: &'a crate::config::NoteConfig) -> &'a str {
+        labels.label_of(&self.dir).unwrap_or(&self.dir)
+    }
+
+    /// Whether the group column is a configured label rather than a bare
+    /// directory name — which is what decides whether it takes a colour.
+    pub fn labelled(&self, labels: &crate::config::NoteConfig) -> bool {
+        labels.label_of(&self.dir).is_some()
+    }
+
+    /// The directories the note is filed under that the group column has not
+    /// already named.
+    ///
+    /// Which ones those are depends on the group: a *label* is a word of the
+    /// user's own — `work` says nothing about which directory — so the whole
+    /// path below the root is still news. An unlabelled group is the directory
+    /// itself, already drawn one column to the left, so only what sits below it
+    /// is. Between them the two columns spell out the note's path exactly once.
+    pub fn folder<'a>(&'a self, cfg: &'a crate::config::NoteConfig) -> &'a str {
+        let below = match self.labelled(cfg) {
+            true => &self.rel[..],
+            // The separator too, which is why this is not `dir.len()`.
+            false => &self.rel[(self.dir.len() + 1).min(self.rel.len())..],
+        };
+        match below.rfind('/') {
+            Some(at) => &below[..at],
             None => "",
         }
     }
@@ -83,6 +198,15 @@ impl Note {
             .map(|tag| format!("#{tag}"))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+/// The directory directly below `root` that `rel` is filed under, or empty for
+/// a path at the root itself.
+pub fn top_dir(rel: &str) -> &str {
+    match rel.find('/') {
+        Some(at) => &rel[..at],
+        None => "",
     }
 }
 
@@ -342,99 +466,171 @@ fn local(when: i64, offset: time::UtcOffset) -> Option<time::OffsetDateTime> {
 /// list so the columns line up.
 ///
 /// Counted in characters, not bytes: `{:<width$}` pads by character count, so a
-/// byte length would over-pad a title with an accent in it.
+/// byte length would over-pad a title with an accent in it. A column measuring
+/// zero is one nothing in this vault fills, and is left out of the row rather
+/// than padded — a vault with no labels and no tags spends its width on names.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Widths {
+    pub title: usize,
+    pub group: usize,
+    pub folder: usize,
+    pub tags: usize,
+    pub tasks: usize,
     pub modified: usize,
     pub created: usize,
-    pub title: usize,
-    pub folder: usize,
     pub rel: usize,
-    pub tags: usize,
 }
 
 impl Widths {
-    pub fn of(notes: &[Note], now: i64) -> Self {
+    pub fn of(notes: &[Note], cfg: &crate::config::NoteConfig, now: i64) -> Self {
         let widest = |f: &dyn Fn(&Note) -> usize| notes.iter().map(f).max().unwrap_or(0);
         Self {
+            title: widest(&|n| n.title().chars().count()),
+            group: widest(&|n| n.group(cfg).chars().count()),
+            folder: widest(&|n| n.folder(cfg).chars().count()),
+            tags: widest(&|n| n.tag_column().chars().count()),
+            tasks: widest(&|n| n.tasks.column().chars().count()),
             modified: widest(&|n| age(now, n.modified).chars().count()),
             created: widest(&|n| age(now, n.created).chars().count()),
-            title: widest(&|n| n.title().chars().count()),
-            folder: widest(&|n| n.folder().chars().count()),
             rel: widest(&|n| n.rel.chars().count()),
-            tags: widest(&|n| n.tag_column().chars().count()),
         }
     }
 }
 
-/// The dim column ahead of a selector row: how long ago the note was modified,
-/// then how long ago it was created.
+/// One selector row: what the note calls itself first, then what is true of it.
 ///
-/// A [`crate::select::SelectItem::prefix`] rather than part of the label, so it
-/// is shown without being searched — matched, a query of `3` would rank every
-/// note that is three days old above the one being looked for. Modified comes
-/// first because it is the order the list is in.
-pub fn prefix(note: &Note, now: i64, widths: &Widths) -> String {
-    format!(
-        "{modified:>mw$} {created:>cw$}  ",
-        modified = age(now, note.modified),
-        mw = widths.modified,
-        created = age(now, note.created),
-        cw = widths.created,
-    )
-}
-
-/// One selector row: what the note calls itself, the folder it is filed under,
-/// and its tags.
+/// The name leads because it is what is being looked for and what the query
+/// matches; everything after it is an attribute, in a column of its own, in a
+/// colour that says which attribute it is — the group cyan or green where it is
+/// a configured label and grey where it is a bare directory name, the folder
+/// blue as a path is everywhere, the tags magenta.
 ///
 /// The row and its colours are built together because a tint is a character
 /// range into the row, and counting those ranges out a second time is how they
 /// drift.
-pub fn row(note: &Note, widths: &Widths) -> (String, Vec<Tint>) {
+///
+/// Not padded to the full width: what follows on the row is
+/// [`suffix`], and a row's trailing columns are only worth aligning when
+/// something is drawn in them.
+pub fn row(note: &Note, cfg: &crate::config::NoteConfig, widths: &Widths) -> (String, Vec<Tint>) {
     let mut row = String::new();
     let mut tints = Vec::new();
-
-    push_column(&mut row, note.title(), widths.title);
-
-    if widths.folder > 0 {
-        row.push_str("  ");
+    let mut column = |row: &mut String, text: &str, width: usize, color: Option<u8>| {
+        if width == 0 {
+            return;
+        }
+        if !row.is_empty() {
+            row.push_str(COLUMN_GAP);
+        }
         let at = row.chars().count();
-        push_column(&mut row, note.folder(), widths.folder);
-        tints.push(Tint {
-            range: at..at + note.folder().chars().count(),
-            color: FOLDER_COLOR,
-        });
-    }
+        push_column(row, text, width);
+        if let Some(color) = color.filter(|_| !text.is_empty()) {
+            tints.push(Tint {
+                range: at..at + text.chars().count(),
+                color,
+            });
+        }
+    };
 
-    let tags = note.tag_column();
-    if !tags.is_empty() {
-        row.push_str("  ");
-        let at = row.chars().count();
-        row.push_str(&tags);
-        tints.push(Tint {
-            range: at..row.chars().count(),
-            color: TAG_COLOR,
-        });
-    }
+    column(&mut row, note.title(), widths.title, None);
+    // A bare directory name is grey and a label is its own colour, so the
+    // column says whether it was configured as well as what it holds.
+    let group_color = note
+        .labelled(cfg)
+        .then(|| cfg.color_of(note.group(cfg)))
+        .flatten()
+        .or(Some(UNLABELLED_COLOR));
+    column(&mut row, note.group(cfg), widths.group, group_color);
+    column(
+        &mut row,
+        note.folder(cfg),
+        widths.folder,
+        Some(FOLDER_COLOR),
+    );
+    column(&mut row, &note.tag_column(), widths.tags, Some(TAG_COLOR));
 
-    (row.trim_end().to_string(), tints)
+    // Deliberately not trimmed: [`suffix`] is drawn straight after this, and a
+    // row whose columns were trimmed away would start its dates wherever its
+    // own text happened to stop.
+    (row, tints)
 }
 
-/// One `note ls --status` row: the note's name, its tags, and both dates.
+/// The columns drawn after the label and not matched against: how much of the
+/// note is still owed, then how long ago it was modified and created.
 ///
-/// The name comes first, so the plain listing is a prefix of this one. Modified
+/// Behind the label rather than ahead of it, because the name is what a note
+/// list is read down. Outside the label because none of it is what anybody
+/// searches for — matched, a query of `3` would rank every note that is three
+/// days old above the one being looked for.
+///
+/// Every row's is the same width, so the columns line up however narrow the
+/// name column turned out.
+pub fn suffix(note: &Note, now: i64, widths: &Widths) -> (String, Vec<Tint>) {
+    let mut suffix = String::new();
+    let mut tints = Vec::new();
+
+    if widths.tasks > 0 {
+        suffix.push_str(COLUMN_GAP);
+        let tasks = note.tasks.column();
+        let at = suffix.chars().count() + widths.tasks - tasks.chars().count();
+        // Right-aligned: the glyph is the fixed part and the count grows to
+        // the left of it.
+        for _ in tasks.chars().count()..widths.tasks {
+            suffix.push(' ');
+        }
+        suffix.push_str(&tasks);
+        if !tasks.is_empty() {
+            tints.push(Tint {
+                range: at..suffix.chars().count(),
+                color: note.tasks.color(),
+            });
+        }
+    }
+
+    suffix.push_str(COLUMN_GAP);
+    push_right(&mut suffix, &age(now, note.modified), widths.modified);
+    suffix.push(' ');
+    push_right(&mut suffix, &age(now, note.created), widths.created);
+
+    (suffix, tints)
+}
+
+/// Between two columns. Two spaces, everywhere, so a row reads as columns
+/// rather than as a sentence.
+const COLUMN_GAP: &str = "  ";
+
+/// The colour of a group column holding a bare directory name: the terminal's
+/// own grey, as [`crate::select::SelectItem::prefix`] uses, since an unlabelled
+/// directory is context rather than a statement.
+const UNLABELLED_COLOR: u8 = 8;
+
+/// One `note ls --status` row: the note's name, its group, its tags, how many
+/// tasks are open, and both dates.
+///
+/// The path comes first, so the plain listing is a prefix of this one. Modified
 /// carries a time of day and created does not: a created date may have come
 /// from front matter, which names a day.
-pub fn status_row(note: &Note, widths: &Widths, offset: time::UtcOffset) -> String {
+pub fn status_row(
+    note: &Note,
+    cfg: &crate::config::NoteConfig,
+    widths: &Widths,
+    offset: time::UtcOffset,
+) -> String {
     let mut row = String::new();
     push_column(&mut row, &note.rel, widths.rel);
-    if widths.tags > 0 {
-        row.push_str("  ");
-        push_column(&mut row, &note.tag_column(), widths.tags);
+    for (text, width) in [
+        (note.group(cfg).to_string(), widths.group),
+        (note.tag_column(), widths.tags),
+        (note.tasks.column(), widths.tasks),
+    ] {
+        if width > 0 {
+            row.push_str(COLUMN_GAP);
+            push_column(&mut row, &text, width);
+        }
     }
-    row.push_str("  ");
+    row.push_str(COLUMN_GAP);
     row.push_str(&timestamp(note.modified, offset));
-    row.push_str("  ");
+    row.push_str(COLUMN_GAP);
     row.push_str(&date(note.created, offset));
     row.trim_end().to_string()
 }
@@ -445,6 +641,14 @@ fn push_column(row: &mut String, text: &str, width: usize) {
     for _ in text.chars().count()..width {
         row.push(' ');
     }
+}
+
+/// Append `text` padded to `width` characters on its left.
+fn push_right(row: &mut String, text: &str, width: usize) {
+    for _ in text.chars().count()..width {
+        row.push(' ');
+    }
+    row.push_str(text);
 }
 
 /// Order a vault: most recently modified first, then by path so notes written
@@ -503,7 +707,13 @@ const PREVIEW_LINES: usize = 200;
 /// fences are what a note is made of at a glance; `**bold**` and its friends
 /// are left as the author wrote them, since a pane that hides the markup it
 /// cannot render is lying about the file.
-pub fn preview(note: &Note, text: &str, now: i64, offset: time::UtcOffset) -> String {
+pub fn preview(
+    note: &Note,
+    cfg: &crate::config::NoteConfig,
+    text: &str,
+    now: i64,
+    offset: time::UtcOffset,
+) -> String {
     let mut out = String::new();
 
     out.push_str(&bold(&crate::term::one_row(note.title())));
@@ -511,9 +721,29 @@ pub fn preview(note: &Note, text: &str, now: i64, offset: time::UtcOffset) -> St
     out.push_str(&paint(&crate::term::one_row(&note.rel), DIM));
     out.push('\n');
 
+    let group = note.group(cfg);
+    let mut facts = Vec::new();
+    if !group.is_empty() {
+        let color = match note.labelled(cfg) {
+            true => cfg.color_of(group).unwrap_or(UNLABELLED_COLOR),
+            false => UNLABELLED_COLOR,
+        };
+        facts.push(paint(&crate::term::one_row(group), color));
+    }
     let tags = note.tag_column();
     if !tags.is_empty() {
-        out.push_str(&paint(&crate::term::one_row(&tags), TAG_COLOR));
+        facts.push(paint(&crate::term::one_row(&tags), TAG_COLOR));
+    }
+    // Spelled out rather than left as the row's glyph and a number, which is
+    // the pane's job: it has the width the column did not.
+    if note.tasks.total() > 0 {
+        facts.push(paint(
+            &format!("{} of {} done", note.tasks.done, note.tasks.total()),
+            note.tasks.color(),
+        ));
+    }
+    if !facts.is_empty() {
+        out.push_str(&facts.join(&paint("  \u{b7}  ", DIM)));
         out.push('\n');
     }
 
@@ -698,10 +928,23 @@ mod tests {
     fn note(rel: &str, front: Front) -> Note {
         Note {
             path: PathBuf::from("/vault").join(rel),
+            dir: top_dir(rel).to_string(),
             rel: rel.to_string(),
             modified: 0,
             created: 0,
             front,
+            tasks: Tasks::default(),
+        }
+    }
+
+    /// A vault where `work` is labelled and `scratch` is not.
+    fn config() -> crate::config::NoteConfig {
+        let mut labels = crate::config::Labels::new();
+        labels.insert("work".to_string(), vec!["work".to_string()]);
+        crate::config::NoteConfig {
+            root: Some("/vault".into()),
+            labels,
+            editor: None,
         }
     }
 
@@ -858,10 +1101,15 @@ mod tests {
         );
     }
 
+    /// The folder is what sits between the group's directory and the note, so
+    /// a row never writes the group twice.
     #[test]
     fn a_note_at_the_vault_root_is_filed_under_nothing() {
-        assert_eq!(note("inbox.md", Front::default()).folder(), "");
-        assert_eq!(note("a/b/c.md", Front::default()).folder(), "a/b");
+        let bare = crate::config::NoteConfig::default();
+        assert_eq!(note("inbox.md", Front::default()).folder(&bare), "");
+        assert_eq!(note("a/c.md", Front::default()).folder(&bare), "");
+        assert_eq!(note("a/b/c.md", Front::default()).folder(&bare), "b");
+        assert_eq!(note("a/b/c/d.md", Front::default()).folder(&bare), "b/c");
     }
 
     /// The filesystem dates a synced or freshly cloned vault the day it
@@ -917,14 +1165,20 @@ mod tests {
         vec![
             Note {
                 modified: 3 * DAY,
-                created: 3 * DAY,
+                created: 400 * DAY,
+                tasks: Tasks { open: 2, done: 5 },
                 ..note(
                     "work/meetings/standup.md",
                     Front {
-                        tags: vec!["work".into()],
+                        tags: vec!["daily".into()],
                         ..Front::default()
                     },
                 )
+            },
+            Note {
+                modified: 0,
+                created: 0,
+                ..note("scratch/idea.md", Front::default())
             },
             Note {
                 modified: 0,
@@ -934,45 +1188,73 @@ mod tests {
         ]
     }
 
-    fn labels(notes: &[Note]) -> Vec<String> {
-        let widths = Widths::of(notes, 0);
-        notes.iter().map(|n| row(n, &widths).0).collect()
+    fn rows(notes: &[Note]) -> Vec<String> {
+        let cfg = config();
+        let widths = Widths::of(notes, &cfg, 0);
+        notes.iter().map(|n| row(n, &cfg, &widths).0).collect()
     }
 
+    /// The name is what the eye runs down and what the query matches, so it
+    /// leads; everything after it is an attribute in a column of its own.
     #[test]
-    fn a_row_carries_the_title_the_folder_and_the_tags() {
-        assert_eq!(
-            labels(&vault())[0],
-            "standup  work/meetings  #work",
-            "{:?}",
-            labels(&vault())
-        );
+    fn a_row_leads_with_the_note_name() {
+        for row in rows(&vault()) {
+            let first = row.split_whitespace().next().unwrap_or_default();
+            assert!(
+                ["standup", "idea", "inbox"].contains(&first),
+                "a row does not open with its name: {row:?}"
+            );
+        }
     }
 
+    /// A labelled directory shows its label; an unlabelled one shows itself,
+    /// rather than the `-` a repository row would carry. A vault of five
+    /// directories with two labelled would otherwise show three rows saying
+    /// nothing.
     #[test]
-    fn a_row_without_tags_ends_at_its_folder() {
-        assert_eq!(labels(&vault())[1], "inbox");
+    fn the_group_column_is_the_label_or_the_directory_that_has_none() {
+        let cfg = config();
+        let notes = vault();
+        assert_eq!(notes[0].group(&cfg), "work");
+        assert!(notes[0].labelled(&cfg));
+        assert_eq!(notes[1].group(&cfg), "scratch");
+        assert!(!notes[1].labelled(&cfg));
+        assert_eq!(notes[2].group(&cfg), "");
     }
 
-    /// The columns are what make a listing scannable; a title one character
-    /// longer must not shift the folder on every other row.
+    /// Between them, the group and folder columns spell out a note's path
+    /// exactly once: a label names no directory, so the whole path is still
+    /// news; a bare directory name is already drawn, so only what is below it
+    /// is.
+    #[test]
+    fn the_group_and_folder_columns_spell_the_path_out_once() {
+        let cfg = config();
+        let notes = vault();
+        // `work` is a label, so the directory it labels is still worth drawing.
+        assert_eq!(notes[0].folder(&cfg), "work/meetings");
+        // `scratch` is the directory itself, one column to the left already.
+        assert_eq!(notes[1].folder(&cfg), "");
+        assert_eq!(notes[2].folder(&cfg), "");
+    }
+
+    /// Columns are the whole point: a name one character longer must not shift
+    /// the group on every other row.
     #[test]
     fn the_columns_line_up_across_the_whole_list() {
+        let cfg = config();
         let notes = vault();
-        let widths = Widths::of(&notes, 0);
-        let at = |label: &str| {
-            label
-                .find("work/meetings")
-                .or_else(|| label.find("  "))
-                .unwrap()
-        };
-        let rows: Vec<String> = notes.iter().map(|n| row(n, &widths).0).collect();
-        assert_eq!(
-            rows[0].find("work/meetings"),
-            Some(widths.title + 2),
-            "{rows:?}"
-        );
-        assert!(at(&rows[0]) >= widths.title, "{rows:?}");
+        let widths = Widths::of(&notes, &cfg, 0);
+        for (row, note) in rows(&notes).iter().zip(&notes) {
+            let group = note.group(&cfg);
+            if group.is_empty() {
+                continue;
+            }
+            let after_name: String = row.chars().skip(widths.title + COLUMN_GAP.len()).collect();
+            assert!(
+                after_name.starts_with(group),
+                "the group column moved: {row:?}"
+            );
+        }
     }
 
     #[test]
@@ -981,15 +1263,31 @@ mod tests {
             note("café.md", Front::default()),
             note("a.md", Front::default()),
         ];
-        let widths = Widths::of(&notes, 0);
+        let widths = Widths::of(&notes, &config(), 0);
         assert_eq!(widths.title, "café".chars().count());
     }
 
+    /// A column nothing in this vault fills is left out rather than padded, so
+    /// a vault with no labels and no tags spends its width on names.
     #[test]
-    fn a_row_tints_its_folder_and_its_tags_and_leaves_the_title_alone() {
+    fn an_empty_column_is_not_drawn_at_all() {
+        let notes = vec![
+            note("a.md", Front::default()),
+            note("b.md", Front::default()),
+        ];
+        let cfg = crate::config::NoteConfig::default();
+        let widths = Widths::of(&notes, &cfg, 0);
+        assert_eq!(widths.group, 0);
+        assert_eq!(widths.tags, 0);
+        assert_eq!(row(&notes[0], &cfg, &widths).0, "a");
+    }
+
+    #[test]
+    fn a_row_tints_each_attribute_and_leaves_the_name_alone() {
+        let cfg = config();
         let notes = vault();
-        let widths = Widths::of(&notes, 0);
-        let (label, tints) = row(&notes[0], &widths);
+        let widths = Widths::of(&notes, &cfg, 0);
+        let (label, tints) = row(&notes[0], &cfg, &widths);
         let text = |tint: &Tint| -> String {
             label
                 .chars()
@@ -997,43 +1295,91 @@ mod tests {
                 .take(tint.range.len())
                 .collect()
         };
-        assert_eq!(tints.len(), 2, "{label:?}");
-        assert_eq!(text(&tints[0]), "work/meetings");
-        assert_eq!(tints[0].color, FOLDER_COLOR);
-        assert_eq!(text(&tints[1]), "#work");
-        assert_eq!(tints[1].color, TAG_COLOR);
+        let drawn: Vec<(String, u8)> = tints.iter().map(|t| (text(t), t.color)).collect();
+        assert_eq!(drawn[0].0, "work");
+        assert_eq!(drawn[1], ("work/meetings".to_string(), FOLDER_COLOR));
+        assert_eq!(drawn[2], ("#daily".to_string(), TAG_COLOR));
+        assert!(
+            !tints.iter().any(|t| t.range.start == 0),
+            "the name is tinted, and skim's match highlight has to win: {drawn:?}"
+        );
     }
 
-    /// The prefix is what holds the two age columns, and it is not matched
-    /// against — a query of `3` must not rank every three-day-old note first.
+    /// An unlabelled directory is context rather than a statement, so it is
+    /// grey where a configured label takes its own hue.
     #[test]
-    fn the_prefix_holds_both_ages_and_the_label_holds_neither() {
+    fn a_bare_directory_name_is_not_coloured_like_a_label() {
+        let cfg = config();
         let notes = vault();
-        let widths = Widths::of(&notes, 3 * DAY);
-        let (label, _) = row(&notes[0], &widths);
-        assert_eq!(prefix(&notes[0], 3 * DAY, &widths), "now now  ");
+        let widths = Widths::of(&notes, &cfg, 0);
+        let color_of = |n: &Note| row(n, &cfg, &widths).1.first().map(|t| t.color);
+        assert_eq!(color_of(&notes[1]), Some(UNLABELLED_COLOR));
+        assert_ne!(color_of(&notes[0]), Some(UNLABELLED_COLOR));
+    }
+
+    /// The dates and the task count sit behind the name and outside what the
+    /// query matches — typed, `3` must not rank every three-day-old note above
+    /// the one being looked for.
+    #[test]
+    fn the_suffix_holds_what_nobody_searches_for() {
+        let cfg = config();
+        let notes = vault();
+        let widths = Widths::of(&notes, &cfg, 3 * DAY);
+        let (label, _) = row(&notes[0], &cfg, &widths);
+        let (suffix, _) = suffix(&notes[0], 3 * DAY, &widths);
+        assert!(suffix.contains("now"), "{suffix:?}");
+        assert!(suffix.contains(OPEN_TASK), "{suffix:?}");
         assert!(!label.contains("now"), "{label:?}");
+        assert!(!label.contains(OPEN_TASK), "{label:?}");
     }
 
     #[test]
-    fn every_prefix_is_the_same_width() {
+    fn every_suffix_is_the_same_width() {
+        let cfg = config();
         let notes = vault();
-        let widths = Widths::of(&notes, 10 * YEAR);
-        let rendered: Vec<usize> = notes
+        let widths = Widths::of(&notes, &cfg, 10 * YEAR);
+        let widths_drawn: Vec<usize> = notes
             .iter()
-            .map(|n| prefix(n, 10 * YEAR, &widths).chars().count())
+            .map(|n| suffix(n, 10 * YEAR, &widths).0.chars().count())
             .collect();
-        assert!(rendered.windows(2).all(|w| w[0] == w[1]), "{rendered:?}");
+        assert!(
+            widths_drawn.windows(2).all(|w| w[0] == w[1]),
+            "{widths_drawn:?}"
+        );
     }
 
     #[test]
-    fn a_status_row_leads_with_the_name_and_ends_with_both_dates() {
+    fn a_note_with_tasks_left_reads_differently_from_one_without() {
+        assert_eq!(Tasks { open: 0, done: 0 }.column(), "");
+        assert_eq!(Tasks { open: 0, done: 3 }.column(), ALL_DONE);
+        assert_eq!(Tasks { open: 2, done: 3 }.column(), format!("2{OPEN_TASK}"));
+        assert_eq!(Tasks { open: 0, done: 3 }.color(), DONE_COLOR);
+        assert_eq!(Tasks { open: 2, done: 3 }.color(), OPEN_COLOR);
+    }
+
+    #[test]
+    fn tasks_are_counted_from_the_body() {
+        let counted = count_tasks("- [ ] a\n* [x] b\n  + [X] c\n- not a task\n1. [ ] d\n");
+        assert_eq!(counted, Tasks { open: 2, done: 2 });
+    }
+
+    /// A checkbox inside a fence is an example of one, not one.
+    #[test]
+    fn a_task_in_a_code_fence_is_not_counted() {
+        let counted = count_tasks("- [ ] real\n```md\n- [ ] example\n```\n");
+        assert_eq!(counted, Tasks { open: 1, done: 0 });
+    }
+
+    #[test]
+    fn a_status_row_leads_with_the_path_and_ends_with_both_dates() {
+        let cfg = config();
         let notes = vault();
-        let widths = Widths::of(&notes, 0);
-        let row = status_row(&notes[0], &widths, utc());
+        let widths = Widths::of(&notes, &cfg, 0);
+        let row = status_row(&notes[0], &cfg, &widths, utc());
         assert!(row.starts_with("work/meetings/standup.md"), "{row:?}");
-        assert!(row.contains("#work"), "{row:?}");
-        assert!(row.ends_with("1970-01-04"), "{row:?}");
+        assert!(row.contains("work"), "{row:?}");
+        assert!(row.contains("#daily"), "{row:?}");
+        assert!(row.ends_with("1971-02-05"), "{row:?}");
     }
 
     #[test]
@@ -1056,7 +1402,13 @@ mod tests {
     // --- preview ---
 
     fn preview_of(text: &str) -> String {
-        preview(&note("work/a.md", Front::default()), text, 0, utc())
+        preview(
+            &note("work/a.md", Front::default()),
+            &config(),
+            text,
+            0,
+            utc(),
+        )
     }
 
     /// The header is where the row's two age columns are named; without it the
@@ -1142,5 +1494,371 @@ mod tests {
         );
         markdown_line("```", &mut fenced);
         assert!(!fenced);
+    }
+}
+
+// --- searching --------------------------------------------------------------
+
+/// One line of a note that a search matched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Match {
+    /// Absolute path, which is what an editor and a quickfix entry both want.
+    pub path: PathBuf,
+    /// Path below the vault root, which is what a row shows.
+    pub rel: String,
+    pub line: u32,
+    pub column: u32,
+    /// The matched line, as ripgrep printed it.
+    pub text: String,
+}
+
+/// Read one `--vimgrep` line: `path:line:column:text`.
+///
+/// Split from the left exactly three times, because only the first three fields
+/// are known not to contain a colon — a path may, and the matched text very
+/// often does.
+pub fn parse_match(line: &str, root: &Path) -> Option<Match> {
+    // The path is whatever precedes the last colon that still leaves two
+    // numbers and a text behind it, which reading from the right finds without
+    // guessing where the path ends.
+    let (head, text) = split_three(line)?;
+    let (path, line_no, column) = head;
+    let path = PathBuf::from(path);
+    Some(Match {
+        rel: path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned(),
+        path,
+        line: line_no,
+        column,
+        text: text.to_string(),
+    })
+}
+
+/// `path:line:column:` and the rest, where `line` and `column` are the last two
+/// colon-separated numbers before the text.
+fn split_three(line: &str) -> Option<((&str, u32, u32), &str)> {
+    let mut at = 0;
+    // Walk the colons left to right: the first one whose next two fields are
+    // numbers ends the path. A path holding `x:1:2:` before the real fields is
+    // a file nobody has.
+    while let Some(next) = line[at..].find(':') {
+        let end = at + next;
+        let rest = &line[end + 1..];
+        if let Some((line_no, rest)) = take_number(rest)
+            && let Some((column, rest)) = take_number(rest)
+        {
+            return Some(((&line[..end], line_no, column), rest));
+        }
+        at = end + 1;
+    }
+    None
+}
+
+/// A run of digits followed by a colon, and what comes after it.
+fn take_number(text: &str) -> Option<(u32, &str)> {
+    let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    if digits == 0 {
+        return None;
+    }
+    let rest = text[digits..].strip_prefix(':')?;
+    Some((text[..digits].parse().ok()?, rest))
+}
+
+/// The field separator inside a search row's value.
+///
+/// A control character rather than a colon or a tab: the value carries a path,
+/// which may hold either, and it is read back by [`decode_match`] rather than
+/// by a person.
+const FIELD: char = '\u{1}';
+
+/// Pack a match into the string a selector row returns.
+pub fn encode_match(found: &Match) -> String {
+    format!(
+        "{}{FIELD}{}{FIELD}{}{FIELD}{}",
+        found.path.display(),
+        found.line,
+        found.column,
+        crate::term::one_row(&found.text),
+    )
+}
+
+/// Read back what [`encode_match`] wrote.
+pub fn decode_match(value: &str, root: &Path) -> Option<Match> {
+    let mut fields = value.splitn(4, FIELD);
+    let path = PathBuf::from(fields.next()?);
+    let line = fields.next()?.parse().ok()?;
+    let column = fields.next()?.parse().ok()?;
+    let text = fields.next().unwrap_or_default().to_string();
+    Some(Match {
+        rel: path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned(),
+        path,
+        line,
+        column,
+        text,
+    })
+}
+
+/// One entry of a quickfix list, in the `file:line:column:text` shape vim's
+/// `errorformat` is told to expect.
+pub fn quickfix_line(found: &Match) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        found.path.display(),
+        found.line,
+        found.column,
+        crate::term::one_row(&found.text)
+    )
+}
+
+/// The widest `rel:line` in a batch of matches, so their text columns line up.
+pub fn match_width(matches: &[Match]) -> usize {
+    matches
+        .iter()
+        .map(|m| m.rel.chars().count() + 1 + m.line.to_string().chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+/// One search row: where the match is, then the line that matched.
+///
+/// The location leads for the reason a note's name does — it is what the eye
+/// runs down — and is the only part coloured, since the matched text is the
+/// note's own words and colouring those would be scriv talking over them.
+pub fn match_row(found: &Match, width: usize) -> (String, Vec<Tint>) {
+    let location = format!("{}:{}", found.rel, found.line);
+    let mut row = String::new();
+    push_column(&mut row, &location, width);
+    row.push_str(COLUMN_GAP);
+    // Trimmed at the front only: the indentation of a matched line is noise in
+    // a list, and its trailing text is what the match is.
+    row.push_str(crate::term::one_row(found.text.trim_start()).trim_end());
+
+    let at = found.rel.chars().count();
+    (
+        row,
+        vec![
+            Tint {
+                range: 0..at,
+                color: FOLDER_COLOR,
+            },
+            Tint {
+                range: at..location.chars().count(),
+                color: LINE_COLOR,
+            },
+        ],
+    )
+}
+
+/// The colour of a `:line` suffix on a search row: yellow, as every grep-alike
+/// numbers its lines.
+const LINE_COLOR: u8 = 3;
+
+/// How much of a note the search preview shows either side of the match.
+const MATCH_CONTEXT: usize = 12;
+
+/// The preview pane for a search row: the matched line in the note around it,
+/// with the match itself marked.
+pub fn match_preview(found: &Match, text: &str) -> String {
+    let mut out = paint(&crate::term::one_row(&found.rel), DIM);
+    out.push('\n');
+
+    let line = found.line.max(1) as usize;
+    let first = line.saturating_sub(MATCH_CONTEXT).max(1);
+    let number_width = (line + MATCH_CONTEXT).to_string().len();
+
+    for (offset, body) in text
+        .lines()
+        .enumerate()
+        .skip(first - 1)
+        .take(MATCH_CONTEXT * 2 + 1)
+    {
+        let number = offset + 1;
+        let body = crate::term::one_row(body);
+        out.push('\n');
+        out.push_str(&paint(&format!("{number:>number_width$}"), DIM));
+        out.push(' ');
+        if number == line {
+            out.push_str(&format!("\x1b[1;38;5;{LINE_COLOR}m{body}\x1b[0m"));
+        } else {
+            out.push_str(&body);
+        }
+    }
+    out
+}
+
+// --- new notes --------------------------------------------------------------
+
+/// The name a new note takes when the user did not give one: the local date and
+/// time, to the minute.
+///
+/// A name rather than a prompt, because being asked to name a note is being
+/// asked what it is about before writing it — and a note that has to be named
+/// first is one that does not get written. It sorts, it is unique to the
+/// minute, and renaming it afterwards is what an editor is for.
+pub fn generated_name(now: i64, offset: time::UtcOffset) -> String {
+    let Some(dt) = local(now, offset) else {
+        return "note.md".to_string();
+    };
+    format!(
+        "{:04}-{:02}-{:02}-{:02}{:02}.md",
+        dt.year(),
+        dt.month() as u8,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+    )
+}
+
+/// A name nothing is using yet: `name`, else `name-2`, `name-3` and so on.
+///
+/// Two notes started in the same minute is not an error, and neither is one
+/// name typed twice — the second is a second note.
+pub fn free_name(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(name) {
+        return name.to_string();
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (name, String::new()),
+    };
+    // Bounded only by the filesystem: a caller that finds every name taken has
+    // a directory problem rather than a naming one.
+    (2..)
+        .map(|n| format!("{stem}-{n}{ext}"))
+        .find(|candidate| !taken(candidate))
+        .expect("the integers run out before the filenames do")
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn root() -> PathBuf {
+        PathBuf::from("/vault")
+    }
+
+    #[test]
+    fn a_vimgrep_line_splits_into_a_place_and_the_text_that_matched() {
+        let found = parse_match("/vault/work/a.md:12:5:the matched text", &root()).unwrap();
+        assert_eq!(found.rel, "work/a.md");
+        assert_eq!((found.line, found.column), (12, 5));
+        assert_eq!(found.text, "the matched text");
+    }
+
+    /// The matched text is a line of prose, and prose is full of colons. Only
+    /// the first three fields are known not to be.
+    #[test]
+    fn a_matched_line_may_contain_colons_of_its_own() {
+        let found = parse_match("/vault/a.md:1:1:see also: the other note", &root()).unwrap();
+        assert_eq!(found.text, "see also: the other note");
+    }
+
+    /// A path may contain a colon too, which is why the split looks for the
+    /// two numbers rather than counting from the left.
+    #[test]
+    fn a_path_with_a_colon_in_it_still_parses() {
+        let found = parse_match("/vault/a:b.md:7:2:text", &root()).unwrap();
+        assert_eq!(found.path, PathBuf::from("/vault/a:b.md"));
+        assert_eq!(found.line, 7);
+    }
+
+    #[test]
+    fn a_line_that_is_not_a_match_is_not_one() {
+        for line in ["", "no colons at all", "/vault/a.md:not:a:number"] {
+            assert!(parse_match(line, &root()).is_none(), "{line:?}");
+        }
+    }
+
+    /// The value travels through skim as one string and comes back to be
+    /// opened, so what goes in has to come out — including a path holding the
+    /// characters a simpler separator would have split on.
+    #[test]
+    fn a_match_survives_the_trip_through_the_selector() {
+        let found = Match {
+            path: PathBuf::from("/vault/a:b c.md"),
+            rel: "a:b c.md".into(),
+            line: 41,
+            column: 3,
+            text: "a line with: colons and\ttabs".into(),
+        };
+        let back = decode_match(&encode_match(&found), &root()).unwrap();
+        assert_eq!(back.path, found.path);
+        assert_eq!((back.line, back.column), (41, 3));
+        assert_eq!(back.rel, "a:b c.md");
+    }
+
+    /// vim reads the list with `errorformat=%f:%l:%c:%m`, so this is the one
+    /// shape it parses.
+    #[test]
+    fn a_quickfix_entry_is_file_line_column_text() {
+        let found = parse_match("/vault/a.md:12:5:text", &root()).unwrap();
+        assert_eq!(quickfix_line(&found), "/vault/a.md:12:5:text");
+    }
+
+    /// A note's own bytes reach the terminal here; an escape sequence in one
+    /// would otherwise repaint the list around it.
+    #[test]
+    fn a_matched_line_cannot_colour_the_row_it_is_drawn_in() {
+        let found = parse_match("/vault/a.md:1:1:red \x1b[31mhere", &root()).unwrap();
+        let (row, _) = match_row(&found, 10);
+        assert!(!row.contains('\x1b'), "{row:?}");
+        assert!(!quickfix_line(&found).contains('\x1b'));
+    }
+
+    #[test]
+    fn a_search_row_colours_where_the_match_is_and_not_what_it_says() {
+        let found = parse_match("/vault/work/a.md:12:1:some words", &root()).unwrap();
+        let (row, tints) = match_row(&found, 20);
+        let text = |tint: &Tint| -> String {
+            row.chars()
+                .skip(tint.range.start)
+                .take(tint.range.len())
+                .collect()
+        };
+        assert_eq!(text(&tints[0]), "work/a.md");
+        assert_eq!(text(&tints[1]), ":12");
+        assert!(row.contains("some words"));
+        assert!(
+            tints
+                .iter()
+                .all(|t| t.range.end <= "work/a.md:12".chars().count()),
+            "the matched text is coloured over"
+        );
+    }
+
+    // --- new notes ---
+
+    /// Sortable, and unique to the minute — which is what lets a note be
+    /// started without first being named.
+    #[test]
+    fn a_generated_name_is_the_date_and_time() {
+        assert_eq!(generated_name(0, utc()), "1970-01-01-0000.md");
+        assert_eq!(
+            generated_name(3 * 3600 + 25 * 60, utc()),
+            "1970-01-01-0325.md"
+        );
+    }
+
+    #[test]
+    fn a_name_already_taken_takes_the_next_one() {
+        let taken = |name: &str| ["a.md", "a-2.md"].contains(&name);
+        assert_eq!(free_name("a.md", taken), "a-3.md");
+        assert_eq!(free_name("b.md", taken), "b.md");
+    }
+
+    #[test]
+    fn a_name_with_no_extension_is_still_given_a_free_one() {
+        assert_eq!(free_name("a", |name| name == "a"), "a-2");
+    }
+
+    fn utc() -> time::UtcOffset {
+        time::UtcOffset::UTC
     }
 }

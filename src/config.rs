@@ -113,6 +113,55 @@ impl RepoConfig {
     }
 }
 
+/// ANSI 256-colour indices used to tint labels, in assignment order.
+/// Standard hues (cyan, green, yellow, magenta, blue, red) so they read well and
+/// follow the terminal theme; cycles if there are more labels than colours.
+const LABEL_COLORS: &[u8] = &[6, 2, 3, 5, 4, 1];
+
+/// Labels whose colour is fixed by name rather than by config order, so the hue
+/// means the same thing in every checkout — and in every group. A repository
+/// owner labelled `work` and a notes directory labelled `work` are the same
+/// word about the same things, and reading as the same colour is the point.
+const NAMED_LABEL_COLORS: &[(&str, u8)] = &[("work", 6), ("personal", 2)];
+
+/// The fixed colour for `label`, if it is one of the conventional names.
+fn named_color(label: &str) -> Option<u8> {
+    NAMED_LABEL_COLORS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(label))
+        .map(|&(_, color)| color)
+}
+
+/// Map each configured label to a colour.
+/// [`UNLABELLED`] is deliberately absent: it is not a label competing for a
+/// hue, and stays the terminal's default foreground.
+pub fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
+    // Hues spoken for by a named label actually present, so an unnamed label
+    // never collides with `work`'s cyan.
+    let taken: Vec<u8> = labels.keys().filter_map(|l| named_color(l)).collect();
+    let mut free: Vec<u8> = LABEL_COLORS
+        .iter()
+        .copied()
+        .filter(|c| !taken.contains(c))
+        .collect();
+    if free.is_empty() {
+        free = LABEL_COLORS.to_vec();
+    }
+
+    let mut next = 0;
+    labels
+        .keys()
+        .map(|label| {
+            let color = named_color(label).unwrap_or_else(|| {
+                let color = free[next % free.len()];
+                next += 1;
+                color
+            });
+            (label.as_str(), color)
+        })
+        .collect()
+}
+
 /// `[worktree]` — where `scriv worktree add` puts a new working tree.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
@@ -145,6 +194,17 @@ pub struct NoteConfig {
     /// The directory the notes live in — an Obsidian vault, or any tree of
     /// Markdown files. Unset, `scriv note` has nowhere to look.
     pub root: Option<String>,
+    /// Labels for the directories directly below [`Self::root`], one label to
+    /// many directories, so a vault split across five of them can be read as
+    /// the two or three kinds of note it actually holds.
+    ///
+    /// The same shape and the same colours as `[repo] labels`, which name
+    /// owners rather than directories. A directory with no label still shows
+    /// up — just uncoloured — and so do notes sitting at the root itself.
+    ///
+    /// Written as an inline table — `labels = { work = ["projects"] }` — for
+    /// the reason `[repo] labels` is.
+    pub labels: Labels,
     /// What `note edit` launches, split on whitespace like `$EDITOR`. Unset, it
     /// is `$VISUAL` then `$EDITOR`.
     ///
@@ -152,6 +212,23 @@ pub struct NoteConfig {
     /// is as often a Markdown reader as it is the editor the rest of scriv
     /// hands a file to.
     pub editor: Option<String>,
+}
+
+impl NoteConfig {
+    /// The label the directory `dir` carries, or `None` when it has none.
+    /// Matched case-insensitively, as a directory name is on Darwin.
+    pub fn label_of(&self, dir: &str) -> Option<&str> {
+        self.labels
+            .iter()
+            .find(|(_, dirs)| dirs.iter().any(|d| d.eq_ignore_ascii_case(dir)))
+            .map(|(label, _)| label.as_str())
+    }
+
+    /// The hue `label` takes, by the same assignment `[repo] labels` uses — so
+    /// `work` is one colour across both groups.
+    pub fn color_of(&self, label: &str) -> Option<u8> {
+        label_colors(&self.labels).get(label).copied()
+    }
 }
 
 /// `[history]` — which shell history `scriv history` searches.

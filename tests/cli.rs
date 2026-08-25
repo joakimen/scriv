@@ -1624,24 +1624,25 @@ fn mk_note(vault: &Path, rel: &str, body: &str, modified: u64) {
 }
 
 /// A vault of three notes, the newest last in the alphabet so ordering by name
-/// and ordering by date cannot be mistaken for each other.
+/// and ordering by date cannot be mistaken for each other. `archive` carries a
+/// label and `zeta.md` sits at the root, so a listing has one of each.
 fn mk_vault(sandbox: &Sandbox) -> PathBuf {
     let vault = sandbox.home().join("notes");
     mk_note(
         &vault,
         "archive/old.md",
-        "---\ntags: [done]\n---\n\nold\n",
+        "---\ntags: [done]\n---\n\nold\n- [x] finished\n",
         1_000,
     );
     mk_note(
         &vault,
         "inbox.md",
-        "---\ntitle: Inbox\ntags:\n  - todo\n  - work\ncreated: 2024-03-01\n---\n\n# Inbox\n",
+        "---\ntitle: Inbox\ntags:\n  - todo\n  - work\ncreated: 2024-03-01\n---\n\n# Inbox\n\n- [ ] call the bank\n- [x] renew\n",
         3_000,
     );
     mk_note(&vault, "zeta.md", "no front matter\n", 2_000);
     sandbox.write_config(&format!(
-        "[note]\nroot = {:?}\neditor = \"echo\"\n",
+        "[note]\nroot = {:?}\neditor = \"echo\"\nlabels = {{ old = [\"archive\"] }}\n",
         vault.display().to_string()
     ));
     vault
@@ -1699,6 +1700,97 @@ fn note_ls_status_carries_the_tags_and_both_dates() {
     // The front matter's creation date, not the file's: this vault was written
     // moments ago.
     assert!(inbox.ends_with("2024-03-01"), "{inbox}");
+
+    // The label its directory carries, which is the point of configuring one.
+    let old = run
+        .lines()
+        .iter()
+        .find(|l| l.starts_with("archive/old.md"))
+        .expect("the archived note")
+        .to_string();
+    assert!(old.contains("old"), "{old}");
+}
+
+/// A directory nothing labelled still names itself, so a vault with two of five
+/// directories labelled does not show three rows saying nothing.
+#[test]
+fn note_ls_status_names_an_unlabelled_directory_after_itself() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "scratch/idea.md", "idea\n", 1_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "ls", "--status"]);
+    run.ok();
+    assert!(run.stdout.contains("scratch"), "{}", run.stdout);
+}
+
+/// `note new` hands the editor a path nobody had to be asked for, and does not
+/// create the file — an abandoned note is one that never existed.
+#[test]
+fn note_new_opens_a_note_it_named_itself() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "new"]);
+    run.ok();
+
+    let opened = run
+        .stdout
+        .trim()
+        .strip_prefix("-- ")
+        .expect("a path")
+        .to_string();
+    assert!(opened.starts_with(vault.to_str().unwrap()), "{opened}");
+    assert!(opened.ends_with(".md"), "{opened}");
+    assert!(
+        !Path::new(&opened).exists(),
+        "note new created the file the editor was going to write: {opened}"
+    );
+}
+
+#[test]
+fn note_new_takes_a_name_and_makes_the_directory_it_asks_for() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "new", "journal/today"]);
+    run.ok();
+    assert_eq!(
+        run.stdout.trim(),
+        format!("-- {}", vault.join("journal/today.md").display())
+    );
+    assert!(vault.join("journal").is_dir(), "the directory was not made");
+}
+
+/// Two notes started in the same minute is not an error, and neither is one
+/// name typed twice.
+#[test]
+fn note_new_never_hands_back_a_name_already_in_use() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "new", "inbox"]);
+    run.ok();
+    assert_eq!(
+        run.stdout.trim(),
+        format!("-- {}", vault.join("inbox-2.md").display())
+    );
+}
+
+/// The search needs ripgrep, and says so rather than opening an empty selector.
+#[test]
+fn note_rg_without_ripgrep_says_what_is_missing() {
+    let sandbox = Sandbox::new();
+    mk_vault(&sandbox);
+    let empty = sandbox.home().join("empty-path");
+    std::fs::create_dir_all(&empty).unwrap();
+    let run = sandbox.run_with_env(
+        &["note", "rg", "anything"],
+        &[("PATH", empty.to_str().unwrap())],
+    );
+    run.code(1);
+    assert!(run.stderr.contains("ripgrep"), "{}", run.stderr);
 }
 
 #[test]
@@ -1762,4 +1854,6 @@ fn config_check_counts_the_notes_in_the_vault() {
     let run = sandbox.run(&["config", "check"]);
     assert!(run.stdout.contains("3 note(s)"), "{}", run.stdout);
     assert!(run.stdout.contains("note editor"), "{}", run.stdout);
+    // `note rg` shells out to it, so the report says whether it is there.
+    assert!(run.stdout.contains("rg"), "{}", run.stdout);
 }

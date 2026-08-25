@@ -130,6 +130,14 @@ pub struct SelectItem {
     /// that identifies a row without being what one searches for, such as the
     /// date on a history entry.
     pub prefix: Option<String>,
+    /// Drawn after the label and *not* matched against — [`SelectItem::prefix`]
+    /// on the other side, for a column that belongs to the right-hand edge
+    /// rather than the left. Dim, unless [`SelectItem::suffix_tints`] says
+    /// otherwise.
+    pub suffix: Option<String>,
+    /// Colours within the suffix, as character ranges into it. Indexed from
+    /// the start of the suffix, not of the row.
+    pub suffix_tints: Vec<Tint>,
     /// `None` when the value is the label itself. Read through
     /// [`SelectItem::value`].
     value: Option<String>,
@@ -144,6 +152,8 @@ impl SelectItem {
         Self {
             label: text.into(),
             prefix: None,
+            suffix: None,
+            suffix_tints: Vec::new(),
             value: None,
             color: None,
             tints: Vec::new(),
@@ -156,6 +166,8 @@ impl SelectItem {
         Self {
             label: label.into(),
             prefix: None,
+            suffix: None,
+            suffix_tints: Vec::new(),
             value: Some(value.into()),
             color: None,
             tints: Vec::new(),
@@ -166,6 +178,14 @@ impl SelectItem {
     /// Draw `prefix` dim, ahead of the label, outside what the query matches.
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = Some(prefix.into());
+        self
+    }
+
+    /// Draw `suffix` after the label, outside what the query matches, with
+    /// `tints` colouring ranges of it.
+    pub fn suffix(mut self, suffix: impl Into<String>, tints: Vec<Tint>) -> Self {
+        self.suffix = Some(suffix.into());
+        self.suffix_tints = tints;
         self
     }
 
@@ -265,18 +285,23 @@ impl SkimItem for SkItem {
             line = tinted(line, &self.item.tints, base);
         }
 
-        let Some(prefix) = &self.item.prefix else {
+        if self.item.prefix.is_none() && self.item.suffix.is_none() {
             return line;
-        };
+        }
 
-        // Prepended as a span rather than folded into the label, so
-        // `to_line`'s highlight positions still index the matched text.
+        // Added as spans rather than folded into the label, so `to_line`'s
+        // highlight positions still index the matched text.
+        let dim = Style::default().fg(Color::Indexed(PREFIX_COLOR));
         let mut out = Line::default();
-        out.push_span(Span::styled(
-            prefix.clone(),
-            Style::default().fg(Color::Indexed(PREFIX_COLOR)),
-        ));
+        if let Some(prefix) = &self.item.prefix {
+            out.push_span(Span::styled(prefix.clone(), dim));
+        }
         out.spans.extend(line.spans);
+        if let Some(suffix) = &self.item.suffix {
+            let plain = Line::from(Span::styled(suffix.clone(), dim));
+            out.spans
+                .extend(tinted(plain, &self.item.suffix_tints, dim).spans);
+        }
         out
     }
 
@@ -318,6 +343,7 @@ pub fn select_one_queried(
         multi: false,
         query,
         reload: None,
+        search: None,
         actions: &[],
     };
     run_selector(Feed::batch(items), run, cfg)?
@@ -390,6 +416,7 @@ pub fn select_one_reloading(
         multi: false,
         query: "",
         reload: Some(reload),
+        search: None,
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -407,6 +434,7 @@ pub fn select_one_acting(
         multi: false,
         query: "",
         reload: None,
+        search: None,
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -477,6 +505,161 @@ impl CommandCollector for ReloadCollector {
 
         (rx_item, tx_interrupt)
     }
+}
+
+/// One query's worth of rows, and the means to stop producing them.
+///
+/// [`Searching::stop`] is called from another thread the moment the selector
+/// abandons this search — the query moved on, or the selector closed — and
+/// must be safe to call while `rows` is blocked waiting for the next one.
+/// Making it end the iterator is the whole contract: skim's reader busy-waits
+/// for its readers to stop, so a search that keeps producing after it was
+/// called burns a core.
+pub struct Searching {
+    pub rows: Box<dyn Iterator<Item = SelectItem> + Send>,
+    pub stop: Box<dyn Fn() + Send + Sync>,
+}
+
+/// Produces the rows for a query. Called afresh on every keystroke, on a
+/// background thread, so it may block for as long as the search takes.
+pub type Search = Box<dyn FnMut(&str) -> Searching + Send>;
+
+/// How many rows to hand skim at once, and how long the counted thread waits
+/// on the producer before looking up to see whether it has been called off.
+const SEARCH_BATCH: usize = 256;
+const SEARCH_QUEUE: usize = 4;
+const SEARCH_POLL: Duration = Duration::from_millis(20);
+
+/// Undo the shell quoting skim applies to a substituted `{q}` — the inverse of
+/// [`quote`], and the reason a search sees what was typed rather than what a
+/// shell would have been handed.
+///
+/// skim expands the query into the command template as though a shell were
+/// going to run it. Nothing here runs a shell: the "command" is this crate's
+/// own closure, and the quoting has to come back off before the search sees a
+/// pattern with `'\''` in the middle of it.
+fn unquote(quoted: &str) -> String {
+    let Some(inner) = quoted
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+    else {
+        return quoted.to_string();
+    };
+    inner.replace(r"'\''", "'")
+}
+
+/// The [`CommandCollector`] behind [`select_many_searching`]: skim thinks it is
+/// running a command per keystroke, and it is calling a closure.
+struct SearchCollector {
+    search: Arc<Mutex<Search>>,
+}
+
+impl CommandCollector for SearchCollector {
+    fn invoke(
+        &mut self,
+        cmd: &str,
+        components_to_stop: Arc<AtomicUsize>,
+    ) -> (SkimItemReceiver, Sender<i32>) {
+        let (tx_item, rx_item): (SkimItemSender, SkimItemReceiver) = unbounded();
+        let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
+        let query = unquote(cmd);
+        let search = Arc::clone(&self.search);
+
+        // Counted, and therefore never the thread blocked in the search: as
+        // with the reload collector, `ReaderControl::kill` busy-waits on this
+        // counter, so the work happens on a second, uncounted thread.
+        components_to_stop.fetch_add(1, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            let (tx_rows, rx_rows) = std::sync::mpsc::sync_channel::<Vec<SelectItem>>(SEARCH_QUEUE);
+            let (tx_stop, rx_stop) = std::sync::mpsc::channel::<Box<dyn Fn() + Send + Sync>>();
+
+            std::thread::spawn(move || {
+                let mut searching = (search.lock().expect("search closure poisoned"))(&query);
+                // Handed over before the first row is read, so the thread
+                // below can call it off while this one is still blocked.
+                if tx_stop.send(searching.stop).is_err() {
+                    return;
+                }
+                let mut batch = Vec::with_capacity(SEARCH_BATCH);
+                for row in searching.rows.by_ref() {
+                    batch.push(row);
+                    if batch.len() < SEARCH_BATCH {
+                        continue;
+                    }
+                    let full = std::mem::replace(&mut batch, Vec::with_capacity(SEARCH_BATCH));
+                    if tx_rows.send(full).is_err() {
+                        return;
+                    }
+                }
+                if !batch.is_empty() {
+                    let _ = tx_rows.send(batch);
+                }
+            });
+
+            let mut stop: Option<Box<dyn Fn() + Send + Sync>> = None;
+            loop {
+                if stop.is_none() {
+                    stop = rx_stop.try_recv().ok();
+                }
+                if matches!(rx_interrupt.try_recv(), Ok(Some(_)) | Err(_)) {
+                    // Blocking waits for it if the search has not handed one
+                    // over yet: returning first would leave the search running
+                    // with nobody left to call it off.
+                    let stop = stop.or_else(|| rx_stop.recv().ok());
+                    if let Some(stop) = stop {
+                        stop();
+                    }
+                    break;
+                }
+                match rx_rows.recv_timeout(SEARCH_POLL) {
+                    Ok(rows) => {
+                        if tx_item
+                            .send(rows.into_iter().map(into_skim).collect())
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    // The search is finished, or it panicked.
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            // Dropping this is what stops skim's spinner, so it has to happen
+            // before the count drops.
+            drop(tx_item);
+            components_to_stop.fetch_sub(1, Ordering::SeqCst);
+        });
+
+        (rx_item, tx_interrupt)
+    }
+}
+
+/// Select zero or more rows from a list the *query* produces, rather than one
+/// it filters.
+///
+/// The search runs again on every keystroke and its rows replace the list. For
+/// a set too large to hold — every line of every note — where something else
+/// already knows how to search it.
+///
+/// Fuzzy matching is off while this is open, since the query has gone to the
+/// search instead; skim's own `ctrl-q` toggles back to filtering what is on
+/// screen.
+pub fn select_many_searching(
+    search: Search,
+    prompt: &str,
+    query: &str,
+    cfg: &SelectorConfig,
+) -> Result<Vec<String>> {
+    let run = Run {
+        prompt,
+        multi: true,
+        query,
+        reload: None,
+        search: Some(search),
+        actions: &[],
+    };
+    Ok(run_selector(Feed::none(true), run, cfg)?.values)
 }
 
 /// What [`select_one_or_query`] came back with.
@@ -565,6 +748,16 @@ const FEED_BATCH: usize = 512;
 const FEED_INTERVAL: Duration = Duration::from_millis(15);
 
 impl Feed {
+    /// No rows of its own, for a selector fed by something other than a feed.
+    /// `preview` states up front whether a pane is wanted, since there is no
+    /// row yet to ask.
+    fn none(preview: bool) -> Self {
+        Self {
+            rows: Rows::Batch(Vec::new()),
+            preview,
+        }
+    }
+
     fn batch(items: Vec<SelectItem>) -> Self {
         let preview = items.iter().any(|item| item.preview.is_some());
         Self {
@@ -635,6 +828,8 @@ struct Run<'a> {
     query: &'a str,
     /// Given one, [`REFRESH_KEY`] reloads the list through it.
     reload: Option<Reload>,
+    /// Given one, the query box drives this instead of filtering rows.
+    search: Option<Search>,
     /// Keys that close the selector meaning something other than enter.
     actions: &'static [Action],
 }
@@ -646,6 +841,7 @@ impl<'a> Run<'a> {
             multi,
             query: "",
             reload: None,
+            search: None,
             actions: &[],
         }
     }
@@ -708,11 +904,32 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     }
 
     if !run.query.is_empty() {
-        builder.query(run.query.to_string());
+        // Two different boxes: in a searching selector what is typed is the
+        // search, and skim keeps that under a name of its own.
+        if run.search.is_some() {
+            builder.cmd_query(run.query.to_string());
+        } else {
+            builder.query(run.query.to_string());
+        }
     }
 
     let reloadable = run.reload.is_some();
-    let header = hints(actions, reloadable, multi);
+    let searching = run.search.is_some();
+    let header = hints(actions, reloadable, multi, searching);
+
+    // The query drives the search rather than filtering rows, so skim runs it
+    // through a "command" — `{q}` being skim's own spelling of what was typed.
+    // It arrives shell-quoted; `unquote` is what takes that back off.
+    if let Some(search) = run.search {
+        let collector = SearchCollector {
+            search: Arc::new(Mutex::new(search)),
+        };
+        builder
+            .interactive(true)
+            .cmd("{q}".to_string())
+            .cmd_prompt(format!("{prompt}> "))
+            .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>);
+    }
 
     // `no_clear_if_empty` keeps a quick reload from flickering; a slow one
     // still empties the list, which is what the busy header is for.
@@ -737,11 +954,18 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         .build()
         .map_err(|e| anyhow!("configuring selector: {e}"))?;
 
-    let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
-    feed.send(tx)?;
+    // Nothing is fed to a searching selector: its rows come from the
+    // collector, which skim only reaches for when there is no source.
+    let source = if searching {
+        None
+    } else {
+        let (tx, rx): (SkimItemSender, SkimItemReceiver) = unbounded();
+        feed.send(tx)?;
+        Some(rx)
+    };
 
     let _room = room_for(&cfg.height);
-    let output = Skim::run_with(options, Some(rx)).map_err(|e| anyhow!("running selector: {e}"))?;
+    let output = Skim::run_with(options, source).map_err(|e| anyhow!("running selector: {e}"))?;
 
     if output.is_abort {
         return Err(Cancelled.into());
@@ -784,7 +1008,7 @@ fn acted(output: &SkimOutput, actions: &'static [Action]) -> Option<&'static str
 ///
 /// Nothing at all when there is nothing to say, so a plain list of paths keeps
 /// the row for a path.
-fn hints(actions: &[Action], reloadable: bool, multi: bool) -> String {
+fn hints(actions: &[Action], reloadable: bool, multi: bool, searching: bool) -> String {
     let mut hints: Vec<String> = actions
         .iter()
         .map(|action| format!("{} {}", action.key, action.label))
@@ -794,6 +1018,12 @@ fn hints(actions: &[Action], reloadable: bool, multi: bool) -> String {
     }
     if multi {
         hints.push("tab select".to_string());
+    }
+    // Worth a hint only where the query is not doing what a query usually
+    // does: with the search taking it, `ctrl-q` is how you filter what came
+    // back rather than searching again.
+    if searching {
+        hints.push("ctrl-q filter".to_string());
     }
     hints.join(HINT_SEPARATOR)
 }
@@ -860,6 +1090,138 @@ fn refresh_binds(idle: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// skim hands a searching collector the query already shell-quoted, as
+    /// though a shell were going to run it. Nothing here runs one, so what
+    /// `quote` puts on has to come back off — exactly, or a search for a word
+    /// with an apostrophe in it looks for `'\\''` instead.
+    #[test]
+    fn what_the_selector_quotes_the_search_unquotes() {
+        for typed in [
+            "plain",
+            "two words",
+            "it's",
+            "'quoted'",
+            "a'b'c",
+            "",
+            "--flag",
+        ] {
+            assert_eq!(unquote(&quote(typed)), typed, "{typed:?}");
+        }
+    }
+
+    /// Nothing quoted it, so nothing should be taken off.
+    #[test]
+    fn an_unquoted_query_is_left_alone() {
+        assert_eq!(unquote("bare"), "bare");
+    }
+
+    /// The searching collector is the one piece of this that no `tests/cli.rs`
+    /// case can reach: driving it for real needs a terminal, which is what a
+    /// skim test would be testing. These drive it directly instead.
+    mod searching {
+        use super::*;
+        use std::sync::atomic::AtomicBool;
+
+        /// Everything the collector is asked to do, run to completion.
+        fn collect(search: Search, quoted: &str) -> (Vec<String>, Arc<AtomicUsize>) {
+            let mut collector = SearchCollector {
+                search: Arc::new(Mutex::new(search)),
+            };
+            let counter = Arc::new(AtomicUsize::new(0));
+            let (rx, _interrupt) = collector.invoke(quoted, Arc::clone(&counter));
+            let mut rows = Vec::new();
+            while let Ok(batch) = rx.recv() {
+                rows.extend(batch.iter().map(|item| item.text().to_string()));
+            }
+            (rows, counter)
+        }
+
+        #[test]
+        fn the_search_sees_what_was_typed_rather_than_what_a_shell_would_get() {
+            let seen = Arc::new(Mutex::new(String::new()));
+            let recorder = Arc::clone(&seen);
+            let search: Search = Box::new(move |query| {
+                *recorder.lock().unwrap() = query.to_string();
+                Searching {
+                    rows: Box::new(std::iter::empty()),
+                    stop: Box::new(|| {}),
+                }
+            });
+
+            collect(search, &quote("it's a match"));
+
+            assert_eq!(seen.lock().unwrap().as_str(), "it's a match");
+        }
+
+        #[test]
+        fn every_row_the_search_produces_reaches_the_selector() {
+            let search: Search = Box::new(|_| Searching {
+                rows: Box::new((0..1000).map(|n| SelectItem::plain(format!("row {n}")))),
+                stop: Box::new(|| {}),
+            });
+
+            let (rows, counter) = collect(search, "'q'");
+
+            assert_eq!(rows.len(), 1000);
+            assert_eq!(rows[0], "row 0");
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                0,
+                "a finished search left its thread counted, which is what skim busy-waits on",
+            );
+        }
+
+        /// The reason `stop` exists. skim kills the reader on every keystroke,
+        /// and `ReaderControl::kill` busy-waits on the counter — so a search
+        /// still blocked producing rows has to be called off, not waited for.
+        #[test]
+        fn interrupting_a_search_stops_it_even_while_it_is_blocked() {
+            let stopped = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&stopped);
+            let search: Search = Box::new(move |_| {
+                let ended = Arc::new(AtomicBool::new(false));
+                let watched = Arc::clone(&ended);
+                let flag = Arc::clone(&flag);
+                Searching {
+                    // Never yields until it is called off, the way a ripgrep
+                    // over a large vault does not.
+                    rows: Box::new(std::iter::from_fn(move || {
+                        while !watched.load(Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        None
+                    })),
+                    stop: Box::new(move || {
+                        flag.store(true, Ordering::SeqCst);
+                        ended.store(true, Ordering::SeqCst);
+                    }),
+                }
+            });
+
+            let mut collector = SearchCollector {
+                search: Arc::new(Mutex::new(search)),
+            };
+            let counter = Arc::new(AtomicUsize::new(0));
+            let (_rx, interrupt) = collector.invoke("'q'", Arc::clone(&counter));
+            interrupt.send(1).expect("the collector is listening");
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while counter.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+
+            assert!(
+                stopped.load(Ordering::SeqCst),
+                "the search was not called off"
+            );
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                0,
+                "skim would busy-wait here forever",
+            );
+        }
+    }
 
     /// Render an item the way skim would, with `matches` standing in for a
     /// query that hit the given characters of the *label*.
@@ -1070,6 +1432,7 @@ mod tests {
             &[Action::new("f2", "open"), Action::new("f7", "check out")],
             true,
             true,
+            false,
         );
         for header in [BUSY_HEADER, every_hint.as_str(), HINT_SEPARATOR] {
             assert!(!header.contains(','), "{header:?} would split the binding");
@@ -1079,7 +1442,7 @@ mod tests {
 
     #[test]
     fn the_header_names_every_key_the_selector_answers_to() {
-        let full = hints(&[Action::new("f2", "open")], true, true);
+        let full = hints(&[Action::new("f2", "open")], true, true, false);
         assert_eq!(full, "f2 open · ctrl-r refresh · tab select");
     }
 
@@ -1087,13 +1450,13 @@ mod tests {
     /// path than as an empty hint line.
     #[test]
     fn a_selector_with_nothing_to_offer_draws_no_header() {
-        assert!(hints(&[], false, false).is_empty());
+        assert!(hints(&[], false, false, false).is_empty());
     }
 
     #[test]
     fn each_hint_appears_only_when_its_key_is_bound() {
-        assert_eq!(hints(&[], false, true), "tab select");
-        assert_eq!(hints(&[], true, false), "ctrl-r refresh");
+        assert_eq!(hints(&[], false, true, false), "tab select");
+        assert_eq!(hints(&[], true, false, false), "ctrl-r refresh");
     }
 
     /// skim binds `ctrl-r` to rotating the match mode and `tab` to toggling a
@@ -1104,7 +1467,7 @@ mod tests {
     #[test]
     fn every_key_the_header_names_is_bound() {
         let actions = [Action::new("f2", "open"), Action::new("f7", "check out")];
-        let header = hints(&actions, true, true);
+        let header = hints(&actions, true, true, false);
         let binds = binds(&actions, true, true, &header);
 
         for hint in header.split(HINT_SEPARATOR) {
