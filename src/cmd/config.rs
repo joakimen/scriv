@@ -67,6 +67,11 @@ ignore = ["node_modules", "target"]
 # Written inline, on one line, for the reason `[repo] labels` is.
 # labels = { work = ["projects", "clients"], personal = ["journal"] }
 
+# The one permanent note `note scratch` opens — somewhere to put a thought
+# without deciding first whether it is worth a note of its own. A path below
+# the root; its directory is created the first time.
+# scratch = "scratch/scratch.md"
+
 # What `note edit` launches, split on whitespace like $EDITOR. Its own setting
 # because a note is as often read as written — `glow` and `nvim` are both
 # answers. Unset, it is $VISUAL then $EDITOR, as `scriv edit` uses.
@@ -162,6 +167,14 @@ pub fn print(ctx: &Ctx) -> Result<()> {
             println!("  {label}: {}", dirs.join(", "));
         }
     }
+    println!(
+        "scratch: {}",
+        ctx.config
+            .note
+            .scratch
+            .as_deref()
+            .unwrap_or(crate::note::DEFAULT_SCRATCH)
+    );
     println!(
         "editor: {}",
         ctx.note_editor_setting()
