@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.12.0
+
+*Released 2026-08-26*
+
 ### Added
 
 - `[selector] preview_theme` picks the `bat` theme every file preview is drawn
