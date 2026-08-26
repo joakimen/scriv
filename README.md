@@ -37,8 +37,9 @@ Supported platform: macOS on Apple Silicon. `scriv proc` depends on Darwin's
 signal numbers, and the crate refuses to compile for any other target.
 
 External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, `rg`
-for `note rg`, a fish history file for `history`, and `$VISUAL` or `$EDITOR` for
-`edit` — or `[note] editor` for `note`. `scriv config check` reports on each.
+for `note rg`, `bat` for syntax-highlighted previews, a fish history file for
+`history`, and `$VISUAL` or `$EDITOR` for `edit` — or `[note] editor` for
+`note`. `scriv config check` reports on each.
 
 ## Setup
 
@@ -95,6 +96,9 @@ label its directory carries; everything else about it is in the preview pane.
 `note rg` searches inside every note as you type — fuzzily, or exactly on
 `ctrl-x` — and turns what you pick into a quickfix list. `note ls` prints
 absolute paths, one per line, for piping into whatever reads paths.
+
+Every preview pane shows the file as it is on disk, drawn by `bat` in
+`[selector] preview_theme` — Catppuccin Mocha unless you say otherwise.
 
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.

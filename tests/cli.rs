@@ -1868,6 +1868,8 @@ fn config_check_counts_the_notes_in_the_vault() {
     assert!(run.stdout.contains("note editor"), "{}", run.stdout);
     // `note rg` shells out to it, so the report says whether it is there.
     assert!(run.stdout.contains("rg"), "{}", run.stdout);
+    // So does every preview pane, which is where the theme is applied.
+    assert!(run.stdout.contains("bat"), "{}", run.stdout);
 }
 
 /// The scratch note is the same file every time, and its directory is made for
@@ -2112,4 +2114,54 @@ fn note_ls_status_reads_a_norwegian_vault_correctly() {
     assert!(row.contains("arbeid"), "{row}");
     assert!(row.contains("#løsning"), "{row}");
     assert!(row.ends_with("2024-03-01"), "{row}");
+}
+
+/// The scratch note is empty by design — that is what a scratch note is — so
+/// a cleanup list that offered it would offer it on every single run.
+#[test]
+fn note_cleanup_never_offers_the_scratch_note() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "scratch/scratch.md", "", 1_000);
+    mk_note(
+        &vault,
+        "thoughts.md",
+        "a real note with rather more than a couple of dozen characters in it\n",
+        900,
+    );
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "cleanup"]);
+
+    run.ok();
+    assert!(
+        run.stdout.contains("Nothing to clean up"),
+        "the scratch note was offered for deletion: {}",
+        run.stdout
+    );
+}
+
+/// And it is still protected when the config moves it somewhere else.
+#[test]
+fn note_cleanup_protects_the_configured_scratch_note() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "pad.md", "", 1_000);
+    mk_note(
+        &vault,
+        "thoughts.md",
+        "a real note with rather more than a couple of dozen characters in it\n",
+        900,
+    );
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\nscratch = \"pad.md\"\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "cleanup"]);
+    run.ok();
+    assert!(run.stdout.contains("Nothing to clean up"), "{}", run.stdout);
 }

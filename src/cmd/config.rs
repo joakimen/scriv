@@ -92,6 +92,13 @@ height = "50%"        # finder height, e.g. "50%" or "20"
 # recent = true        # offer repositories and files you have chosen before first
 # preview = true       # show a preview pane for the highlighted row
 # preview_window = "right:50%" # preview layout: [up|down|left|right][:SIZE][:hidden]
+
+# The `bat` theme every file preview is drawn with. Passed as `--theme`, so it
+# wins over BAT_THEME and your own bat config — a preview pane is scriv's to
+# make legible, and a theme chosen for reading whole files in a pager is not
+# always one. A theme bat does not know is not an error: it draws in its own
+# default instead. Empty hands bat nothing and lets its config decide.
+# preview_theme = "Catppuccin Mocha"
 "#;
 
 /// `scriv config init` — write `config.toml` into the config directory,
@@ -569,6 +576,12 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         "`branch` and `repo` cannot work without it",
     ));
     checks.push(gh_check());
+    checks.push(tool_check(
+        "bat",
+        "bat",
+        false,
+        "previews fall back to `head`, without highlighting or a theme",
+    ));
     checks.push(tool_check(
         "rg",
         "rg",

@@ -16,22 +16,10 @@ use std::path::{Path, PathBuf};
 
 use crate::select::Tint;
 
-/// How the columns of a note row are coloured — indices into the ANSI
-/// 256-colour table, so they follow the terminal's own theme. Blue for the
-/// folder, as every file listing colours a directory; magenta for tags, which
-/// is the one hue no status in scriv already means something with.
-///
-/// The title carries no colour of its own: it is what the query matches, and
-/// skim's match highlighting has to be the brightest thing on the row.
+/// The colour of a search row's path — an index into the ANSI 256-colour
+/// table, so it follows the terminal's own theme. Blue, as every file listing
+/// colours a path.
 const FOLDER_COLOR: u8 = 4;
-const TAG_COLOR: u8 = 5;
-const OPEN_COLOR: u8 = 3;
-
-/// The colour of a group that is a bare directory name rather than a configured
-/// label: the terminal's own grey, since an unlabelled directory is context
-/// rather than a statement.
-const UNLABELLED_COLOR: u8 = 8;
-
 /// What a note's front matter said about it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Front {
@@ -62,72 +50,6 @@ pub struct Note {
     /// Created, in Unix seconds. See [`created`].
     pub created: i64,
     pub front: Front,
-}
-
-/// The checkboxes in a note's body: how much of what it asked for is done.
-///
-/// The one thing a Markdown note says about itself that is neither its name nor
-/// its metadata, and the one worth a column: a vault is full of notes that are
-/// finished and notes that are still owed something, and nothing else on the
-/// row tells them apart.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Tasks {
-    pub open: usize,
-    pub done: usize,
-}
-
-impl Tasks {
-    pub fn total(self) -> usize {
-        self.open + self.done
-    }
-
-    fn color(self) -> u8 {
-        if self.open == 0 {
-            DONE_COLOR
-        } else {
-            OPEN_COLOR
-        }
-    }
-}
-
-/// Count the checkboxes in a note's body. A task is a list item whose marker is
-/// followed by `[ ]` or `[x]`, which is the form every Markdown renderer that
-/// draws a checkbox agrees on.
-pub fn count_tasks(body: &str) -> Tasks {
-    let mut tasks = Tasks::default();
-    let mut fenced = false;
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-            continue;
-        }
-        // A checkbox inside a fence is an example of one, not one.
-        if fenced {
-            continue;
-        }
-        let Some((_, after)) = bullet(trimmed) else {
-            continue;
-        };
-        match ticked(after) {
-            Some(true) => tasks.done += 1,
-            Some(false) => tasks.open += 1,
-            None => {}
-        }
-    }
-    tasks
-}
-
-/// Whether the text opens with a ticked box, an empty one, or neither.
-fn ticked(text: &str) -> Option<bool> {
-    let mut chars = text.strip_prefix('[')?.chars();
-    let mark = chars.next()?;
-    chars.next().filter(|c| *c == ']')?;
-    match mark {
-        ' ' => Some(false),
-        'x' | 'X' => Some(true),
-        _ => None,
-    }
 }
 
 impl Note {
@@ -453,6 +375,11 @@ pub struct Widths {
     pub group: usize,
     pub tags: usize,
     pub path: usize,
+    /// The vault-relative path, which the cleanup list shows where a report
+    /// shows the whole thing.
+    pub rel: usize,
+    /// The widest rendered [`size`], so the sizes right-align under each other.
+    pub size: usize,
 }
 
 impl Widths {
@@ -463,7 +390,15 @@ impl Widths {
             group: widest(&|n| n.group(cfg).chars().count()),
             tags: widest(&|n| n.tag_column().chars().count()),
             path: widest(&|n| n.shown(home).chars().count()),
+            rel: widest(&|n| n.rel.chars().count()),
+            size: 0,
         }
+    }
+
+    /// The widths a cleanup list needs on top: the sizes it is going to draw.
+    pub fn with_sizes(mut self, sizes: impl Iterator<Item = u64>) -> Self {
+        self.size = sizes.map(|b| size(b).chars().count()).max().unwrap_or(0);
+        self
     }
 }
 
@@ -569,246 +504,6 @@ pub fn is_note(path: &Path) -> bool {
 /// things to hand an editor.
 const NOTE_EXTENSIONS: &[&str] = &["md", "markdown"];
 
-// --- preview ----------------------------------------------------------------
-
-/// Colours the preview pane draws with. Grey for everything that is context
-/// rather than content, cyan for headings, blue for a link, green for a task
-/// that is done.
-const DIM: u8 = 8;
-const HEADING_COLOR: u8 = 6;
-const LINK_COLOR: u8 = 4;
-const DONE_COLOR: u8 = 2;
-
-/// How much of a note the preview pane shows, matching what `bat` is asked for
-/// elsewhere. A pane is thirty rows; anything past this is for the editor.
-const PREVIEW_LINES: usize = 200;
-
-/// The preview pane for a note: what the row could not fit, then the note.
-///
-/// The header is where the two age columns on the row are spelled out — a
-/// column reading `3d  2y` says which is which only once something says it,
-/// and the pane has the width to.
-///
-/// The body is drawn rather than shelled out to `bat`: a vault is thousands of
-/// notes and skim runs a preview on every move through the list, so the pane
-/// that costs nothing to produce is the one that keeps up. Front matter is not
-/// repeated — the header above is what it says, read.
-///
-/// Rendering is line-level. Headings, quotes, list markers, task boxes and code
-/// fences are what a note is made of at a glance; `**bold**` and its friends
-/// are left as the author wrote them, since a pane that hides the markup it
-/// cannot render is lying about the file.
-pub fn preview(
-    note: &Note,
-    cfg: &crate::config::NoteConfig,
-    text: &str,
-    now: i64,
-    offset: time::UtcOffset,
-) -> String {
-    let mut out = String::new();
-
-    out.push_str(&bold(&crate::term::one_row(note.title())));
-    out.push('\n');
-    out.push_str(&paint(&crate::term::one_row(&note.rel), DIM));
-    out.push('\n');
-
-    let (_, body) = split_front_matter(text);
-    let group = note.group(cfg);
-    let mut facts = Vec::new();
-    if !group.is_empty() {
-        let color = match note.labelled(cfg) {
-            true => cfg.color_of(group).unwrap_or(UNLABELLED_COLOR),
-            false => UNLABELLED_COLOR,
-        };
-        facts.push(paint(&crate::term::one_row(group), color));
-    }
-    let tags = note.tag_column();
-    if !tags.is_empty() {
-        facts.push(paint(&crate::term::one_row(&tags), TAG_COLOR));
-    }
-    // Counted here rather than carried on every note: this is the only place
-    // it is shown, and the text it is counted from has just been read anyway.
-    let tasks = count_tasks(body);
-    if tasks.total() > 0 {
-        facts.push(paint(
-            &format!("{} of {} done", tasks.done, tasks.total()),
-            tasks.color(),
-        ));
-    }
-    if !facts.is_empty() {
-        out.push_str(&facts.join(&paint("  \u{b7}  ", DIM)));
-        out.push('\n');
-    }
-
-    out.push_str(&paint(
-        &format!(
-            "modified {} ({})   created {} ({})",
-            timestamp(note.modified, offset),
-            age(now, note.modified),
-            date(note.created, offset),
-            age(now, note.created),
-        ),
-        DIM,
-    ));
-    out.push('\n');
-
-    let mut fenced = false;
-    for line in body
-        .lines()
-        .skip_while(|line| line.trim().is_empty())
-        .take(PREVIEW_LINES)
-    {
-        // Every line reaching the terminal is a note's own bytes, so its
-        // control characters go before anything is drawn: a note holding an
-        // escape sequence would otherwise repaint the pane around it.
-        out.push('\n');
-        out.push_str(&markdown_line(&crate::term::one_row(line), &mut fenced));
-    }
-    out
-}
-
-/// One body line, drawn. `fenced` carries whether the line before it was inside
-/// a fenced code block, which is the only state a line-level renderer needs.
-fn markdown_line(line: &str, fenced: &mut bool) -> String {
-    let trimmed = line.trim_start();
-
-    if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-        *fenced = !*fenced;
-        return paint(line, DIM);
-    }
-    // Inside a fence every character is the author's, `#` and `[[` included.
-    if *fenced {
-        return line.to_string();
-    }
-
-    if let Some(heading) = heading(trimmed) {
-        return format!("\x1b[1;38;5;{HEADING_COLOR}m{heading}\x1b[0m");
-    }
-    if trimmed.starts_with('>') || is_rule(trimmed) {
-        return paint(line, DIM);
-    }
-    match task_or_bullet(line) {
-        Some((marker, rest)) => format!("{marker}{}", inline(rest)),
-        None => inline(line),
-    }
-}
-
-/// An ATX heading's text, `#` marks and all — kept, because a level is
-/// something a reader counts.
-fn heading(trimmed: &str) -> Option<&str> {
-    let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
-    ((1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ')).then_some(trimmed)
-}
-
-/// Whether the line is a thematic break rather than text.
-fn is_rule(trimmed: &str) -> bool {
-    let mark = trimmed.chars().next().filter(|c| "-*_".contains(*c));
-    mark.is_some_and(|mark| {
-        trimmed.chars().filter(|c| *c == mark).count() >= 3
-            && trimmed.chars().all(|c| c == mark || c == ' ')
-    })
-}
-
-/// A list line split into its drawn marker and the text after it: the bullet
-/// dim, a task's box green once it is ticked.
-fn task_or_bullet(line: &str) -> Option<(String, &str)> {
-    let indent = line.len() - line.trim_start().len();
-    let (bullet, after) = bullet(&line[indent..])?;
-    let head = &line[..indent + bullet.len()];
-
-    let Some(box_end) = task_box(after) else {
-        return Some((paint(head, DIM), after));
-    };
-    let (ticked, rest) = after.split_at(box_end);
-    let done = !ticked.contains(|c: char| c == ' ' && ticked.starts_with("[ "));
-    Some((
-        format!(
-            "{}{}",
-            paint(head, DIM),
-            paint(ticked, if done { DONE_COLOR } else { DIM })
-        ),
-        rest,
-    ))
-}
-
-/// The `- `, `* `, `+ ` or `1. ` opening a list item, and what follows it.
-fn bullet(text: &str) -> Option<(&str, &str)> {
-    if let Some(rest) = text
-        .strip_prefix(['-', '*', '+'])
-        .and_then(|r| r.strip_prefix(' '))
-    {
-        return Some((&text[..2], rest));
-    }
-    let digits = text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    if digits == 0 {
-        return None;
-    }
-    let rest = text[digits..].strip_prefix(['.', ')'])?.strip_prefix(' ')?;
-    Some((&text[..digits + 2], rest))
-}
-
-/// Where a task checkbox ends, when the text opens with one.
-fn task_box(text: &str) -> Option<usize> {
-    let inner = text.strip_prefix('[')?;
-    let mut chars = inner.chars();
-    let mark = chars.next()?;
-    chars.next().filter(|c| *c == ']')?;
-    // `[ ]` and `[x]` and nothing wider: `[2024-01-01]` opens a link, not a
-    // task.
-    (mark == ' ' || !mark.is_whitespace()).then_some(3)
-}
-
-/// Colour what a note's body says about itself: `[[wikilinks]]` and `#tags`.
-fn inline(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut at = 0;
-    // A tag opens a word; `C#` in a sentence and a `#fragment` on a URL do not.
-    let mut boundary = true;
-
-    while at < line.len() {
-        if line[at..].starts_with("[[")
-            && let Some(end) = line[at + 2..].find("]]")
-        {
-            let link = &line[at..at + 2 + end + 2];
-            out.push_str(&paint(link, LINK_COLOR));
-            at += link.len();
-            boundary = false;
-            continue;
-        }
-        if boundary && let Some(tag) = tag_at(&line[at..]) {
-            out.push_str(&paint(tag, TAG_COLOR));
-            at += tag.len();
-            boundary = false;
-            continue;
-        }
-        let ch = line[at..].chars().next().expect("scanning by character");
-        boundary = ch.is_whitespace();
-        out.push(ch);
-        at += ch.len_utf8();
-    }
-    out
-}
-
-/// The tag `text` opens with, if it opens with one. A tag is `#` and at least
-/// one character of `[A-Za-z0-9/_-]`, not all of them digits — Obsidian's own
-/// rule, and what keeps `#1234` an issue number and `#fff` a colour.
-fn tag_at(text: &str) -> Option<&str> {
-    let rest = text.strip_prefix('#')?;
-    let len = rest
-        .find(|c: char| !(c.is_alphanumeric() || "/_-".contains(c)))
-        .unwrap_or(rest.len());
-    let tag = &rest[..len];
-    (!tag.is_empty() && !tag.chars().all(|c| c.is_ascii_digit())).then(|| &text[..len + 1])
-}
-
-fn paint(text: &str, color: u8) -> String {
-    crate::term::paint(text, color, true)
-}
-
-fn bold(text: &str) -> String {
-    format!("\x1b[1m{text}\x1b[0m")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -826,6 +521,11 @@ mod tests {
             created: 0,
             front,
         }
+    }
+
+    /// The one note a cleanup list never offers, however empty it is.
+    fn scratch() -> &'static Path {
+        Path::new("/vault/scratch/scratch.md")
     }
 
     /// A vault where `work` is labelled and `scratch` is not.
@@ -1159,19 +859,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tasks_are_counted_from_the_body() {
-        let counted = count_tasks("- [ ] a\n* [x] b\n  + [X] c\n- not a task\n1. [ ] d\n");
-        assert_eq!(counted, Tasks { open: 2, done: 2 });
-    }
-
-    /// A checkbox inside a fence is an example of one, not one.
-    #[test]
-    fn a_task_in_a_code_fence_is_not_counted() {
-        let counted = count_tasks("- [ ] real\n```md\n- [ ] example\n```\n");
-        assert_eq!(counted, Tasks { open: 1, done: 0 });
-    }
-
     // --- cleanup ---
 
     fn body_of(len: usize) -> String {
@@ -1181,9 +868,9 @@ mod tests {
     #[test]
     fn a_note_with_nothing_in_it_is_a_candidate() {
         let note = note("thoughts.md", Front::default());
-        assert_eq!(junk(&note, ""), Some(Junk::Empty));
-        assert_eq!(junk(&note, "# Thoughts\n"), Some(Junk::Empty));
-        assert_eq!(junk(&note, &body_of(20)), None);
+        assert_eq!(junk(&note, "", scratch()), Some(Junk::Empty));
+        assert_eq!(junk(&note, "# Thoughts\n", scratch()), Some(Junk::Empty));
+        assert_eq!(junk(&note, &body_of(20), scratch()), None);
     }
 
     /// What an editor calls a file nobody named, and everything it goes on to
@@ -1197,12 +884,16 @@ mod tests {
             "untitled_3.md",
         ] {
             let note = note(name, Front::default());
-            assert_eq!(junk(&note, &body_of(20)), Some(Junk::Untitled), "{name}");
+            assert_eq!(
+                junk(&note, &body_of(20), scratch()),
+                Some(Junk::Untitled),
+                "{name}"
+            );
         }
         // Not every name that begins with the word.
         for name in ["Untitled thoughts.md", "untitledness.md"] {
             let note = note(name, Front::default());
-            assert_eq!(junk(&note, &body_of(20)), None, "{name}");
+            assert_eq!(junk(&note, &body_of(20), scratch()), None, "{name}");
         }
     }
 
@@ -1211,7 +902,7 @@ mod tests {
     #[test]
     fn a_note_named_only_by_numbers_is_a_candidate_unless_it_says_otherwise() {
         let jotted = note("2026-08-25 1043.md", Front::default());
-        assert_eq!(junk(&jotted, &body_of(20)), Some(Junk::Unnamed));
+        assert_eq!(junk(&jotted, &body_of(20), scratch()), Some(Junk::Unnamed));
 
         let titled = note(
             "2026-08-25 1043.md",
@@ -1220,7 +911,7 @@ mod tests {
                 ..Front::default()
             },
         );
-        assert_eq!(junk(&titled, &body_of(20)), None);
+        assert_eq!(junk(&titled, &body_of(20), scratch()), None);
     }
 
     /// A name is whatever the writer typed, and this repository's owner writes
@@ -1264,8 +955,8 @@ mod tests {
                 let _ = note.shown("/home/me");
                 let _ = row(&note);
                 let _ = prefix(&note, utc());
-                let _ = junk(&note, "");
-                let _ = junk(&note, &"word ".repeat(20));
+                let _ = junk(&note, "", scratch());
+                let _ = junk(&note, &"word ".repeat(20), scratch());
                 let widths = Widths::of(std::slice::from_ref(&note), &cfg, "/home/me");
                 let _ = status_row(&note, &cfg, &widths, utc(), "/home/me");
                 let _ = junk_row(&note, Junk::Untitled, 10, &widths);
@@ -1280,7 +971,7 @@ mod tests {
         for name in ["Prosjektø", "Løsningø", "abcdefgø", "Størrelse"] {
             let note = note(&format!("{name}.md"), Front::default());
             assert_ne!(
-                junk(&note, &"word ".repeat(20)),
+                junk(&note, &"word ".repeat(20), scratch()),
                 Some(Junk::Untitled),
                 "{name}"
             );
@@ -1291,109 +982,88 @@ mod tests {
     #[test]
     fn a_cleanup_row_says_why_the_note_is_on_the_list() {
         let notes = vault();
-        let widths = Widths::of(&notes, &config(), "/home/me");
+        let widths = Widths::of(&notes, &config(), "/home/me").with_sizes([0].into_iter());
         let (row, tints) = junk_row(&notes[0], Junk::Empty, 0, &widths);
         assert!(row.starts_with("empty"), "{row:?}");
         assert!(row.contains("work/meetings/standup.md"), "{row:?}");
-        assert!(row.ends_with("empty"), "{row:?}");
+        assert!(row.ends_with("0b"), "{row:?}");
         assert_eq!(tints[0].range, 0.."empty".len());
         assert_eq!(tints[0].color, Junk::Empty.color());
     }
 
+    /// One number and one letter, so a column of sizes reads down its last
+    /// character rather than being measured.
     #[test]
-    fn a_size_is_read_rather_than_counted() {
-        assert_eq!(size(0), "empty");
-        assert_eq!(size(512), "512 B");
-        assert_eq!(size(4096), "4 KB");
+    fn a_size_is_one_number_and_one_letter() {
+        assert_eq!(size(0), "0b");
+        assert_eq!(size(512), "512b");
+        assert_eq!(size(1024), "1k");
+        assert_eq!(size(4096), "4k");
+        assert_eq!(size(2 * 1024 * 1024), "2M");
     }
 
-    // --- preview ---
-
-    fn preview_of(text: &str) -> String {
-        preview(
-            &note("work/a.md", Front::default()),
-            &config(),
-            text,
-            0,
-            utc(),
-        )
-    }
-
-    /// The header is where the row's two age columns are named; without it the
-    /// pair reads as two numbers.
+    /// The whole point of right-aligning it: the units stack, so a glance down
+    /// the list tells bytes from kilobytes without reading a single number.
     #[test]
-    fn the_preview_names_both_dates_the_row_only_shows() {
-        let rendered = preview_of("body\n");
-        assert!(rendered.contains("modified "), "{rendered}");
-        assert!(rendered.contains("created "), "{rendered}");
-    }
-
-    /// The header already says everything the block does, spelled out.
-    #[test]
-    fn the_preview_shows_the_body_and_not_the_front_matter() {
-        let rendered = preview_of("---\ntitle: A\ntags: [x]\n---\n\n# Heading\n");
-        assert!(rendered.contains("Heading"), "{rendered}");
-        assert!(!rendered.contains("tags: [x]"), "{rendered}");
-    }
-
-    /// A note is foreign text: an escape sequence in one would otherwise
-    /// repaint the pane around it. Only scriv's own colours survive the body.
-    #[test]
-    fn a_note_cannot_colour_the_pane_with_its_own_escapes() {
-        let rendered = preview_of("plain \x1b[31mred\x1b[0m\n");
-        let body = rendered.split_once("\n\n").expect("a body").1;
-        assert!(body.contains("red"), "{body:?}");
-        assert!(!body.contains('\x1b'), "{body:?}");
-    }
-
-    #[test]
-    fn a_preview_stops_at_the_line_it_is_bounded_to() {
-        let long = "line\n".repeat(PREVIEW_LINES * 2);
-        let rendered = preview_of(&long);
-        assert_eq!(rendered.matches("line").count(), PREVIEW_LINES);
-    }
-
-    fn drawn(line: &str) -> String {
-        markdown_line(line, &mut false)
-    }
-
-    /// The renderer scans a line by byte offset — advancing a cursor, slicing
-    /// out a wikilink, measuring a tag. Every one of those is the same class of
-    /// bug as the one that crashed `note cleanup`, so every one is held here.
-    #[test]
-    fn a_body_that_is_not_ascii_renders_without_panicking() {
-        let lines = [
-            "# Størrelsesorden",
-            "møte med Kjærsti om løsningen",
-            "- [ ] ærlig talt",
-            "- [x] åpne saker",
-            "> sitat på norsk",
-            "se [[nøtter/møter]] og #løsning",
-            "#ø",
-            "ø",
-            "日本語 [[ノート]] #タグ",
-            "🎉 [[emoji]] #party 🎉",
-            "  - [[øy]]",
-            "1. tåler dette",
-            "---",
-            "```rust",
-            "let x = \"ø\";",
-            "```",
-        ];
-        let mut fenced = false;
-        for line in lines {
-            let _ = markdown_line(line, &mut fenced);
-        }
-
-        let text = format!(
-            "---\ntitle: Årsmøte\ntags: [løsning, ærlig]\n---\n{}",
-            lines.join("\n")
+    fn every_size_ends_in_the_same_column() {
+        let notes = vault();
+        let sizes = [0u64, 900, 4096, 5 * 1024 * 1024];
+        let widths = Widths::of(&notes, &config(), "/home/me").with_sizes(sizes.into_iter());
+        let rows: Vec<String> = sizes
+            .iter()
+            .map(|bytes| junk_row(&notes[0], Junk::Empty, *bytes, &widths).0)
+            .collect();
+        let lengths: Vec<usize> = rows.iter().map(|r| r.chars().count()).collect();
+        assert!(
+            lengths.windows(2).all(|w| w[0] == w[1]),
+            "the sizes do not line up: {rows:?}"
         );
-        let note = note("nøtter/møte.md", front(&text));
-        let rendered = preview(&note, &config(), &text, 0, utc());
-        assert!(rendered.contains("Årsmøte"), "{rendered}");
-        assert!(rendered.contains("#løsning #ærlig"), "{rendered}");
-        assert!(rendered.contains("Størrelsesorden"), "{rendered}");
+    }
+
+    /// Grouped by what is wrong, then smallest first — which is what makes a
+    /// cleanup list answerable a group at a time rather than a row at a time.
+    #[test]
+    fn a_cleanup_list_is_grouped_by_reason_and_then_by_size() {
+        let at = |rel: &str| note(rel, Front::default());
+        let mut candidates = vec![
+            (at("d.md"), Junk::Unnamed, 900),
+            (at("a.md"), Junk::Empty, 12),
+            (at("c.md"), Junk::Unnamed, 40),
+            (at("b.md"), Junk::Untitled, 700),
+            (at("e.md"), Junk::Empty, 0),
+        ];
+        cleanup_order(&mut candidates);
+
+        let order: Vec<(&str, Junk, u64)> = candidates
+            .iter()
+            .map(|(n, reason, size)| (n.rel.as_str(), *reason, *size))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                ("e.md", Junk::Empty, 0),
+                ("a.md", Junk::Empty, 12),
+                ("b.md", Junk::Untitled, 700),
+                ("c.md", Junk::Unnamed, 40),
+                ("d.md", Junk::Unnamed, 900),
+            ]
+        );
+    }
+
+    /// Being empty is what the scratch note is *for*, so offering to delete it
+    /// would offer that on every run.
+    #[test]
+    fn the_scratch_note_is_never_a_candidate() {
+        let pad = Note {
+            path: scratch().to_path_buf(),
+            ..note("scratch/scratch.md", Front::default())
+        };
+        assert_eq!(junk(&pad, "", scratch()), None);
+        assert_eq!(junk(&pad, "Untitled", scratch()), None);
+
+        // Its neighbours are offered as usual.
+        let other = note("scratch/other.md", Front::default());
+        assert_eq!(junk(&other, "", scratch()), Some(Junk::Empty));
     }
 
     /// Front matter is read character by character too, and a Norwegian tag is
@@ -1403,53 +1073,6 @@ mod tests {
         let parsed = front("---\ntitle: Årsmøte\ntags: [løsning, ærlig, 日本語]\n---\n");
         assert_eq!(parsed.title.as_deref(), Some("Årsmøte"));
         assert_eq!(parsed.tags, vec!["løsning", "ærlig", "日本語"]);
-    }
-
-    #[test]
-    fn a_heading_keeps_its_hashes_so_its_level_is_still_countable() {
-        assert!(drawn("## Notes").contains("## Notes"));
-    }
-
-    #[test]
-    fn a_ticked_task_and_an_open_one_are_not_drawn_alike() {
-        assert_ne!(drawn("- [x] done"), drawn("- [ ] open"));
-        assert!(drawn("- [x] done").contains("done"));
-    }
-
-    #[test]
-    fn a_wikilink_and_a_tag_are_coloured_where_they_appear() {
-        let rendered = drawn("see [[other note]] about #rust");
-        assert!(
-            rendered.contains(&paint("[[other note]]", LINK_COLOR)),
-            "{rendered:?}"
-        );
-        assert!(
-            rendered.contains(&paint("#rust", TAG_COLOR)),
-            "{rendered:?}"
-        );
-    }
-
-    /// A `#` that opens no word is not a tag: `#1234` is an issue number and
-    /// `#fff` a colour, and both sit in the middle of prose.
-    #[test]
-    fn a_hash_that_is_not_a_tag_is_left_alone() {
-        for line in ["issue #1234", "C# is a language", "url#fragment"] {
-            assert_eq!(drawn(line), line, "{line:?}");
-        }
-    }
-
-    /// Inside a fence every character is the author's, `#` and `[[` included.
-    #[test]
-    fn a_fenced_block_is_not_rendered_as_markdown() {
-        let mut fenced = false;
-        markdown_line("```sh", &mut fenced);
-        assert!(fenced);
-        assert_eq!(
-            markdown_line("# not a heading", &mut fenced),
-            "# not a heading"
-        );
-        markdown_line("```", &mut fenced);
-        assert!(!fenced);
     }
 }
 
@@ -1616,39 +1239,6 @@ pub fn match_row(found: &Match, width: usize) -> (String, Vec<Tint>) {
 /// numbers its lines.
 const LINE_COLOR: u8 = 3;
 
-/// How much of a note the search preview shows either side of the match.
-const MATCH_CONTEXT: usize = 12;
-
-/// The preview pane for a search row: the matched line in the note around it,
-/// with the match itself marked.
-pub fn match_preview(found: &Match, text: &str) -> String {
-    let mut out = paint(&crate::term::one_row(&found.rel), DIM);
-    out.push('\n');
-
-    let line = found.line.max(1) as usize;
-    let first = line.saturating_sub(MATCH_CONTEXT).max(1);
-    let number_width = (line + MATCH_CONTEXT).to_string().len();
-
-    for (offset, body) in text
-        .lines()
-        .enumerate()
-        .skip(first - 1)
-        .take(MATCH_CONTEXT * 2 + 1)
-    {
-        let number = offset + 1;
-        let body = crate::term::one_row(body);
-        out.push('\n');
-        out.push_str(&paint(&format!("{number:>number_width$}"), DIM));
-        out.push(' ');
-        if number == line {
-            out.push_str(&format!("\x1b[1;38;5;{LINE_COLOR}m{body}\x1b[0m"));
-        } else {
-            out.push_str(&body);
-        }
-    }
-    out
-}
-
 // --- new notes --------------------------------------------------------------
 
 /// The name a new note takes when the user did not give one: the local date and
@@ -1746,9 +1336,6 @@ mod search_tests {
         }
         let back = decode_match(&encode_match(&found), &root()).unwrap();
         assert_eq!(back.rel, found.rel);
-
-        let rendered = match_preview(&found, "første\nandre\nærlig talt, en løsning\n");
-        assert!(rendered.contains("løsning"), "{rendered}");
     }
 
     #[test]
@@ -1852,7 +1439,11 @@ mod search_tests {
 /// The three shapes a note takes when it was never really written: one that was
 /// started and abandoned, one the editor named because nobody did, and one
 /// whose name is a timestamp somebody meant to replace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The order the variants are written in is the order a cleanup list is read
+/// in: the notes with nothing in them, which are the easiest call, before the
+/// ones that only want a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Junk {
     /// Nothing in it, or so little that nothing was said.
     Empty,
@@ -1895,7 +1486,14 @@ const MIN_BODY: usize = 24;
 /// Deliberately three rules and no more. Anything cleverer — a note nothing
 /// links to, a note nothing has opened in a year — is a judgement about what
 /// the vault is *for*, and this is a list to look through rather than a verdict.
-pub fn junk(note: &Note, body: &str) -> Option<Junk> {
+///
+/// `scratch` is the one note that is never on it, whatever it holds.
+pub fn junk(note: &Note, body: &str, scratch: &Path) -> Option<Junk> {
+    // Being empty is what the scratch note is *for* — it is emptied every time
+    // it is used up — so offering to delete it would offer that on every run.
+    if note.path == scratch {
+        return None;
+    }
     if body.chars().filter(|c| !c.is_whitespace()).count() < MIN_BODY {
         return Some(Junk::Empty);
     }
@@ -1931,40 +1529,68 @@ fn is_untitled(name: &str) -> bool {
 
 const UNTITLED: &str = "untitled";
 
-/// One row of the cleanup selector: why it is here, then where it is.
+/// Order a cleanup list: by what is wrong with each note, then smallest first.
+///
+/// Grouping by reason is what makes the list answerable — the empty ones are
+/// one decision taken together, and the ones that only want a name are another.
+/// Within a group the smallest come first, since size is what separates a note
+/// that was abandoned from one that was written and never titled. Ties go to
+/// the path, so a listing does not shuffle between runs.
+pub fn cleanup_order(candidates: &mut [(Note, Junk, u64)]) {
+    candidates.sort_by(|(a, a_reason, a_size), (b, b_reason, b_size)| {
+        a_reason
+            .cmp(b_reason)
+            .then_with(|| a_size.cmp(b_size))
+            .then_with(|| a.rel.cmp(&b.rel))
+    });
+}
+
+/// One row of the cleanup selector: why it is here, where it is, and how much
+/// of it there is.
 ///
 /// The reason leads because it is what the list is being read for — the same
 /// three words over and over, which is exactly what makes the odd one out
-/// visible.
+/// visible. The size trails, right-aligned, so the units stack into a column
+/// instead of wandering with the length of each number.
 pub fn junk_row(note: &Note, reason: Junk, bytes: u64, widths: &Widths) -> (String, Vec<Tint>) {
     let label = reason.label();
     let mut row = String::new();
     push_column(&mut row, label, JUNK_REASON_WIDTH);
     row.push_str(COLUMN_GAP);
-    push_column(
-        &mut row,
-        &note.rel,
-        widths.title.max(note.rel.chars().count()),
-    );
+    push_column(&mut row, &note.rel, widths.rel);
     row.push_str(COLUMN_GAP);
-    row.push_str(&size(bytes));
+    push_right(&mut row, &size(bytes), widths.size);
 
     let tints = vec![Tint {
         range: 0..label.chars().count(),
         color: reason.color(),
     }];
-    (row.trim_end().to_string(), tints)
+    (row, tints)
+}
+
+/// Append `text` padded to `width` characters on its left.
+fn push_right(row: &mut String, text: &str, width: usize) {
+    for _ in text.chars().count()..width {
+        row.push(' ');
+    }
+    row.push_str(text);
 }
 
 /// Wide enough for the longest of [`Junk::label`], so the paths line up.
 const JUNK_REASON_WIDTH: usize = 8;
 
 /// A file size a person reads rather than counts.
+///
+/// One letter, not two: the unit is the last character of every size, so a
+/// column of them lines up under itself and the eye reads down the letters
+/// rather than hunting for where each number ended.
 pub fn size(bytes: u64) -> String {
+    const K: u64 = 1024;
+    const M: u64 = K * K;
     match bytes {
-        0 => "empty".to_string(),
-        b if b < 1024 => format!("{b} B"),
-        b => format!("{} KB", b / 1024),
+        b if b < K => format!("{b}b"),
+        b if b < M => format!("{}k", b / K),
+        b => format!("{}M", b / M),
     }
 }
 

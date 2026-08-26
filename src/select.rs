@@ -105,9 +105,59 @@ pub fn checkout_preview(path: &str) -> Preview {
 fn file_preview_cmd(path: &str) -> String {
     let path = quote(path);
     format!(
-        "bat --color=always --style=plain --line-range=:200 -- {path} 2>/dev/null \
-         || head -n 200 -- {path}"
+        "bat --color=always --style=plain {theme} --line-range=:200 -- {path} 2>/dev/null \
+         || head -n 200 -- {path}",
+        theme = theme_flag(),
     )
+}
+
+/// How much of a file the preview shows either side of a line it is opened at.
+const LINE_CONTEXT: u32 = 12;
+
+/// The preview for one *line* of a file: the lines around it, with that one
+/// marked — for a search result, where the answer is a place rather than a file.
+///
+/// Line numbers are drawn here where an ordinary file preview leaves them out:
+/// the row said `note.md:41`, and a pane that cannot show 41 is asking to be
+/// counted down by hand.
+pub fn line_preview(path: &str, line: u32) -> Preview {
+    let quoted = quote(path);
+    let first = line.saturating_sub(LINE_CONTEXT).max(1);
+    let last = line.saturating_add(LINE_CONTEXT);
+    Preview::Command(format!(
+        "bat --color=always --style=numbers {theme} --highlight-line {line} \
+         --line-range={first}:{last} -- {quoted} 2>/dev/null \
+         || sed -n '{first},{last}p' -- {quoted}",
+        theme = theme_flag(),
+    ))
+}
+
+/// The `--theme` bat is given, as a flag ready to drop into a command line, or
+/// nothing when the configuration asked for nothing.
+///
+/// A theme bat does not know is not an error: it warns on stderr — which the
+/// preview command already discards — and falls back to its own default. So an
+/// older bat, or one whose theme set does not include the configured one, keeps
+/// working and simply looks like the user's own `bat` does.
+fn theme_flag() -> String {
+    match preview_theme() {
+        "" => String::new(),
+        theme => format!("--theme={}", quote(theme)),
+    }
+}
+
+/// The preview theme, resolved once from the configuration the first selector
+/// ran with.
+///
+/// Set rather than passed because a [`Preview::File`] builds its command inside
+/// [`SkimItem::preview`], which skim calls on a row long after the row was made
+/// and with no configuration in reach. One process reads one configuration —
+/// [`crate::Ctx`] resolves it once — so a value fixed for the life of the
+/// process is the same value every caller would have been handed.
+static PREVIEW_THEME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn preview_theme() -> &'static str {
+    PREVIEW_THEME.get().map(String::as_str).unwrap_or_default()
 }
 
 /// A stretch of a label drawn in its own colour, as a character range.
@@ -952,6 +1002,9 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     // skim does not stop when its input ends, so a selector whose terminal has
     // gone spins at 100% CPU until something kills the process.
     let _watch = crate::term::watch_for_hangup();
+
+    // Fixed here rather than threaded through every row: see [`PREVIEW_THEME`].
+    let _ = PREVIEW_THEME.set(cfg.preview_theme.clone());
 
     let mut builder = SkimOptionsBuilder::default();
     builder

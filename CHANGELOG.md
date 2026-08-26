@@ -13,6 +13,32 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `[selector] preview_theme` picks the `bat` theme every file preview is drawn
+  with, and defaults to Catppuccin Mocha. It is passed as `--theme`, so it wins
+  over `BAT_THEME` and your own `bat` config — a preview pane is scriv's to make
+  legible, and a theme chosen for reading whole files in a pager is not always
+  one. A theme your `bat` does not know draws in its default instead of failing.
+  `config check` now reports whether `bat` is installed at all.
+
+### Changed
+
+- A note preview shows the note. It used to show a summary scriv had assembled
+  — the front matter read out, the body redrawn with headings and tags coloured
+  in — and a preview that has rearranged what it is previewing is a preview of
+  something else. Every note pane is now the file itself, through the same
+  `bat` every other preview in scriv goes through, and a `note rg` hit opens at
+  its line with that line marked.
+- `note cleanup` reads down its list. Candidates are grouped by what is wrong
+  with them — the empty ones first, then the untitled, then the ones with no
+  name — and smallest first within each group, since size is what separates a
+  note that was abandoned from one that was written and never titled. Sizes are
+  right-aligned in one letter, `b`/`k`/`M`, so the units stack into a column
+  instead of wandering with the length of each number.
+- `note cleanup` never offers the scratch note. Being empty is what a scratch
+  note is *for*, so it would have been on the list every single run.
+
 ## v0.11.1
 
 *Released 2026-08-25*

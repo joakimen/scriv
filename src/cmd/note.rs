@@ -25,10 +25,6 @@ use crate::{Ctx, cmd, select, term};
 /// note is listed by its filename as though it had none.
 const HEAD_BYTES: u64 = 8 * 1024;
 
-/// How much of a note the preview pane reads. Bounded for the same reason a
-/// `Preview::Command` is: skim runs one on every move through the list.
-const PREVIEW_BYTES: u64 = 128 * 1024;
-
 /// The vault, expanded — the one directory `note` looks in.
 fn vault(ctx: &Ctx) -> Result<PathBuf> {
     let root = ctx.config.note.root.as_deref().ok_or_else(|| {
@@ -242,26 +238,19 @@ fn select_notes(ctx: &Ctx) -> Result<Option<Vec<String>>> {
 /// [`Preview::Deferred`]. A vault read up front is one file read per note for
 /// panes the user scrolls past.
 fn items(ctx: &Ctx, notes: &[Note]) -> Vec<SelectItem> {
-    let now = crate::unix_now();
     let cfg = ctx.config.note.clone();
     let offset = ctx.utc_offset();
 
     notes
         .iter()
         .map(|note| {
-            let color = note::row_color(note, &cfg);
-            let note = note.clone();
-            let cfg = cfg.clone();
-            let item = SelectItem::new(note::row(&note), note.path.to_string_lossy().into_owned())
-                .prefix(note::prefix(&note, offset));
-            let item = match color {
+            let item = SelectItem::new(note::row(note), note.path.to_string_lossy().into_owned())
+                .prefix(note::prefix(note, offset))
+                .preview(Preview::File);
+            match note::row_color(note, &cfg) {
                 Some(color) => item.color(color),
                 None => item,
-            };
-            item.preview(Preview::Deferred(Box::new(move || {
-                let text = read_head(&note.path, PREVIEW_BYTES).unwrap_or_default();
-                note::preview(&note, &cfg, &text, now, offset)
-            })))
+            }
         })
         .collect()
 }
@@ -322,19 +311,26 @@ fn with_extension(name: &str) -> String {
 pub fn scratch(ctx: &Ctx) -> Result<()> {
     let editor = ctx.note_editor()?;
     let root = vault(ctx)?;
-    let path = root.join(
-        ctx.config
-            .note
-            .scratch
-            .as_deref()
-            .unwrap_or(note::DEFAULT_SCRATCH),
-    );
+    let path = scratch_path(ctx, &root);
 
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     ctx.log.info(&format!("scratch note at {}", path.display()));
     cmd::edit::launch(ctx, &editor, &[path.to_string_lossy().into_owned()])
+}
+
+/// Where the scratch note lives. One place, because two commands need to agree
+/// about it: the one that opens it and the one that must never offer to delete
+/// it.
+fn scratch_path(ctx: &Ctx, root: &Path) -> PathBuf {
+    root.join(
+        ctx.config
+            .note
+            .scratch
+            .as_deref()
+            .unwrap_or(note::DEFAULT_SCRATCH),
+    )
 }
 
 // --- cleanup ----------------------------------------------------------------
@@ -347,7 +343,7 @@ pub fn scratch(ctx: &Ctx) -> Result<()> {
 /// vault only its owner can actually read.
 pub fn cleanup(ctx: &Ctx, yes: bool) -> Result<()> {
     let notes = load(ctx)?;
-    let candidates = junk(&notes);
+    let candidates = junk(ctx, &notes)?;
 
     if candidates.is_empty() {
         println!(
@@ -431,16 +427,19 @@ pub fn cleanup(ctx: &Ctx, yes: bool) -> Result<()> {
 /// The whole file is read rather than the head bound the listing uses: "empty"
 /// is a claim about all of it, and a note that only looks empty for the first
 /// eight kilobytes is not one.
-fn junk(notes: &[Note]) -> Vec<(Note, note::Junk, u64)> {
-    notes
+fn junk(ctx: &Ctx, notes: &[Note]) -> Result<Vec<(Note, note::Junk, u64)>> {
+    let scratch = scratch_path(ctx, &vault(ctx)?);
+    let mut candidates: Vec<(Note, note::Junk, u64)> = notes
         .iter()
         .filter_map(|note| {
             let bytes = note.path.metadata().map(|m| m.len()).unwrap_or(0);
             let text = read_head(&note.path, CLEANUP_BYTES).unwrap_or_default();
             let (_, body) = note::split_front_matter(&text);
-            note::junk(note, body).map(|reason| (note.clone(), reason, bytes))
+            note::junk(note, body, &scratch).map(|reason| (note.clone(), reason, bytes))
         })
-        .collect()
+        .collect();
+    note::cleanup_order(&mut candidates);
+    Ok(candidates)
 }
 
 /// How much of a note is read to decide whether there is anything in it. Well
@@ -448,30 +447,23 @@ fn junk(notes: &[Note]) -> Vec<(Note, note::Junk, u64)> {
 const CLEANUP_BYTES: u64 = 64 * 1024;
 
 fn junk_items(ctx: &Ctx, candidates: &[(Note, note::Junk, u64)]) -> Vec<SelectItem> {
-    let now = crate::unix_now();
-    let cfg = ctx.config.note.clone();
-    let offset = ctx.utc_offset();
     let widths = Widths::of(
         &candidates
             .iter()
             .map(|(n, _, _)| n.clone())
             .collect::<Vec<_>>(),
-        &cfg,
+        &ctx.config.note,
         ctx.home_str(),
-    );
+    )
+    .with_sizes(candidates.iter().map(|(_, _, bytes)| *bytes));
 
     candidates
         .iter()
         .map(|(note, reason, bytes)| {
             let (label, tints) = note::junk_row(note, *reason, *bytes, &widths);
-            let note = note.clone();
-            let cfg = cfg.clone();
             SelectItem::new(label, note.path.to_string_lossy().into_owned())
                 .tints(tints)
-                .preview(Preview::Deferred(Box::new(move || {
-                    let text = read_head(&note.path, PREVIEW_BYTES).unwrap_or_default();
-                    note::preview(&note, &cfg, &text, now, offset)
-                })))
+                .preview(Preview::File)
         })
         .collect()
 }
@@ -707,24 +699,13 @@ impl Iterator for Search {
             };
             self.found += 1;
             let (label, tints) = note::match_row(&found, MATCH_COLUMN);
-            let path = found.path.clone();
-            let line = found.line;
+            // The pane opens the note at the line that matched, marked, which
+            // is what a row saying `note.md:41` is promising.
+            let preview = select::line_preview(&found.path.to_string_lossy(), found.line);
             return Some(
                 SelectItem::new(label, note::encode_match(&found))
                     .tints(tints)
-                    .preview(Preview::Deferred(Box::new(move || {
-                        let text = read_head(&path, PREVIEW_BYTES).unwrap_or_default();
-                        note::match_preview(
-                            &note::Match {
-                                path: path.clone(),
-                                rel: path.to_string_lossy().into_owned(),
-                                line,
-                                column: 1,
-                                text: String::new(),
-                            },
-                            &text,
-                        )
-                    }))),
+                    .preview(preview),
             );
         }
     }
