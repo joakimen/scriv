@@ -285,6 +285,14 @@ pub struct SelectorConfig {
     /// Off, every such list keeps the order the command built it in, and
     /// nothing is recorded.
     pub recent: bool,
+    /// The `bat` theme every file preview is drawn with, for the panes that
+    /// show a file's contents.
+    ///
+    /// Passed to `bat` as `--theme`, so it overrides `BAT_THEME` and the user's
+    /// own `bat` config — a preview pane is scriv's to make legible, and a
+    /// theme picked for reading whole files in a pager is not always one.
+    /// Empty hands `bat` nothing and lets its own configuration decide.
+    pub preview_theme: String,
 }
 
 /// How `repo ls`/`sel` renders each repository's path.
@@ -319,9 +327,14 @@ impl Default for SelectorConfig {
             preview: true,
             preview_window: "right:50%".to_string(),
             recent: true,
+            preview_theme: DEFAULT_PREVIEW_THEME.to_string(),
         }
     }
 }
+
+/// The theme previews are drawn with when nothing says otherwise. Bundled with
+/// `bat` since 0.25; an older one warns and draws in its own default instead.
+const DEFAULT_PREVIEW_THEME: &str = "Catppuccin Mocha";
 
 /// The serialized shape of `config.toml`. Superseded keys are still spelled
 /// out so an old config is explained rather than half-read — serde ignores what
@@ -359,6 +372,7 @@ struct RawSelector {
     height: Option<String>,
     preview: Option<bool>,
     preview_window: Option<String>,
+    preview_theme: Option<String>,
     recent: Option<bool>,
     /// Superseded by `[repo] display`, present for detection only.
     display: Option<RepoDisplay>,
@@ -371,6 +385,7 @@ impl From<RawSelector> for SelectorConfig {
             height: raw.height.unwrap_or(default.height),
             preview: raw.preview.unwrap_or(default.preview),
             preview_window: raw.preview_window.unwrap_or(default.preview_window),
+            preview_theme: raw.preview_theme.unwrap_or(default.preview_theme),
             recent: raw.recent.unwrap_or(default.recent),
         }
     }
