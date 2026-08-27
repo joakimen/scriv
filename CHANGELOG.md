@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.13.0
+
+*Released 2026-08-27*
+
 ### Changed
 
 - A branch listing leads with the default branch rather than the one you are
