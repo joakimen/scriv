@@ -13,7 +13,7 @@ raised, never by hand.
 
 ## Unreleased
 
-## v0.12.1
+## v0.13.0
 
 *Released 2026-08-27*
 
