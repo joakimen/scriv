@@ -13,6 +13,17 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- A branch listing leads with the default branch rather than the one you are
+  standing on. From a feature branch, `scriv branch checkout` now opens with
+  `main` — or whatever `origin/HEAD` says the default is — already under the
+  cursor, so getting back is enter; the branch you are leaving is the row below
+  it, where selecting it did nothing anyway. Standing on the default branch
+  leaves the order as it was. A clone with no `origin/HEAD` — a repository
+  started with `git init` and pushed — falls back to a branch named `main`, then
+  `master`.
+
 ## v0.12.0
 
 *Released 2026-08-26*

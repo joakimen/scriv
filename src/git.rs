@@ -6,7 +6,8 @@
 //!
 //! One `for-each-ref` over `refs/heads` and `refs/remotes` enumerates both in a
 //! pass already ordered by commit recency; [`by_relevance`] regroups it without
-//! asking git anything more.
+//! asking git anything more, and the same pass carries `origin/HEAD` for
+//! [`default_branch`].
 
 use std::collections::HashSet;
 use std::io::ErrorKind;
@@ -106,6 +107,9 @@ pub struct Branch {
 pub struct RefLine {
     pub refname: String,
     pub head: bool,
+    /// What a symbolic ref points at, in short form: `origin/main` for
+    /// `refs/remotes/origin/HEAD`. Empty for every ordinary branch.
+    pub symref: String,
     /// Configured upstream in short form (`origin/main`), empty when unset.
     pub upstream: String,
     pub date: String,
@@ -128,9 +132,10 @@ pub fn parse_ref_lines(output: &str) -> Vec<RefLine> {
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let mut fields = line.splitn(5, SEP);
+            let mut fields = line.splitn(6, SEP);
             let refname = fields.next()?;
             let head = fields.next()?;
+            let symref = fields.next()?;
             let upstream = fields.next()?;
             let date = fields.next()?;
             // The subject is last and unsplit, so separators inside it survive.
@@ -141,6 +146,7 @@ pub fn parse_ref_lines(output: &str) -> Vec<RefLine> {
             Some(RefLine {
                 refname: refname.to_string(),
                 head: head.trim() == "*",
+                symref: symref.to_string(),
                 upstream: upstream.to_string(),
                 date: date.to_string(),
                 subject: subject.to_string(),
@@ -229,23 +235,76 @@ pub fn classify(lines: &[RefLine]) -> Vec<Branch> {
     branches
 }
 
-/// Which block of the listing a branch belongs in: the current branch, then
-/// what is already in this clone, then what is only on a remote.
-fn tier(branch: &Branch) -> u8 {
-    match (branch.head, branch.kind) {
-        (true, _) => 0,
-        (_, BranchKind::Remote) => 2,
-        _ => 1,
+/// The repository's default branch, as a bare branch name (`main`), from the
+/// same `for-each-ref` pass the branch list comes from.
+///
+/// `refs/remotes/<remote>/HEAD` is the answer where it exists, but only `git
+/// clone` writes it: a repository started with `git init` and pushed has none
+/// until someone runs `git remote set-head`. The fallback is the name, since a
+/// repository whose default is neither `main` nor `master` and that is also
+/// missing that ref has nothing left to ask.
+pub fn default_branch(lines: &[RefLine]) -> Option<String> {
+    let from_head = lines
+        .iter()
+        .filter(|line| line.refname.starts_with("refs/remotes/") && line.refname.ends_with("/HEAD"))
+        .find_map(|line| split_remote(&line.symref));
+    if let Some((_, branch)) = from_head {
+        return Some(branch.to_string());
+    }
+
+    let known: HashSet<&str> = lines
+        .iter()
+        .filter_map(|line| match line.refname.strip_prefix("refs/heads/") {
+            Some(name) => Some(name),
+            None => line
+                .refname
+                .strip_prefix("refs/remotes/")
+                .and_then(split_remote)
+                .map(|(_, branch)| branch),
+        })
+        .collect();
+    ["main", "master"]
+        .into_iter()
+        .find(|name| known.contains(name))
+        .map(str::to_string)
+}
+
+/// Whether `branch` is the branch `default` names. A remote-only row carries
+/// its remote in the name, so `origin/main` is the default where `main` is,
+/// while a local `feature/main` is not.
+fn is_default(branch: &Branch, default: &str) -> bool {
+    match branch.kind {
+        BranchKind::Remote => split_remote(&branch.name).is_some_and(|(_, name)| name == default),
+        _ => branch.name == default,
     }
 }
 
-/// Order branches by how likely one is to be the one wanted: the current
-/// branch, then local branches, then remote-only ones, each block most recently
-/// committed first. The recency half comes from git's own `--sort`, so this
-/// only regroups it.
-pub fn by_relevance(mut branches: Vec<Branch>) -> Vec<Branch> {
+/// Which block of the listing a branch belongs in: the default branch, then the
+/// current one, then what is already in this clone, then what is only on a
+/// remote.
+fn tier(branch: &Branch, default: Option<&str>) -> u8 {
+    if default.is_some_and(|default| is_default(branch, default)) {
+        return 0;
+    }
+    match (branch.head, branch.kind) {
+        (true, _) => 1,
+        (_, BranchKind::Remote) => 3,
+        _ => 2,
+    }
+}
+
+/// Order branches by how likely one is to be the one wanted: the default
+/// branch, then the current branch, then local branches, then remote-only ones,
+/// each block most recently committed first. The recency half comes from git's
+/// own `--sort`, so this only regroups it.
+///
+/// The default branch leads because the list is mostly read on the way off a
+/// feature branch, and the row above it — the branch already checked out —
+/// would be a selection that does nothing. Standing on the default branch
+/// leaves one row in both blocks and the order unchanged.
+pub fn by_relevance(mut branches: Vec<Branch>, default: Option<&str>) -> Vec<Branch> {
     // Stable, so committer-date order survives inside each block.
-    branches.sort_by_key(tier);
+    branches.sort_by_key(|branch| tier(branch, default));
     branches
 }
 
@@ -612,12 +671,12 @@ pub fn current_branch() -> Option<String> {
     (!branch.is_empty() && branch != "HEAD").then_some(branch)
 }
 
-/// Every branch in the repository, ordered by [`by_relevance`]: the current
-/// branch, then local branches, then remote-only ones, newest first within
-/// each.
+/// Every branch in the repository, ordered by [`by_relevance`]: the default
+/// branch, then the current one, then local branches, then remote-only ones,
+/// newest first within each.
 pub fn branches() -> Result<Vec<Branch>> {
     let format = format!(
-        "--format=%(refname){SEP}%(HEAD){SEP}%(upstream:short){SEP}%(committerdate:relative){SEP}%(subject)"
+        "--format=%(refname){SEP}%(HEAD){SEP}%(symref:short){SEP}%(upstream:short){SEP}%(committerdate:relative){SEP}%(subject)"
     );
     let out = capture(&[
         "for-each-ref",
@@ -627,7 +686,9 @@ pub fn branches() -> Result<Vec<Branch>> {
         "refs/remotes",
     ])
     .context("listing branches")?;
-    Ok(by_relevance(classify(&parse_ref_lines(&out))))
+    let lines = parse_ref_lines(&out);
+    let default = default_branch(&lines);
+    Ok(by_relevance(classify(&lines), default.as_deref()))
 }
 
 /// Every working tree of the repository, in git's own order: the main tree
@@ -790,15 +851,16 @@ mod tests {
         RefLine {
             refname: refname.to_string(),
             head,
+            symref: String::new(),
             upstream: upstream.to_string(),
             date: "2 days ago".to_string(),
             subject: "some commit".to_string(),
         }
     }
 
-    fn render(rows: &[(&str, &str, &str, &str, &str)]) -> String {
+    fn render(rows: &[(&str, &str, &str, &str, &str, &str)]) -> String {
         rows.iter()
-            .map(|(r, h, u, d, s)| format!("{r}{SEP}{h}{SEP}{u}{SEP}{d}{SEP}{s}"))
+            .map(|(r, h, y, u, d, s)| format!("{r}{SEP}{h}{SEP}{y}{SEP}{u}{SEP}{d}{SEP}{s}"))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -806,29 +868,53 @@ mod tests {
     #[test]
     fn parses_ref_rows() {
         let out = render(&[
-            ("refs/heads/main", "*", "origin/main", "2 hours ago", "init"),
-            ("refs/remotes/origin/main", " ", "", "2 hours ago", "init"),
+            (
+                "refs/heads/main",
+                "*",
+                "",
+                "origin/main",
+                "2 hours ago",
+                "init",
+            ),
+            (
+                "refs/remotes/origin/HEAD",
+                " ",
+                "origin/main",
+                "",
+                "2 hours ago",
+                "init",
+            ),
+            (
+                "refs/remotes/origin/main",
+                " ",
+                "",
+                "",
+                "2 hours ago",
+                "init",
+            ),
         ]);
         let got = parse_ref_lines(&out);
-        assert_eq!(got.len(), 2);
+        assert_eq!(got.len(), 3);
         assert_eq!(got[0].refname, "refs/heads/main");
         assert!(got[0].head);
+        assert_eq!(got[0].symref, "");
         assert_eq!(got[0].upstream, "origin/main");
         assert_eq!(got[0].date, "2 hours ago");
-        assert_eq!(got[1].refname, "refs/remotes/origin/main");
-        assert!(!got[1].head);
+        assert_eq!(got[1].symref, "origin/main");
+        assert_eq!(got[2].refname, "refs/remotes/origin/main");
+        assert!(!got[2].head);
     }
 
     #[test]
     fn subject_keeps_trailing_separators() {
-        let out = format!("refs/heads/main{SEP} {SEP}{SEP}now{SEP}fix: a{SEP}b");
+        let out = format!("refs/heads/main{SEP} {SEP}{SEP}{SEP}now{SEP}fix: a{SEP}b");
         let got = parse_ref_lines(&out);
         assert_eq!(got[0].subject, format!("fix: a{SEP}b"));
     }
 
     #[test]
     fn skips_malformed_rows() {
-        let out = format!("refs/heads/main{SEP}*\n\nrefs/heads/ok{SEP} {SEP}{SEP}now{SEP}s");
+        let out = format!("refs/heads/main{SEP}*\n\nrefs/heads/ok{SEP} {SEP}{SEP}{SEP}now{SEP}s");
         let got = parse_ref_lines(&out);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].refname, "refs/heads/ok");
@@ -916,12 +1002,15 @@ mod tests {
 
     #[test]
     fn relevance_groups_current_then_local_then_remote() {
-        let got = by_relevance(classify(&[
-            line("refs/remotes/origin/hot", false, ""),
-            line("refs/heads/scratch", false, ""),
-            line("refs/heads/main", true, "origin/main"),
-            line("refs/remotes/origin/main", false, ""),
-        ]));
+        let got = by_relevance(
+            classify(&[
+                line("refs/remotes/origin/hot", false, ""),
+                line("refs/heads/scratch", false, ""),
+                line("refs/heads/main", true, "origin/main"),
+                line("refs/remotes/origin/main", false, ""),
+            ]),
+            None,
+        );
         assert_eq!(
             got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
             vec!["main", "scratch", "origin/hot"]
@@ -930,12 +1019,15 @@ mod tests {
 
     #[test]
     fn relevance_keeps_commit_order_inside_each_group() {
-        let got = by_relevance(classify(&[
-            line("refs/heads/newest", false, ""),
-            line("refs/remotes/origin/newest-remote", false, ""),
-            line("refs/heads/older", false, ""),
-            line("refs/remotes/origin/oldest-remote", false, ""),
-        ]));
+        let got = by_relevance(
+            classify(&[
+                line("refs/heads/newest", false, ""),
+                line("refs/remotes/origin/newest-remote", false, ""),
+                line("refs/heads/older", false, ""),
+                line("refs/remotes/origin/oldest-remote", false, ""),
+            ]),
+            None,
+        );
         assert_eq!(
             got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
             vec![
@@ -949,14 +1041,130 @@ mod tests {
 
     #[test]
     fn relevance_handles_no_current_branch() {
-        let got = by_relevance(classify(&[
-            line("refs/remotes/origin/feature", false, ""),
-            line("refs/heads/scratch", false, ""),
-        ]));
+        let got = by_relevance(
+            classify(&[
+                line("refs/remotes/origin/feature", false, ""),
+                line("refs/heads/scratch", false, ""),
+            ]),
+            None,
+        );
         assert_eq!(
             got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
             vec!["scratch", "origin/feature"]
         );
+    }
+
+    /// The list is read on the way off a feature branch, so the branch being
+    /// left is not the row the cursor opens on.
+    #[test]
+    fn relevance_leads_with_the_default_branch_when_it_is_not_checked_out() {
+        let got = by_relevance(
+            classify(&[
+                line("refs/heads/feat/api", true, "origin/feat/api"),
+                line("refs/remotes/origin/feat/api", false, ""),
+                line("refs/heads/scratch", false, ""),
+                line("refs/heads/main", false, "origin/main"),
+                line("refs/remotes/origin/main", false, ""),
+                line("refs/remotes/origin/hot", false, ""),
+            ]),
+            Some("main"),
+        );
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "feat/api", "scratch", "origin/hot"]
+        );
+    }
+
+    #[test]
+    fn relevance_leaves_the_order_alone_on_the_default_branch() {
+        let got = by_relevance(
+            classify(&[
+                line("refs/heads/main", true, "origin/main"),
+                line("refs/remotes/origin/main", false, ""),
+                line("refs/heads/scratch", false, ""),
+            ]),
+            Some("main"),
+        );
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "scratch"]
+        );
+    }
+
+    /// A clone that was never on the default branch has it only as a remote
+    /// ref, which is still the row to lead with.
+    #[test]
+    fn relevance_leads_with_a_default_branch_that_is_only_on_the_remote() {
+        let got = by_relevance(
+            classify(&[
+                line("refs/heads/feat/api", true, ""),
+                line("refs/remotes/origin/main", false, ""),
+            ]),
+            Some("main"),
+        );
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["origin/main", "feat/api"]
+        );
+    }
+
+    /// `feature/main` shares its last component with the default branch and is
+    /// not it.
+    #[test]
+    fn relevance_matches_the_whole_name_of_a_local_branch() {
+        let got = by_relevance(
+            classify(&[
+                line("refs/heads/feature/main", false, ""),
+                line("refs/heads/main", false, ""),
+            ]),
+            Some("main"),
+        );
+        assert_eq!(
+            got.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "feature/main"]
+        );
+    }
+
+    #[test]
+    fn the_default_branch_comes_from_the_remote_head_ref() {
+        let mut head = line("refs/remotes/origin/HEAD", false, "");
+        head.symref = "origin/trunk".to_string();
+        let lines = vec![
+            head,
+            line("refs/heads/main", false, ""),
+            line("refs/remotes/origin/trunk", false, ""),
+        ];
+        assert_eq!(default_branch(&lines).as_deref(), Some("trunk"));
+    }
+
+    /// `git init` and a push leave no `origin/HEAD` to read.
+    #[test]
+    fn the_default_branch_falls_back_to_the_name() {
+        let lines = vec![
+            line("refs/heads/feat/api", true, ""),
+            line("refs/heads/master", false, ""),
+        ];
+        assert_eq!(default_branch(&lines).as_deref(), Some("master"));
+
+        let lines = vec![
+            line("refs/heads/feat/api", true, ""),
+            line("refs/remotes/origin/main", false, ""),
+            line("refs/heads/master", false, ""),
+        ];
+        assert_eq!(
+            default_branch(&lines).as_deref(),
+            Some("main"),
+            "master won over main"
+        );
+    }
+
+    #[test]
+    fn a_repository_with_no_recognisable_default_branch_has_none() {
+        let lines = vec![
+            line("refs/heads/feat/api", true, ""),
+            line("refs/heads/scratch", false, ""),
+        ];
+        assert_eq!(default_branch(&lines), None);
     }
 
     fn sample() -> Vec<Branch> {

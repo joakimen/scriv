@@ -905,6 +905,23 @@ fn worktree_rm_without_a_terminal_names_the_flag_that_skips_the_question() {
     assert!(path.exists(), "the tree went without being confirmed");
 }
 
+// --- branch listing ---------------------------------------------------------
+
+/// The list is mostly read on the way off a feature branch, so the default
+/// branch leads it — here without an `origin/HEAD` to read, since `git init`
+/// writes none.
+#[test]
+fn branch_ls_leads_with_the_default_branch_from_a_feature_branch() {
+    let sandbox = Sandbox::new();
+    let (main, feat) = mk_worktree_repo(sandbox.home());
+    git_in(&main, sandbox.home(), &["branch", "spike"]);
+
+    let run = sandbox.run_in(&feat, &["branch", "ls"]);
+    run.ok();
+    let listed: Vec<&str> = run.stdout.lines().collect();
+    assert_eq!(listed, vec!["main", "feat", "spike"], "{listed:?}");
+}
+
 // --- branch deletion --------------------------------------------------------
 
 #[test]

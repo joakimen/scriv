@@ -140,8 +140,9 @@ enum Command {
     },
     /// Manage local and remote Git branches
     ///
-    /// Listings lead with the current branch, then local branches, then
-    /// remote-only ones, each most recently committed to first. In a branch
+    /// Listings lead with the default branch, then the current one, then local
+    /// branches, then remote-only ones, each most recently committed to first —
+    /// so leaving a feature branch is the first row of the selector. In a branch
     /// selector, ctrl-r fetches from every remote and reloads the list without
     /// closing the selector.
     #[command(visible_alias = "b")]

@@ -4,8 +4,9 @@
 //! live. Selecting a remote-only branch creates the local branch and sets its
 //! upstream.
 //!
-//! Every listing arrives ordered by [`git::by_relevance`]: current branch, then
-//! local, then remote-only, newest first within each.
+//! Every listing arrives ordered by [`git::by_relevance`]: the default branch,
+//! then the current one, then local, then remote-only, newest first within
+//! each.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -380,6 +381,7 @@ mod tests {
             RefLine {
                 refname: "refs/heads/main".into(),
                 head: true,
+                symref: String::new(),
                 upstream: "origin/main".into(),
                 date: "2 hours ago".into(),
                 subject: "init".into(),
@@ -387,6 +389,7 @@ mod tests {
             RefLine {
                 refname: "refs/remotes/origin/main".into(),
                 head: false,
+                symref: String::new(),
                 upstream: String::new(),
                 date: "2 hours ago".into(),
                 subject: "init".into(),
@@ -394,6 +397,7 @@ mod tests {
             RefLine {
                 refname: "refs/remotes/origin/feature".into(),
                 head: false,
+                symref: String::new(),
                 upstream: String::new(),
                 date: "3 days ago".into(),
                 subject: "wip".into(),
@@ -428,6 +432,7 @@ mod tests {
         let rows = classify(&[RefLine {
             refname: "refs/heads/café".into(),
             head: false,
+            symref: String::new(),
             upstream: String::new(),
             date: "now".into(),
             subject: "one".into(),
