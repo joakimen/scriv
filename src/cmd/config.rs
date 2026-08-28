@@ -310,7 +310,7 @@ fn resolve_on_path(
 }
 
 /// [`resolve_on_path`] against this process's `PATH` and the filesystem.
-fn on_path(program: &str) -> Option<PathBuf> {
+pub(crate) fn on_path(program: &str) -> Option<PathBuf> {
     resolve_on_path(program, std::env::var("PATH").ok().as_deref(), |p| {
         p.exists()
     })
@@ -595,6 +595,15 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         "ps",
         true,
         "`proc` reads the process table through it",
+    ));
+    // The one row `project` earns: everything else it runs is whatever the
+    // project in front of it asks for, and a missing one of those is already
+    // reported where it is skipped.
+    checks.push(tool_check(
+        "mise",
+        "mise",
+        false,
+        "`project` runs a project's own tools through it (https://mise.jdx.dev)",
     ));
     checks.push(history_check(ctx));
     checks.push(files_check(ctx));

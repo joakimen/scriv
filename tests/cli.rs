@@ -161,7 +161,8 @@ fn help_lists_every_top_level_command() {
     let run = sandbox.run(&["--help"]);
     run.ok();
     for command in [
-        "repo", "file", "edit", "branch", "worktree", "pr", "proc", "history", "config", "init",
+        "repo", "file", "edit", "branch", "worktree", "pr", "proc", "history", "project", "config",
+        "init",
     ] {
         assert!(
             run.stdout.contains(command),
@@ -261,6 +262,7 @@ fn the_documented_abbreviations_resolve() {
         &["h", "--help"][..],
         &["n", "--help"][..],
         &["pc", "--help"][..],
+        &["pj", "--help"][..],
         &["branch", "co", "--help"][..],
         &["repo", "list", "--help"][..],
     ] {
@@ -2181,4 +2183,172 @@ fn note_cleanup_protects_the_configured_scratch_note() {
     let run = sandbox.run(&["note", "cleanup"]);
     run.ok();
     assert!(run.stdout.contains("Nothing to clean up"), "{}", run.stdout);
+}
+
+// --- project ----------------------------------------------------------------
+
+/// A directory with the manifests of `names`, standing in for a project.
+fn mk_project(sandbox: &Sandbox, files: &[(&str, &str)]) -> PathBuf {
+    let dir = sandbox.home().join("project");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, contents) in files {
+        std::fs::write(dir.join(name), contents).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn project_deps_dry_run_names_a_command_per_detected_toolchain() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(
+        &sandbox,
+        &[
+            ("mise.toml", "[tools]\nnode = \"22\"\n"),
+            ("Cargo.toml", "[package]\nname = \"x\"\n"),
+            ("package.json", "{}"),
+            ("bun.lock", ""),
+        ],
+    );
+
+    let run = sandbox.run_in(&dir, &["project", "deps", "--dry-run"]);
+    run.ok();
+
+    let lines = run.lines();
+    assert_eq!(lines.len(), 3, "{}", run.stdout);
+    assert!(lines[0].ends_with("$ mise install"), "{}", lines[0]);
+    assert!(lines[1].ends_with("$ cargo fetch"), "{}", lines[1]);
+    assert!(lines[2].ends_with("$ bun install"), "{}", lines[2]);
+}
+
+#[test]
+fn project_deps_dump_lists_what_each_manifest_declares_with_its_context() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(
+        &sandbox,
+        &[
+            (
+                "Cargo.toml",
+                "[dependencies]\nanyhow = \"1\"\n\n[dev-dependencies]\ntempfile = \"3\"\n",
+            ),
+            (
+                "package.json",
+                r#"{"devDependencies": {"typescript": "^5.7.0"}}"#,
+            ),
+        ],
+    );
+
+    let run = sandbox.run_in(&dir, &["project", "deps", "--dump"]);
+    run.ok();
+
+    assert_eq!(
+        run.lines(),
+        vec![
+            "rust  Cargo.toml",
+            "  dependencies",
+            "    anyhow    1",
+            "  dev-dependencies",
+            "    tempfile  3",
+            "",
+            "npm  package.json",
+            "  devDependencies",
+            "    typescript  ^5.7.0",
+        ],
+        "{}",
+        run.stdout
+    );
+}
+
+/// The alias `i` is bound to in fish, so the flag has to reach the same place
+/// through the group's one-letter form.
+#[test]
+fn the_project_group_answers_to_its_abbreviation() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(&sandbox, &[("go.mod", "module x\n")]);
+
+    let run = sandbox.run_in(&dir, &["pj", "deps", "-n"]);
+    run.ok();
+    assert!(run.stdout.contains("$ go mod download"), "{}", run.stdout);
+}
+
+#[test]
+fn dumping_and_dry_running_the_same_run_is_refused() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["project", "deps", "--dump", "--dry-run"]);
+    run.code(2);
+}
+
+#[test]
+fn a_directory_with_nothing_recognisable_in_it_is_not_a_failure() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(&sandbox, &[("README.md", "prose")]);
+
+    let run = sandbox.run_in(&dir, &["project", "deps"]);
+    run.ok();
+    assert_eq!(run.stdout, "", "printed a result it does not have");
+    assert!(
+        run.stderr.contains("nothing recognisable"),
+        "{}",
+        run.stderr
+    );
+}
+
+#[test]
+fn project_build_runs_the_committed_task_runner_rather_than_the_toolchain() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(
+        &sandbox,
+        &[
+            ("Makefile", "all:\n\t@true\n"),
+            ("Cargo.toml", "[package]\n"),
+        ],
+    );
+
+    let run = sandbox.run_in(&dir, &["project", "build", "-n"]);
+    run.ok();
+
+    let lines = run.lines();
+    assert_eq!(lines.len(), 1, "{}", run.stdout);
+    assert!(lines[0].starts_with("make  Makefile"), "{}", lines[0]);
+    assert!(lines[0].ends_with("$ make"), "{}", lines[0]);
+}
+
+#[test]
+fn two_task_runners_stop_the_build_rather_than_one_being_guessed_at() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(&sandbox, &[("Taskfile.yml", ""), ("Makefile", "")]);
+
+    let run = sandbox.run_in(&dir, &["project", "build"]);
+    run.code(1);
+    assert!(run.stderr.contains("Taskfile.yml"), "{}", run.stderr);
+    assert!(run.stderr.contains("Makefile"), "{}", run.stderr);
+}
+
+#[test]
+fn a_project_nothing_knows_how_to_build_says_so_and_fails() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(&sandbox, &[("requirements.txt", "rich\n")]);
+
+    let run = sandbox.run_in(&dir, &["project", "build"]);
+    run.code(1);
+    assert!(run.stderr.contains("nothing here builds"), "{}", run.stderr);
+}
+
+#[test]
+fn project_build_runs_each_toolchain_it_found_when_there_is_no_runner() {
+    let sandbox = Sandbox::new();
+    let dir = mk_project(
+        &sandbox,
+        &[
+            ("go.mod", "module x\n"),
+            ("package.json", r#"{"scripts": {"build": "tsc"}}"#),
+        ],
+    );
+
+    let run = sandbox.run_in(&dir, &["project", "build", "-n"]);
+    run.ok();
+
+    let lines = run.lines();
+    assert_eq!(lines.len(), 2, "{}", run.stdout);
+    assert!(lines[0].ends_with("$ go build ./..."), "{}", lines[0]);
+    assert!(lines[1].ends_with("$ npm run build"), "{}", lines[1]);
 }

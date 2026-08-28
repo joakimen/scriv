@@ -4,8 +4,8 @@
 //!
 //! Top-level commands: `repo`, `file`, `note`, `branch`, `worktree`, `pr`,
 //! `proc` and `history` work with the things scriv finds; `edit` opens a file
-//! from the directory the user is in; `config` manages its configuration;
-//! `init` prints shell integration.
+//! from the directory the user is in and `project` builds it; `config` manages
+//! its configuration; `init` prints shell integration.
 
 use std::process::ExitCode;
 
@@ -209,6 +209,21 @@ enum Command {
     History {
         #[command(subcommand)]
         command: HistoryCmd,
+    },
+    /// Build the project you are in, and install what it needs
+    ///
+    /// Both verbs read the directory rather than a set scriv keeps, so there is
+    /// nothing here to list or select. What a project is comes from the files
+    /// in its root — `Cargo.toml`, `package.json` and its lockfile, `go.mod`,
+    /// `pom.xml`, `deps.edn`, a `mise.toml`, a `*.tf` — and a polyglot
+    /// repository is every toolchain it holds, not the first one found.
+    ///
+    /// A tool the project asks for and the machine does not have is a skip
+    /// rather than a failure.
+    #[command(visible_alias = "pj")]
+    Project {
+        #[command(subcommand)]
+        command: ProjectCmd,
     },
     /// Manage the configuration
     #[command(visible_alias = "c")]
@@ -743,6 +758,46 @@ enum HistoryCmd {
 }
 
 #[derive(Subcommand)]
+enum ProjectCmd {
+    /// Install this project's dependencies
+    ///
+    /// `mise install` runs first where the project pins its tools with mise,
+    /// and the rest then run at once under `mise exec` — so a toolchain it just
+    /// installed is found without re-entering the shell. Each command's output
+    /// is held back and shown only if it failed.
+    ///
+    /// The fish integration calls this `i`.
+    Deps {
+        /// Print the commands that would run, without running them
+        #[arg(short = 'n', long, conflicts_with = "dump")]
+        dry_run: bool,
+        /// Print what the manifests declare, and install nothing
+        ///
+        /// Every detected toolchain's manifest, read for the dependencies it
+        /// names and the role it gives each one — npm's `devDependencies`,
+        /// Cargo's `[build-dependencies]`, a Maven scope, a Clojure alias.
+        /// What is written in the file, not what a resolver would make of it:
+        /// no lockfile is read and nothing transitive is listed.
+        #[arg(long)]
+        dump: bool,
+    },
+    /// Build this project
+    ///
+    /// A committed task runner is the build wherever there is one — `task`,
+    /// `make` or `just`, whichever the repository has, running its default
+    /// target. Two of them is an error rather than a guess. Without one, each
+    /// detected toolchain builds itself in turn, and the first failure ends the
+    /// run.
+    ///
+    /// `--verbose` is unnecessary: the terminal is handed to each command.
+    Build {
+        /// Print the commands that would run, without running them
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ConfigCmd {
     /// Generate a starter configuration file
     Init {
@@ -907,6 +962,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Command::History { command } => match command {
             HistoryCmd::Ls { status } => cmd::history::ls(&ctx, status),
             HistoryCmd::Sel { query, print0 } => cmd::history::sel(&ctx, query.as_deref(), print0),
+        },
+        Command::Project { command } => match command {
+            ProjectCmd::Deps { dry_run, dump } => cmd::project::deps(&ctx, dry_run, dump),
+            ProjectCmd::Build { dry_run } => cmd::project::build(&ctx, dry_run),
         },
         Command::Config { command } => match command {
             ConfigCmd::Init { force } => cmd::config::init(&ctx, force),

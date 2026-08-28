@@ -11,6 +11,12 @@ impl Logger {
         Self { verbose }
     }
 
+    /// Whether informational messages are printed — and, for a command that
+    /// has more to say than a message, whether to say it.
+    pub fn verbose(&self) -> bool {
+        self.verbose
+    }
+
     pub fn warn(&self, msg: &str) {
         eprintln!("warn: {msg}");
     }
