@@ -1,5 +1,6 @@
 //! `scriv` — select repositories, files, notes, git branches and worktrees,
-//! GitHub pull requests and running processes from one fuzzy finder.
+//! GitHub pull requests and running processes from one fuzzy finder, and build
+//! and install the project you are standing in.
 //!
 //! The crate is split into an I/O-free core and an imperative shell: the
 //! [`cmd`] modules read the environment, touch the filesystem, shell out to
@@ -16,6 +17,7 @@ pub mod logger;
 pub mod note;
 pub mod path;
 pub mod proc;
+pub mod project;
 pub mod recent;
 pub mod repo;
 pub mod select;

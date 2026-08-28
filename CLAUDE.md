@@ -91,10 +91,16 @@ publishes the crate.
    not done without a doc comment, a renamed one not until the old wording is
    gone. Aliases are `visible_alias`, never `alias`. `EXAMPLES` is three lines,
    and a new command earns one only by displacing one.
-2. **README.md.** A page, not a manual. Its command table must match
-   `scriv <group> --help`, its key-binding sentence `scriv_key_bindings`, its
-   `Install` line the platforms and external tools. A new flag does not belong
-   there; a new command *group* does, as one row.
+2. **README.md.** Read it on every change to `src/` — not only when adding a
+   command — and change every sentence the edit has made untrue. It is the page
+   most people read instead of the binary, and it goes stale silently. Its
+   command table must match `scriv <group> --help`, its key-binding sentence
+   `scriv_key_bindings`, its `Install` line the platforms and external tools,
+   and the prose under each heading what the code now does.
+
+   Still a page, not a manual: reading it is what is required on every change,
+   not adding to it. A new flag does not belong there; a new command *group*
+   does, as one row.
 3. **`docs/demo.gif`.** Re-record with `make demo` (needs `vhs`, ~30s) when
    anything changed what a selector draws. CI only plays the tape, so a stale
    GIF is invisible. When nothing changed on screen, say so in the PR.
@@ -145,21 +151,23 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   exits with the child's status rather than printing a vaguer line over git's.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
   `SCRIV_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
-- **`repo`/`file`/`branch`/`worktree`/`pr`/`history` are registries; `edit` is
-  not.** A registry is a set, with `ls`/`sel` and verbs over it.
-  `edit file`/`edit dir` name what is looked for below `$PWD`, so neither has
-  an `ls` — do not add one, and do not file ambient-directory work under a noun
-  group. `repo open` is the sole exception, and only to skip a question it can
-  already answer.
+- **`repo`/`file`/`branch`/`worktree`/`pr`/`history` are registries; `edit` and
+  `project` are not.** A registry is a set, with `ls`/`sel` and verbs over it.
+  `edit file`/`edit dir` name what is looked for below `$PWD` and `project`
+  acts on `$PWD` itself, so none of them has an `ls` — do not add one. `repo
+  open` is the sole exception, and only to skip a question it can already
+  answer.
 - **A verb is abbreviated in its own name, not an alias beside it.** `ls`, `sel`
   and `rm` get no long form (`list`, `co` and `switch` predate the rule). Groups
-  take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c` — and `pc`, as `p` meets
-  `pr`.
+  take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c` — and two where the letter
+  is spoken for: `pc` and `pj`, as `p` meets `pr`.
 - **Key bindings prefer `ctrl-<letter>` and never `alt-`**, which fish mostly
   presets. Displacing a fish preset is deliberate and named above
   `scriv_key_bindings`. Function keys are the fallback, `f4`/`f5` excepted.
 - **Only `cd` needs a fish wrapper**, since a child cannot change its parent's
   directory — hence `repo sel` printing a path. `scriv edit` spawns directly.
+  `fe`, `kl` and `i` are the exception and stay one: names a pipeline already
+  had before scriv, kept so muscle memory reaches the new command.
 
 ## The demo
 
