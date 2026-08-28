@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 
 use crate::path::expand_home_dir;
-use crate::{Ctx, cmd, files, gh, history, repo, term};
+use crate::{Ctx, binding, cmd, files, gh, history, repo, term};
 
 /// A commented starter config. Settings are grouped by the command that reads
 /// them; users edit it to taste.
@@ -85,6 +85,38 @@ ignore = ["node_modules", "target"]
 # session — `set -U fish_history work` reads `work_history` instead — since fish
 # does not export that variable for scriv to find.
 # file = "~/.local/share/fish/work_history"
+
+# `scriv init`: what the shell integration defines.
+#
+# Neither table holds shell code — each names an action scriv defines, so the
+# same configuration serves fish and any shell scriv later learns to write for.
+# Between them the two tables below name every action there is, and `scriv
+# config check` says whether yours resolve.
+#
+# A table written here replaces the defaults rather than adding to them, which
+# is how a key is unbound or a name dropped: leave it out. Both tables below are
+# the defaults exactly, so uncommenting one and editing it changes only what you
+# edited. Leaving them commented keeps whatever scriv ships.
+#
+# Keys are spelled as fish spells them.
+# [shell.bindings]
+# ctrl-o = "repo-cd"          # cd to a repository
+# ctrl-t = "worktree-cd"      # cd to a worktree of this repository
+# f1     = "repo-open"        # open a repository on GitHub
+# f2     = "pr-open"          # open this branch's pull request, or the list
+# f3     = "file-edit"        # open a tracked file in $EDITOR
+# ctrl-g = "branch-checkout"  # check out a branch
+# f7     = "pr-checkout"      # check out a pull request
+# f10    = "note-edit"        # open a note from the vault
+# ctrl-r = "history-select"   # search history onto the command line
+# up     = "history-up"       # the same, on the first line of a prompt
+
+# Names defined as shell functions, each passing its arguments through.
+# [shell.aliases]
+# fe = "edit"           # scriv edit
+# kl = "proc-kill"      # scriv proc kill --force
+# i  = "project-deps"   # scriv project deps
+# b  = "project-build"  # scriv project build
 
 # The built-in fuzzy selector, shared by every command that opens one.
 [selector]
@@ -507,6 +539,32 @@ fn note_checks(ctx: &Ctx) -> Vec<Check> {
     checks
 }
 
+/// `[shell]`: whether the bindings and aliases resolve to actions that exist.
+///
+/// A failure here is `scriv init fish` refusing to emit anything, which takes
+/// the whole shell integration with it — so it is a failure rather than a
+/// warning, and this is where it should be found rather than at the next new
+/// shell.
+fn shell_check(ctx: &Ctx) -> Check {
+    match binding::resolve(&ctx.config.shell) {
+        Err(err) => Check::fail("shell integration", format!("{err:#}")),
+        Ok(integration) => Check::ok(
+            "shell integration",
+            format!(
+                "{} key binding(s), {} alias(es) — {}",
+                integration.bindings.len(),
+                integration.aliases.len(),
+                integration
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.trigger.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+        ),
+    }
+}
+
 /// fish's history file: whether it is where scriv looked, and how much is in
 /// it.
 fn history_check(ctx: &Ctx) -> Check {
@@ -605,6 +663,7 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
         false,
         "`project` runs a project's own tools through it (https://mise.jdx.dev)",
     ));
+    checks.push(shell_check(ctx));
     checks.push(history_check(ctx));
     checks.push(files_check(ctx));
     checks.extend(note_checks(ctx));
@@ -660,6 +719,69 @@ mod tests {
     }
 
     /// A commented key is `# <name> = ...`; prose comments are left alone.
+    /// The starter config is the only place the actions are written out for a
+    /// reader, so one that never appears in it is one nobody can discover.
+    #[test]
+    fn the_template_names_every_action_there_is() {
+        for action in binding::ACTIONS {
+            assert!(
+                TEMPLATE.contains(&format!("\"{}\"", action.id)),
+                "`{}` is in no table a user can read",
+                action.id
+            );
+        }
+    }
+
+    /// The template writes the default bindings and aliases out so they can be
+    /// uncommented and edited. Nothing but this notices when the two drift
+    /// apart, and a stale copy is a user who uncomments it and silently loses
+    /// whatever scriv added since.
+    #[test]
+    fn the_commented_shell_tables_are_the_defaults_written_out() {
+        let start = TEMPLATE
+            .find("# [shell.bindings]")
+            .expect("no [shell] tables");
+        let end = TEMPLATE[start..]
+            .find("# The built-in fuzzy selector")
+            .expect("no [selector] section after them")
+            + start;
+        let block: String = TEMPLATE[start..end]
+            .lines()
+            .filter_map(|line| line.strip_prefix("# "))
+            .filter(|line| line.starts_with('[') || line.contains(" = "))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, &block).unwrap();
+        let cfg = load_config(&path).unwrap_or_else(|e| panic!("{e:#}\n\n{block}"));
+
+        let written = |table: &Option<crate::config::Bindings>| -> Vec<(String, String)> {
+            table
+                .as_ref()
+                .expect("table missing from the template")
+                .iter()
+                .map(|(key, id)| (key.clone(), id.clone()))
+                .collect()
+        };
+        let defaults = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs
+                .iter()
+                .map(|(key, id)| ((*key).to_string(), (*id).to_string()))
+                .collect()
+        };
+
+        assert_eq!(
+            written(&cfg.shell.bindings),
+            defaults(binding::DEFAULT_BINDINGS)
+        );
+        assert_eq!(
+            written(&cfg.shell.aliases),
+            defaults(binding::DEFAULT_ALIASES)
+        );
+    }
+
     #[test]
     fn the_templates_commented_keys_parse_when_uncommented() {
         let is_key = |line: &str| {

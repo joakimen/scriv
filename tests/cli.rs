@@ -2352,3 +2352,92 @@ fn project_build_runs_each_toolchain_it_found_when_there_is_no_runner() {
     assert!(lines[0].ends_with("$ go build ./..."), "{}", lines[0]);
     assert!(lines[1].ends_with("$ npm run build"), "{}", lines[1]);
 }
+
+// --- configurable shell integration -----------------------------------------
+
+#[test]
+fn init_fish_emits_the_default_bindings_and_aliases() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["init", "fish"]);
+    run.ok();
+
+    for expected in [
+        "bind ctrl-o \"scriv-run-as-command scriv-repo-cd\"",
+        "bind up \"scriv-history-up; commandline -f repaint\"",
+        "function b ",
+        "command scriv project build $argv",
+    ] {
+        assert!(run.stdout.contains(expected), "{expected} missing");
+    }
+}
+
+#[test]
+fn a_configured_binding_table_replaces_the_defaults() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[shell.bindings]\nf6 = \"repo-cd\"\nctrl-b = \"project-build\"\n");
+
+    let run = sandbox.run(&["init", "fish"]);
+    run.ok();
+
+    assert!(run.stdout.contains("bind f6 "), "{}", run.stdout);
+    assert!(run.stdout.contains("bind ctrl-b "), "{}", run.stdout);
+    assert!(!run.stdout.contains("bind ctrl-o"), "a default survived");
+    // The aliases were not touched, so they are still the defaults.
+    assert!(run.stdout.contains("function b "), "{}", run.stdout);
+}
+
+#[test]
+fn a_configured_alias_takes_the_name_it_was_given() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[shell.aliases]\nbuild = \"project-build\"\n");
+
+    let run = sandbox.run(&["init", "fish"]);
+    run.ok();
+
+    assert!(run.stdout.contains("function build "), "{}", run.stdout);
+    assert!(!run.stdout.contains("function fe "), "a default survived");
+}
+
+/// A shell where one key works and another silently does not is worse than one
+/// that says why at the moment it is sourced.
+#[test]
+fn an_action_scriv_does_not_define_stops_init_rather_than_thinning_it() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[shell.bindings]\nctrl-o = \"repo-jump\"\n");
+
+    let run = sandbox.run(&["init", "fish"]);
+    run.code(1);
+    assert_eq!(run.stdout, "", "emitted a shell it could not finish");
+    assert!(run.stderr.contains("repo-jump"), "{}", run.stderr);
+    assert!(run.stderr.contains("repo-cd"), "{}", run.stderr);
+}
+
+#[test]
+fn config_check_reports_on_the_shell_integration() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[shell.aliases]\nbuild = \"project-build\"\n");
+
+    let run = sandbox.run(&["config", "check"]);
+    let row = run
+        .lines()
+        .into_iter()
+        .find(|line| line.contains("shell integration"))
+        .unwrap_or_else(|| panic!("no shell row:\n{}", run.stdout));
+
+    assert!(row.starts_with('✓'), "{row}");
+    assert!(row.contains("build"), "{row}");
+}
+
+#[test]
+fn config_check_fails_on_a_binding_nothing_answers_to() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[shell.bindings]\nctrl-o = \"repo-jump\"\n");
+
+    let run = sandbox.run(&["config", "check"]);
+    run.code(1);
+    assert!(
+        run.stdout.contains("repo-jump"),
+        "the row does not name it:\n{}",
+        run.stdout
+    );
+}

@@ -121,7 +121,7 @@ Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c` — w
 
 ## Key bindings
 
-`scriv_key_bindings` binds these in fish:
+`scriv_key_bindings` binds these in fish, unless you say otherwise:
 
 | Key | Action |
 | --- | --- |
@@ -137,7 +137,27 @@ Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c` — w
 | `f10` | open a note from your vault |
 
 `scriv init fish` also defines `fe` (`scriv edit`), `kl` (`scriv proc kill
---force`) and `i` (`scriv project deps`), each passing its arguments through.
+--force`), `i` (`scriv project deps`) and `b` (`scriv project build`), each
+passing its arguments through.
+
+Both tables are configuration. `[shell.bindings]` maps a key to an action and
+`[shell.aliases]` maps a name to one; neither holds shell code, so the same
+config serves any shell scriv learns to write for. `config init` writes the
+defaults out commented — uncomment a table to own it, since one written here
+replaces the defaults rather than adding to them, and leaving a key out is how
+it is unbound.
+
+```toml
+[shell.aliases]
+fe = "edit"
+kl = "proc-kill"
+i  = "project-deps"
+bb = "project-build"   # `b` by default
+```
+
+`scriv config check` lists what resolves. An action scriv does not define stops
+`scriv init fish` outright rather than emitting a shell where one key silently
+does nothing.
 
 Inside a selector, `ctrl-v` hides and shows the preview pane and `tab` takes
 several rows where several are allowed. Anything else a selector answers to is

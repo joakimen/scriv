@@ -1,0 +1,382 @@
+//! What a shell can be told to do on a key or under a name.
+//!
+//! `scriv init` writes shell code, and which code it writes is configuration:
+//! `[shell.bindings]` maps a key to an action and `[shell.aliases]` maps a
+//! name to one. Neither holds shell code — an action is a scriv command plus
+//! what the shell does with what it prints, and each shell's emitter knows how
+//! to say that in its own language. That is what keeps one table serving every
+//! shell scriv learns to write for.
+//!
+//! I/O-free: [`resolve`] turns the configuration into the list an emitter
+//! walks, and refuses a name no action answers to.
+
+use anyhow::{Result, bail};
+
+use crate::config::{Bindings, ShellConfig};
+
+/// What the shell does with the command an action runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Run it and let it write to the terminal.
+    Run,
+    /// Run it and `cd` to the path it prints. Only a shell can change its own
+    /// directory, which is the whole reason this layer exists.
+    Cd,
+    /// Put what it prints on the command line instead of running it, with the
+    /// line so far handed over as the query.
+    Line,
+    /// [`Kind::Line`], but only where the shell would have gone to history
+    /// anyway — on the first line of a prompt, outside the pager.
+    LineOrUp,
+}
+
+/// One thing a key or a name can be bound to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Action {
+    /// What the configuration calls it. Stable: renaming one silently breaks
+    /// every config that named it.
+    pub id: &'static str,
+    /// What the shell tells the user this is, where it has somewhere to say so
+    /// — fish's `--description`.
+    pub description: &'static str,
+    /// The arguments handed to `scriv`.
+    pub args: &'static [&'static str],
+    pub kind: Kind,
+}
+
+/// Everything that can be bound or aliased.
+///
+/// A verb belongs here when a shell can reach it faster than a typed command
+/// can, which is either because it answers "which one" — a selector — or
+/// because the shell has to act on the answer itself. Ordinary commands are
+/// left to be typed.
+pub const ACTIONS: &[Action] = &[
+    Action {
+        id: "repo-cd",
+        description: "Select a repository and cd into it",
+        args: &["repo", "sel"],
+        kind: Kind::Cd,
+    },
+    Action {
+        id: "worktree-cd",
+        description: "Select a git worktree and cd into it",
+        args: &["worktree", "sel"],
+        kind: Kind::Cd,
+    },
+    Action {
+        id: "repo-open",
+        description: "Open this repository on GitHub, or select one",
+        args: &["repo", "open"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "file-edit",
+        description: "Select a tracked file and open it in $EDITOR",
+        args: &["edit", "--tracked"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "edit",
+        description: "Find a file, fuzzy-select it, open it in $EDITOR",
+        args: &["edit"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "note-edit",
+        description: "Select a note and open it",
+        args: &["note", "edit"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "branch-checkout",
+        description: "Select a git branch and check it out",
+        args: &["branch", "checkout"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "pr-checkout",
+        description: "Select a GitHub pull request and check it out",
+        args: &["pr", "checkout"],
+        kind: Kind::Run,
+    },
+    // The one pull request action that asks nothing: whatever this branch is,
+    // it either has a pull request or it does not, and both are a page.
+    Action {
+        id: "pr-open",
+        description: "Open this branch's pull request, or the list",
+        args: &["pr", "open", "--current"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "proc-kill",
+        description: "Fuzzy-select running processes and kill them",
+        args: &["proc", "kill", "--force"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "project-deps",
+        description: "Install this project's dependencies",
+        args: &["project", "deps"],
+        kind: Kind::Run,
+    },
+    Action {
+        id: "project-build",
+        description: "Build this project",
+        args: &["project", "build"],
+        kind: Kind::Run,
+    },
+    // The two whose result belongs on the command line, which only the shell
+    // can write to. The emitter adds `--print0` and the query itself.
+    Action {
+        id: "history-select",
+        description: "Fuzzy-select a past command onto the command line",
+        args: &["history", "sel"],
+        kind: Kind::Line,
+    },
+    Action {
+        id: "history-up",
+        description: "Search history, or move up within a multi-line command",
+        args: &["history", "sel"],
+        kind: Kind::LineOrUp,
+    },
+];
+
+/// The keys bound when `[shell.bindings]` is absent.
+///
+/// ctrl-o and ctrl-q are the only keys fish leaves free, and only the first is
+/// taken — `scriv edit` has the `fe` alias instead. What the rest displace:
+/// ctrl-g over `cancel` (escape and ctrl-c both still do that), ctrl-r over
+/// `history-pager`, ctrl-t over `transpose-chars` — swapping the two characters
+/// around the cursor, which is worth less than a jump between worktrees — and
+/// up over `up-line`, which `history-up` hands back wherever the selector would
+/// be wrong. ctrl-p/ctrl-n are deliberately left as `up-line`/`down-line`. f1,
+/// f2, f3, f7 and f10 displace nothing; f4 and f5 are skipped because users'
+/// own tools cluster there.
+pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
+    ("ctrl-o", "repo-cd"),
+    ("ctrl-t", "worktree-cd"),
+    ("f1", "repo-open"),
+    ("f2", "pr-open"),
+    ("f3", "file-edit"),
+    ("ctrl-g", "branch-checkout"),
+    ("f7", "pr-checkout"),
+    ("f10", "note-edit"),
+    ("ctrl-r", "history-select"),
+    ("up", "history-up"),
+];
+
+/// The names defined when `[shell.aliases]` is absent. Short because they are
+/// typed many times a day; unprefixed because that is the point of them.
+pub const DEFAULT_ALIASES: &[(&str, &str)] = &[
+    ("fe", "edit"),
+    ("kl", "proc-kill"),
+    ("i", "project-deps"),
+    ("b", "project-build"),
+];
+
+/// One key or name, and what it does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bound {
+    /// The key as the shell spells it, or the name the alias takes.
+    pub trigger: String,
+    pub action: &'static Action,
+}
+
+/// What an emitter walks: the bindings and aliases in the order they were
+/// written, each already resolved to the action it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Integration {
+    pub bindings: Vec<Bound>,
+    pub aliases: Vec<Bound>,
+}
+
+impl Integration {
+    /// Every action reached by a binding, once each, in binding order. What an
+    /// emitter has to define a function for.
+    pub fn bound_actions(&self) -> Vec<&'static Action> {
+        let mut seen: Vec<&'static Action> = Vec::new();
+        for bound in &self.bindings {
+            if !seen.iter().any(|action| action.id == bound.action.id) {
+                seen.push(bound.action);
+            }
+        }
+        seen
+    }
+}
+
+/// The action `id` names.
+pub fn action(id: &str) -> Option<&'static Action> {
+    ACTIONS.iter().find(|action| action.id == id)
+}
+
+/// Resolve the configuration into what `scriv init` will emit.
+///
+/// A table that is present replaces the defaults rather than adding to them,
+/// so leaving a key out is how it is unbound; a table that is absent is the
+/// defaults. An action nobody defines is an error rather than a line quietly
+/// left out: a shell where one key works and another silently does not is
+/// worse than one that says why at the moment it is sourced.
+pub fn resolve(config: &ShellConfig) -> Result<Integration> {
+    Ok(Integration {
+        bindings: bind("binding", config.bindings.as_ref(), DEFAULT_BINDINGS)?,
+        aliases: bind("alias", config.aliases.as_ref(), DEFAULT_ALIASES)?,
+    })
+}
+
+fn bind(what: &str, table: Option<&Bindings>, defaults: &[(&str, &str)]) -> Result<Vec<Bound>> {
+    let written: Vec<(&str, &str)> = match table {
+        Some(table) => table
+            .iter()
+            .map(|(trigger, id)| (trigger.as_str(), id.as_str()))
+            .collect(),
+        None => defaults.to_vec(),
+    };
+
+    written
+        .into_iter()
+        .map(|(trigger, id)| match action(id) {
+            Some(action) => Ok(Bound {
+                trigger: trigger.to_string(),
+                action,
+            }),
+            None => bail!(
+                "the {what} `{trigger}` names `{id}`, which is not one of: {}",
+                ACTIONS
+                    .iter()
+                    .map(|action| action.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table(pairs: &[(&str, &str)]) -> Bindings {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    }
+
+    fn triggers(bound: &[Bound]) -> Vec<&str> {
+        bound.iter().map(|bound| bound.trigger.as_str()).collect()
+    }
+
+    #[test]
+    fn an_empty_configuration_is_the_defaults() {
+        let resolved = resolve(&ShellConfig::default()).unwrap();
+
+        assert_eq!(
+            triggers(&resolved.bindings),
+            DEFAULT_BINDINGS
+                .iter()
+                .map(|(key, _)| *key)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(triggers(&resolved.aliases), vec!["fe", "kl", "i", "b"]);
+    }
+
+    #[test]
+    fn every_default_names_an_action_that_exists() {
+        resolve(&ShellConfig::default()).expect("the defaults do not resolve");
+    }
+
+    #[test]
+    fn a_table_replaces_the_defaults_rather_than_adding_to_them() {
+        let config = ShellConfig {
+            bindings: Some(table(&[("f6", "repo-cd")])),
+            aliases: Some(table(&[])),
+        };
+        let resolved = resolve(&config).unwrap();
+
+        assert_eq!(triggers(&resolved.bindings), vec!["f6"]);
+        assert!(
+            resolved.aliases.is_empty(),
+            "an empty table left the defaults in place"
+        );
+    }
+
+    #[test]
+    fn the_order_a_table_is_written_in_is_the_order_it_is_emitted_in() {
+        let config = ShellConfig {
+            bindings: Some(table(&[
+                ("f8", "edit"),
+                ("ctrl-o", "repo-cd"),
+                ("f6", "pr-open"),
+            ])),
+            ..ShellConfig::default()
+        };
+
+        assert_eq!(
+            triggers(&resolve(&config).unwrap().bindings),
+            vec!["f8", "ctrl-o", "f6"]
+        );
+    }
+
+    #[test]
+    fn an_action_nobody_defines_names_itself_and_the_ones_that_exist() {
+        let config = ShellConfig {
+            bindings: Some(table(&[("ctrl-o", "repo-jump")])),
+            ..ShellConfig::default()
+        };
+        let error = resolve(&config).unwrap_err().to_string();
+
+        assert!(error.contains("ctrl-o"), "{error}");
+        assert!(error.contains("repo-jump"), "{error}");
+        assert!(error.contains("repo-cd"), "{error}");
+    }
+
+    #[test]
+    fn an_alias_is_refused_by_the_same_rule_a_binding_is() {
+        let config = ShellConfig {
+            aliases: Some(table(&[("x", "nope")])),
+            ..ShellConfig::default()
+        };
+        let error = resolve(&config).unwrap_err().to_string();
+
+        assert!(error.contains("alias `x`"), "{error}");
+    }
+
+    #[test]
+    fn one_action_bound_to_two_keys_is_defined_once() {
+        let config = ShellConfig {
+            bindings: Some(table(&[
+                ("f6", "repo-cd"),
+                ("f8", "repo-cd"),
+                ("f9", "edit"),
+            ])),
+            ..ShellConfig::default()
+        };
+        let actions = resolve(&config).unwrap().bound_actions();
+
+        assert_eq!(
+            actions.iter().map(|action| action.id).collect::<Vec<_>>(),
+            vec!["repo-cd", "edit"]
+        );
+    }
+
+    #[test]
+    fn no_two_actions_share_an_id() {
+        let mut ids: Vec<&str> = ACTIONS.iter().map(|action| action.id).collect();
+        let total = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "two actions answer to one name");
+    }
+
+    #[test]
+    fn every_action_runs_a_command() {
+        for action in ACTIONS {
+            assert!(!action.args.is_empty(), "{} runs nothing", action.id);
+            assert!(
+                !action.description.is_empty(),
+                "{} says nothing about itself",
+                action.id
+            );
+        }
+    }
+}

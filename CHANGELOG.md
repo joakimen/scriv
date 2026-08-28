@@ -13,6 +13,21 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `b` runs `scriv project build`, beside `fe`, `kl` and `i`.
+- `[shell.bindings]` and `[shell.aliases]` decide what `scriv init` emits. A
+  binding maps a key to an action and an alias maps a name to one; neither holds
+  shell code, so the same configuration serves any shell scriv learns to write
+  for. `scriv config init` writes the defaults out commented, and `scriv config
+  check` gains a row saying whether yours resolve.
+
+### Changed
+
+- `scriv init` now reads the configuration, so a config file that will not parse
+  — or that names an action scriv does not define — stops it. It refuses to emit
+  anything rather than emit a shell where one key silently does nothing.
+
 ## v0.14.0
 
 *Released 2026-08-28*
