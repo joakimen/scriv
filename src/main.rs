@@ -233,8 +233,15 @@ enum Command {
     },
     /// Print shell integration for `source`-ing
     ///
-    /// `fish` emits helper functions, key bindings, and completions; other
-    /// shells emit completions only.
+    /// `fish` emits a function per key binding and per alias, the binding
+    /// function itself, and completions; other shells emit completions only.
+    ///
+    /// Which keys and names those are comes from `[shell.bindings]` and
+    /// `[shell.aliases]`, which name actions rather than shell code —
+    /// `scriv config init` writes the defaults out commented, and `scriv config
+    /// check` says whether yours resolve. A configuration that will not parse,
+    /// or that names an action scriv does not define, stops this command rather
+    /// than emitting a shell where one key silently does nothing.
     Init {
         /// Shell to emit integration for
         shell: Shell,
@@ -824,15 +831,7 @@ enum ConfigCmd {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-
-    // `init` needs the clap command, not the environment; handle it before Ctx.
-    if let Command::Init { shell } = &cli.command {
-        print!("{}", shell::integration(*shell, &mut Cli::command()));
-        return ExitCode::SUCCESS;
-    }
-
-    match run(cli) {
+    match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         // A cancelled selector is a silent, conventional exit, not an error.
         Err(err) if err.is::<Cancelled>() => ExitCode::from(130),
@@ -973,6 +972,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             ConfigCmd::Path => cmd::config::path(&ctx),
             ConfigCmd::Check => cmd::config::check(&ctx),
         },
-        Command::Init { .. } => unreachable!("init handled before Ctx"),
+        // Emitted from the config, so this needs Ctx like everything else —
+        // and the clap command besides, for the completions.
+        Command::Init { shell } => {
+            print!(
+                "{}",
+                shell::integration(shell, &mut Cli::command(), &ctx.config.shell)?
+            );
+            Ok(())
+        }
     }
 }

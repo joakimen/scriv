@@ -7,8 +7,9 @@
 //! - `config.toml` — hand-edited settings, grouped by the command that reads
 //!   them: `[repo]` for discovery and labelling, `[worktree]` for where a new
 //!   tree goes, `[note]` for the vault and what opens a note, `[history]` for
-//!   the shell history to search, `[selector]` for the finder every command
-//!   shares. A legacy `config.json` is still read when no TOML file is present.
+//!   the shell history to search, `[shell]` for what `scriv init` emits, and
+//!   `[selector]` for the finder every command shares. A legacy `config.json`
+//!   is still read when no TOML file is present.
 //! - `files` — the known-files list, rewritten programmatically by
 //!   `scriv file add`/`rm`/`prune`. Kept separate so machine writes never
 //!   clobber hand-written settings or comments.
@@ -44,12 +45,17 @@ pub const UNLABELLED: &str = "-";
 /// preserved so labels sort, and take their leftover colours, as written.
 pub type Labels = IndexMap<String, Vec<String>>;
 
+/// A `[shell]` table: a key or a name, to the id of the action it runs.
+/// Insertion order is preserved, so a shell emits them as they were written.
+pub type Bindings = IndexMap<String, String>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
     pub repo: RepoConfig,
     pub worktree: WorktreeConfig,
     pub note: NoteConfig,
     pub history: HistoryConfig,
+    pub shell: ShellConfig,
     pub selector: SelectorConfig,
 }
 
@@ -350,6 +356,8 @@ struct RawToml {
     #[serde(default)]
     history: HistoryConfig,
     #[serde(default)]
+    shell: ShellConfig,
+    #[serde(default)]
     selector: RawSelector,
 
     // Superseded top-level keys, present for detection only.
@@ -362,6 +370,25 @@ struct RawToml {
     paths: Option<LegacyPaths>,
     /// `[picker]`, renamed to `[selector]`. Present for detection only.
     picker: Option<RawSelector>,
+}
+
+/// `[shell]` — what `scriv init` writes for a shell.
+///
+/// Neither table holds shell code: both name [actions](crate::binding::ACTIONS)
+/// scriv defines, so one configuration serves every shell it can write for.
+/// A table that is present replaces the defaults rather than adding to them,
+/// which is what makes leaving a key out the way to unbind it; a table that is
+/// absent is [`crate::binding::DEFAULT_BINDINGS`] and
+/// [`crate::binding::DEFAULT_ALIASES`], so a config written before this section
+/// existed keeps the keys it had.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellConfig {
+    /// Key to action, e.g. `ctrl-o = "repo-cd"`. Keys are spelled as fish
+    /// spells them; a shell that spells them otherwise translates.
+    pub bindings: Option<Bindings>,
+    /// Name to action, e.g. `b = "project-build"`.
+    pub aliases: Option<Bindings>,
 }
 
 /// `[selector]` as written, including the `display` key that moved to `[repo]`.
@@ -633,6 +660,7 @@ fn parse_toml(data: &str) -> Result<Config> {
         worktree: raw.worktree,
         note: raw.note,
         history: raw.history,
+        shell: raw.shell,
         selector: raw.selector.into(),
     })
 }

@@ -7,6 +7,7 @@
 //! `git`/`gh`, and drive interactive selection; everything else is pure.
 //! [`Ctx`] resolves the environment once and hands it to every command.
 
+pub mod binding;
 pub mod cmd;
 pub mod config;
 pub mod files;
