@@ -91,16 +91,18 @@ publishes the crate.
    not done without a doc comment, a renamed one not until the old wording is
    gone. Aliases are `visible_alias`, never `alias`. `EXAMPLES` is three lines,
    and a new command earns one only by displacing one.
-2. **README.md.** Read it on every change to `src/` — not only when adding a
-   command — and change every sentence the edit has made untrue. It is the page
-   most people read instead of the binary, and it goes stale silently. Its
-   command table must match `scriv <group> --help`, its key-binding sentence
-   `scriv_key_bindings`, its `Install` line the platforms and external tools,
-   and the prose under each heading what the code now does.
+2. **README.md, and the starter config in `cmd/config.rs`.** Read both on every
+   change to `src/` — not only when adding a command — and change every sentence
+   the edit has made untrue. They are what most people read instead of the
+   binary, and they go stale silently. The README's command table must match
+   `scriv <group> --help`, its key-binding table `DEFAULT_BINDINGS`, its
+   `Install` line the platforms and external tools, and the prose under each
+   heading what the code now does; the starter config must describe every
+   setting that exists and none that does not.
 
-   Still a page, not a manual: reading it is what is required on every change,
-   not adding to it. A new flag does not belong there; a new command *group*
-   does, as one row.
+   The README is still a page, not a manual: reading it is what is required on
+   every change, not adding to it. A new flag does not belong there; a new
+   command *group* does, as one row.
 3. **`docs/demo.gif`.** Re-record with `make demo` (needs `vhs`, ~30s) when
    anything changed what a selector draws. CI only plays the tape, so a stale
    GIF is invisible. When nothing changed on screen, say so in the PR.
@@ -161,13 +163,25 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   and `rm` get no long form (`list`, `co` and `switch` predate the rule). Groups
   take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c` — and two where the letter
   is spoken for: `pc` and `pj`, as `p` meets `pr`.
-- **Key bindings prefer `ctrl-<letter>` and never `alt-`**, which fish mostly
+- **Key bindings and aliases are configuration, not code.** What `scriv init`
+  emits comes from `[shell.bindings]` and `[shell.aliases]`, which name
+  [`binding::ACTIONS`] rather than holding shell code — that is what lets one
+  table serve a shell nobody has written an emitter for yet. Adding a name for
+  an existing action is a config edit; only a *new* action is a code change,
+  and it goes in that catalogue with an id that never changes afterwards, since
+  renaming one breaks every config that named it.
+- **The defaults live in `DEFAULT_BINDINGS` and `DEFAULT_ALIASES`**, and the
+  starter config writes them out commented. A test parses that commented block
+  and holds it to the constants, so the two cannot drift.
+- **Default keys prefer `ctrl-<letter>` and never `alt-`**, which fish mostly
   presets. Displacing a fish preset is deliberate and named above
-  `scriv_key_bindings`. Function keys are the fallback, `f4`/`f5` excepted.
-- **Only `cd` needs a fish wrapper**, since a child cannot change its parent's
-  directory — hence `repo sel` printing a path. `scriv edit` spawns directly.
-  `fe`, `kl` and `i` are the exception and stay one: names a pipeline already
-  had before scriv, kept so muscle memory reaches the new command.
+  `DEFAULT_BINDINGS`. Function keys are the fallback, `f4`/`f5` excepted. What
+  a user binds is their business.
+- **Only `cd` and the command line need a shell**, since a child can write to
+  neither of its parent's — hence `repo sel` printing a path and `history sel`
+  printing a command. `scriv edit` spawns its editor directly. Everything else
+  a shell wrapper does is a name for a command that could have been typed,
+  which is what an alias is for.
 
 ## The demo
 
