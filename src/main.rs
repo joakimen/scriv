@@ -56,11 +56,20 @@ const STYLES: Styles = Styles::styled()
     long_about = LONG_ABOUT,
     after_help = EXAMPLES,
     styles = STYLES,
-    disable_help_subcommand = true
+    disable_help_subcommand = true,
+    disable_version_flag = true
 )]
 struct Cli {
+    // Declared rather than left to clap, whose own version flag is `-V`. `-v`
+    // is what the hand reaches for, and it is taken from `--verbose`, which
+    // keeps only its long form: the version is asked for far more often than
+    // more output is.
+    /// Print version
+    #[arg(short = 'v', long, action = clap::ArgAction::Version)]
+    version: Option<bool>,
+
     /// Verbose output
-    #[arg(short, long, global = true)]
+    #[arg(long, global = true)]
     verbose: bool,
 
     /// Path to the config file

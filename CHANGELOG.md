@@ -13,6 +13,12 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `-v` is `--version`. It was `--verbose`, which now has only its long form, and
+  clap's own `-V` is gone. A `-v` meaning verbosity is a usage error rather than
+  a run that quietly stopped being verbose.
+
 ## v0.15.0
 
 *Released 2026-08-28*
