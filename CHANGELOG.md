@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.14.0
+
+*Released 2026-08-28*
+
 ### Added
 
 - `scriv project` builds and installs the directory you are standing in without
