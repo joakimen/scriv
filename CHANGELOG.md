@@ -13,6 +13,23 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv project` builds and installs the directory you are standing in without
+  being told what is in it. `scriv project deps` works out which toolchains the
+  project uses from the files in its root — mise, Cargo, go, npm/bun/pnpm/yarn,
+  Deno, Clojure, Babashka, Maven, Gradle, uv and Terraform — and runs each one's
+  install, `mise install` first and the rest at once with their output held back
+  unless one fails. A tool the machine does not have is a skip, not a failure.
+  The fish integration binds this to `i`.
+- `scriv project deps --dump` reads the same manifests for what they declare
+  rather than installing anything, grouped by the role each dependency is given:
+  npm's `devDependencies`, Cargo's `[build-dependencies]`, a Maven scope, a
+  Gradle configuration, a Clojure alias, go's indirect requirements.
+- `scriv project build` runs the repository's own `task`, `make` or `just` where
+  it has one, and builds each detected toolchain in turn where it has none. Two
+  task runners is an error rather than a guess.
+
 ## v0.13.0
 
 *Released 2026-08-27*

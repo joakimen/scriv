@@ -12,7 +12,9 @@ Provides fuzzy-completion for various local and remote resources.
 A single fuzzy selector over resources that would otherwise each need their own
 command and output parser: Git repositories, tracked files, Markdown notes,
 branches, worktrees, GitHub pull requests, system processes and fish history.
-Each group lists its set, selects from it, and acts on the selection.
+Each group lists its set, selects from it, and acts on the selection. `project`
+is the exception: it reads the directory you are standing in and builds or
+installs it, whatever it turns out to be written in.
 
 The finder is linked into the binary — no `fzf` dependency and no subprocess.
 `scriv init fish` emits shell functions, key bindings and completions.
@@ -39,7 +41,9 @@ signal numbers, and the crate refuses to compile for any other target.
 External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, `rg`
 for `note rg`, `bat` for syntax-highlighted previews, a fish history file for
 `history`, and `$VISUAL` or `$EDITOR` for `edit` — or `[note] editor` for
-`note`. `scriv config check` reports on each.
+`note`. `scriv config check` reports on each. `project` runs whatever the
+project in front of it asks for, and reports a tool the machine does not have as
+a skip rather than a failure.
 
 ## Setup
 
@@ -88,6 +92,7 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 | `scriv proc` | `ls` `sel` `kill` |
 | `scriv history` | `ls` `sel` |
 | `scriv edit` | `file` `dir` — found below `$PWD`, opened in `$EDITOR` |
+| `scriv project` | `deps` `build` — over `$PWD`, whatever it is written in |
 | `scriv config` | `init` `print` `path` `check` |
 | `scriv init` | `fish` and every other shell — see Setup |
 
@@ -100,10 +105,19 @@ absolute paths, one per line, for piping into whatever reads paths.
 Every preview pane shows the file as it is on disk, drawn by `bat` in
 `[selector] preview_theme` — Catppuccin Mocha unless you say otherwise.
 
+`scriv project` needs to know nothing about the directory it is in. `deps`
+works out which toolchains a project uses from the files in its root — a
+`Cargo.toml`, a `package.json` and its lockfile, a `go.mod`, a `pom.xml`, a
+`mise.toml`, a `*.tf` — and runs each one's install, `mise` first and the rest
+at once. `--dump` reads the same manifests for what they *declare* instead,
+grouped by the role each dependency is given. `build` runs the repository's own
+`task`, `make` or `just` where it has one, and otherwise builds each toolchain
+in turn. The fish integration calls `scriv project deps` `i`.
+
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.
-Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c`, and
-`pc` for `proc`.
+Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c` — with
+`pc` for `proc` and `pj` for `project`.
 
 ## Key bindings
 
@@ -122,8 +136,8 @@ Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c`, and
 | `f7` | check out a pull request |
 | `f10` | open a note from your vault |
 
-`scriv init fish` also defines `fe` (`scriv edit`, arguments passed through) and
-`kl` (`scriv proc kill --force`).
+`scriv init fish` also defines `fe` (`scriv edit`), `kl` (`scriv proc kill
+--force`) and `i` (`scriv project deps`), each passing its arguments through.
 
 Inside a selector, `ctrl-v` hides and shows the preview pane and `tab` takes
 several rows where several are allowed. Anything else a selector answers to is
