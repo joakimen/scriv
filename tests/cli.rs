@@ -2441,3 +2441,28 @@ fn config_check_fails_on_a_binding_nothing_answers_to() {
         run.stdout
     );
 }
+
+/// `-v` is the version, not verbosity: clap's own short is `-V`, and the hand
+/// reaches for the lowercase one.
+#[test]
+fn the_short_version_flag_is_the_lowercase_one() {
+    let sandbox = Sandbox::new();
+
+    let short = sandbox.run(&["-v"]);
+    short.ok();
+    assert_eq!(short.stdout, sandbox.run(&["--version"]).ok().stdout);
+
+    sandbox.run(&["-V"]).code(2);
+}
+
+/// `-v` was `--verbose`'s, and the version flag is not global, so a `-v` left
+/// on the end of a subcommand is a usage error rather than a run that quietly
+/// stopped being verbose.
+#[test]
+fn verbose_keeps_only_its_long_form() {
+    let sandbox = Sandbox::new();
+
+    sandbox.run(&["--verbose", "config", "path"]).ok();
+    sandbox.run(&["config", "--verbose", "path"]).ok();
+    sandbox.run(&["config", "path", "-v"]).code(2);
+}
