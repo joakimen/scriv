@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.15.0
+
+*Released 2026-08-28*
+
 ### Added
 
 - `b` runs `scriv project build`, beside `fe`, `kl` and `i`.
