@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.16.1
+
+*Released 2026-09-01*
+
 ### Changed
 
 - `scriv config print` reports every setting there is, including the keys and
