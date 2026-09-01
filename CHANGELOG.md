@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.16.0
+
+*Released 2026-08-28*
+
 ### Changed
 
 - `-v` is `--version`. It was `--verbose`, which now has only its long form, and
