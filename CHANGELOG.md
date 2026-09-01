@@ -13,6 +13,18 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `scriv config print` reports every setting there is, including the keys and
+  names `scriv init` binds and the action each one runs. It had drifted to a
+  handful of them, so a table added since — `[worktree]`, `[selector]`,
+  `[shell]` — could not be read back from the tool that claims to print the
+  configuration. Values scriv chose rather than you are marked as defaults.
+- `scriv config check` is a checklist rather than a second report of the
+  configuration. Rows are grouped, a working one is a tick rather than a line
+  of green prose, and the run ends with what is left to look at. What a setting
+  is set to now belongs to `config print` alone.
+
 ## v0.16.0
 
 *Released 2026-08-28*

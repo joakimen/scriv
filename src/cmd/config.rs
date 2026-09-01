@@ -1,4 +1,11 @@
-//! `scriv config` — inspect, generate, and check the configuration file.
+//! `scriv config` — generate, print and check the configuration file.
+//!
+//! `print` and `check` answer different questions and are kept apart on
+//! purpose. `print` is the configuration: every setting there is, what is in
+//! force for it, and whether that came from the file or from scriv. `check` is
+//! a checklist: whether what the settings point at is actually there, and
+//! whether the programs scriv shells out to are installed. A row in `check`
+//! repeats a value only where repeating it is the way out of a problem.
 
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
@@ -6,7 +13,8 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
-use crate::path::expand_home_dir;
+use crate::config::{Bindings, Config, Labels};
+use crate::path::{display_path, expand_home_dir};
 use crate::{Ctx, binding, cmd, files, gh, history, repo, term};
 
 /// A commented starter config. Settings are grouped by the command that reads
@@ -90,8 +98,9 @@ ignore = ["node_modules", "target"]
 #
 # Neither table holds shell code — each names an action scriv defines, so the
 # same configuration serves fish and any shell scriv later learns to write for.
-# Between them the two tables below name every action there is, and `scriv
-# config check` says whether yours resolve.
+# Between them the two tables below name every action there is. `scriv config
+# print` lists the keys and names you have with what each one runs, and `scriv
+# config check` says whether they resolve.
 #
 # A table written here replaces the defaults rather than adding to them, which
 # is how a key is unbound or a name dropped: leave it out. Both tables below are
@@ -172,64 +181,423 @@ pub fn init(ctx: &Ctx, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv config print` — print the resolved paths and ignore list.
+// --- print ------------------------------------------------------------------
+
+/// Grey, for everything on a row that is not the value itself: the key it is
+/// written under, and where the value came from.
+const DIM: u8 = 8;
+
+/// Cyan, for the `[table]` a group of settings is written under.
+const HEADING: u8 = 6;
+
+/// Red, for a value scriv cannot act on.
+const BROKEN: u8 = 1;
+
+/// Shown where a setting has no value and nothing stands in for it.
+const UNSET: &str = "(unset)";
+
+/// Shown where a list is empty.
+const EMPTY: &str = "(none)";
+
+/// What the last column says about a value scriv chose rather than the user.
+const DEFAULT: &str = "default";
+
+/// What is in force for one setting.
+enum Value {
+    /// A value, shown as it stands.
+    Set(String),
+    /// Nothing there, and the placeholder that says so.
+    Missing(&'static str),
+    /// Set to something scriv cannot act on.
+    Broken(String),
+}
+
+/// One line of `config print`.
+enum Row {
+    /// The gap between two groups.
+    Blank,
+    /// The `[table]` a group is written under, and what to know about the
+    /// group as a whole.
+    Heading { title: String, note: String },
+    /// One setting: the key it is written under, what is in force, and where
+    /// that came from.
+    Setting {
+        key: String,
+        value: Value,
+        note: String,
+    },
+}
+
+impl Row {
+    fn heading(title: impl Into<String>, note: impl Into<String>) -> Self {
+        Self::Heading {
+            title: title.into(),
+            note: note.into(),
+        }
+    }
+
+    fn setting(key: impl Into<String>, value: Value, note: impl Into<String>) -> Self {
+        Self::Setting {
+            key: key.into(),
+            value,
+            note: note.into(),
+        }
+    }
+}
+
+impl Value {
+    /// The text as it is drawn, before it is painted.
+    fn text(&self) -> &str {
+        match self {
+            Self::Set(text) | Self::Broken(text) => text.as_str(),
+            Self::Missing(text) => text,
+        }
+    }
+
+    /// The colour it is drawn in, or `None` for the terminal's own foreground —
+    /// which is what a value the user set gets, so the settings are the only
+    /// thing on the report at full contrast.
+    fn color(&self) -> Option<u8> {
+        match self {
+            Self::Set(_) => None,
+            Self::Missing(_) => Some(DIM),
+            Self::Broken(_) => Some(BROKEN),
+        }
+    }
+}
+
+/// A setting the file names, or what happens when it does not.
+fn optional(key: &str, value: Option<&str>, without: &str) -> Row {
+    match value {
+        Some(value) => Row::setting(key, Value::Set(value.to_string()), ""),
+        None => Row::setting(key, Value::Missing(UNSET), without),
+    }
+}
+
+/// A setting that has a value whether the file gives it one or not, marked
+/// where that value is the one scriv ships.
+fn defaulted(key: &str, value: Value, is_default: bool) -> Row {
+    Row::setting(key, value, if is_default { DEFAULT } else { "" })
+}
+
+/// A list of names as one value.
+fn list(items: &[String]) -> Value {
+    if items.is_empty() {
+        Value::Missing(EMPTY)
+    } else {
+        Value::Set(items.join(", "))
+    }
+}
+
+/// One row per label, keyed as the file writes it — `labels.work` — so a set of
+/// owners or directories stays one line each however many labels there are.
+fn label_rows(labels: &Labels) -> Vec<Row> {
+    if labels.is_empty() {
+        return vec![Row::setting("labels", Value::Missing(EMPTY), "")];
+    }
+    labels
+        .iter()
+        .map(|(label, members)| Row::setting(format!("labels.{label}"), list(members), ""))
+        .collect()
+}
+
+/// What a `[shell]` table's heading says: whether the rows under it are the
+/// user's or the ones scriv ships.
+fn table_note(written: bool) -> &'static str {
+    if written { "" } else { DEFAULT }
+}
+
+/// One row per key or name, with the action it runs and what that action does.
+///
+/// An action nobody defines is shown and marked rather than left out: it is a
+/// line the file really has, and a report that silently drops it is a user
+/// hunting for a key that is written right there.
+fn binding_rows(table: Option<&Bindings>, defaults: &[(&str, &str)]) -> Vec<Row> {
+    binding::entries(table, defaults)
+        .into_iter()
+        .map(|(trigger, id)| match binding::action(id) {
+            Some(action) => Row::setting(trigger, Value::Set(id.to_string()), action.description),
+            None => Row::setting(trigger, Value::Broken(id.to_string()), "no such action"),
+        })
+        .collect()
+}
+
+/// What `config print` reports that the config file does not hold: the paths
+/// and the editor [`Ctx`] resolved from the environment. Passed in so building
+/// the report stays pure.
+struct Env<'a> {
+    config_path: String,
+    /// Without a file every value below is a default, which is worth saying
+    /// once at the top rather than on every row.
+    config_exists: bool,
+    history_path: String,
+    /// `$VISUAL`, then `$EDITOR`.
+    editor: Option<&'a str>,
+}
+
+/// The whole report, in the order it is printed: every setting there is, under
+/// the table it is written in, whether the file sets it or not.
+fn report(cfg: &Config, env: &Env) -> Vec<Row> {
+    let default = Config::default();
+    let mut rows = vec![Row::heading(
+        env.config_path.clone(),
+        if env.config_exists {
+            ""
+        } else {
+            "not found — every value below is a default"
+        },
+    )];
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading("[repo]", ""));
+    rows.push(optional(
+        "root",
+        cfg.repo.root.as_deref(),
+        "`repo` and `repo clone` have nowhere to look",
+    ));
+    rows.push(Row::setting("extra", list(&cfg.repo.extra), ""));
+    rows.push(defaulted(
+        "ignore",
+        list(&cfg.repo.ignore),
+        cfg.repo.ignore == default.repo.ignore,
+    ));
+    rows.push(defaulted(
+        "display",
+        Value::Set(cfg.repo.display.as_str().to_string()),
+        cfg.repo.display == default.repo.display,
+    ));
+    rows.extend(label_rows(&cfg.repo.labels));
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading("[worktree]", ""));
+    rows.push(defaulted(
+        "root",
+        Value::Set(cfg.worktree.root.clone()),
+        cfg.worktree.root == default.worktree.root,
+    ));
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading("[note]", ""));
+    rows.push(optional(
+        "root",
+        cfg.note.root.as_deref(),
+        "`scriv note` has nowhere to look",
+    ));
+    rows.extend(label_rows(&cfg.note.labels));
+    rows.push(match cfg.note.scratch.as_deref() {
+        Some(scratch) => Row::setting("scratch", Value::Set(scratch.to_string()), ""),
+        None => Row::setting(
+            "scratch",
+            Value::Set(crate::note::DEFAULT_SCRATCH.to_string()),
+            DEFAULT,
+        ),
+    });
+    rows.push(match (cfg.note.editor.as_deref(), env.editor) {
+        (Some(editor), _) => Row::setting("editor", Value::Set(editor.to_string()), ""),
+        (None, Some(editor)) => Row::setting(
+            "editor",
+            Value::Set(editor.to_string()),
+            "from $VISUAL / $EDITOR",
+        ),
+        (None, None) => Row::setting(
+            "editor",
+            Value::Missing(UNSET),
+            "set `[note] editor`, $VISUAL or $EDITOR",
+        ),
+    });
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading("[history]", ""));
+    rows.push(defaulted(
+        "file",
+        Value::Set(env.history_path.clone()),
+        cfg.history.file.is_none(),
+    ));
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading("[selector]", ""));
+    let (sel, base) = (&cfg.selector, &default.selector);
+    rows.push(defaulted(
+        "height",
+        Value::Set(sel.height.clone()),
+        sel.height == base.height,
+    ));
+    rows.push(defaulted(
+        "preview",
+        Value::Set(sel.preview.to_string()),
+        sel.preview == base.preview,
+    ));
+    rows.push(defaulted(
+        "preview_window",
+        Value::Set(sel.preview_window.clone()),
+        sel.preview_window == base.preview_window,
+    ));
+    rows.push(defaulted(
+        "preview_theme",
+        if sel.preview_theme.is_empty() {
+            Value::Missing("(bat's own)")
+        } else {
+            Value::Set(sel.preview_theme.clone())
+        },
+        sel.preview_theme == base.preview_theme,
+    ));
+    rows.push(defaulted(
+        "recent",
+        Value::Set(sel.recent.to_string()),
+        sel.recent == base.recent,
+    ));
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading(
+        "[shell.bindings]",
+        table_note(cfg.shell.bindings.is_some()),
+    ));
+    rows.extend(binding_rows(
+        cfg.shell.bindings.as_ref(),
+        binding::DEFAULT_BINDINGS,
+    ));
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading(
+        "[shell.aliases]",
+        table_note(cfg.shell.aliases.is_some()),
+    ));
+    rows.extend(binding_rows(
+        cfg.shell.aliases.as_ref(),
+        binding::DEFAULT_ALIASES,
+    ));
+
+    rows.push(Row::Blank);
+    rows.push(Row::heading(
+        "environment",
+        "read by scriv, not written in the file",
+    ));
+    rows.push(match env.editor {
+        Some(editor) => Row::setting(
+            "editor",
+            Value::Set(editor.to_string()),
+            "$VISUAL, then $EDITOR",
+        ),
+        None => Row::setting(
+            "editor",
+            Value::Missing(UNSET),
+            "`scriv edit` has nothing to open files with",
+        ),
+    });
+
+    rows
+}
+
+/// Draw the report.
+///
+/// Keys share one column across the whole report, so every setting starts in
+/// the same place; the notes beside them line up only within their own group,
+/// since a path in one group would otherwise push the word `default` half a
+/// terminal away from the value it describes.
+fn render_report(rows: &[Row], color: bool) -> Vec<String> {
+    let key_width = rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Setting { key, .. } => Some(key.chars().count()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    let note_columns = note_columns(rows);
+
+    rows.iter()
+        .zip(note_columns)
+        .map(|(row, value_width)| match row {
+            Row::Blank => String::new(),
+            Row::Heading { title, note } => {
+                let mut line = term::paint(title, HEADING, color);
+                if !note.is_empty() {
+                    line.push_str("  ");
+                    line.push_str(&term::paint(note, DIM, color));
+                }
+                line
+            }
+            Row::Setting { key, value, note } => {
+                let mut line = format!("  {}  ", term::paint(&pad(key, key_width), DIM, color));
+                let text = if note.is_empty() {
+                    value.text().to_string()
+                } else {
+                    pad(value.text(), value_width)
+                };
+                line.push_str(&match value.color() {
+                    Some(color_index) => term::paint(&text, color_index, color),
+                    None => text,
+                });
+                if !note.is_empty() {
+                    line.push_str("  ");
+                    line.push_str(&term::paint(note, DIM, color));
+                }
+                line
+            }
+        })
+        .collect()
+}
+
+/// The width each row pads its value to, so the notes in one group line up
+/// with each other and with nothing else. Rows without a note are not measured:
+/// nothing lines up behind them.
+fn note_columns(rows: &[Row]) -> Vec<usize> {
+    let mut widths = vec![0; rows.len()];
+    let mut start = 0;
+    for end in 0..=rows.len() {
+        if end != rows.len() && !matches!(rows[end], Row::Heading { .. }) {
+            continue;
+        }
+        let group = rows[start..end]
+            .iter()
+            .filter_map(|row| match row {
+                Row::Setting { value, note, .. } if !note.is_empty() => {
+                    Some(value.text().chars().count())
+                }
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        widths[start..end].fill(group);
+        start = end;
+    }
+    widths
+}
+
+/// `text` in a field `width` characters wide, counted in characters rather
+/// than bytes so a label with an accent in it does not shift the column.
+fn pad(text: &str, width: usize) -> String {
+    let mut padded = text.to_string();
+    for _ in text.chars().count()..width {
+        padded.push(' ');
+    }
+    padded
+}
+
+/// `scriv config print` — every setting there is, and what is in force for it.
+///
+/// The settings only: whether the paths they name exist, and whether the tools
+/// scriv shells out to are installed, is `scriv config check`.
 pub fn print(ctx: &Ctx) -> Result<()> {
     ctx.log.info(&format!(
         "printing configuration from {}",
         ctx.config_path.display()
     ));
 
-    let repo = &ctx.config.repo;
-    println!("[repo]");
-    println!("root: {}", repo.root.as_deref().unwrap_or("(unset)"));
-    if !repo.extra.is_empty() {
-        println!("extra: {}", repo.extra.join(", "));
-    }
-    println!("ignore: {}", repo.ignore.join(", "));
-    println!("display: {}", repo.display.as_str());
-    if !repo.labels.is_empty() {
-        println!("labels:");
-        for (label, owners) in &repo.labels {
-            println!("  {label}: {}", owners.join(", "));
+    let env = Env {
+        config_path: display_path(&ctx.config_path.to_string_lossy(), ctx.home_str(), false),
+        config_exists: ctx.config_path.exists(),
+        history_path: display_path(&ctx.history_path.to_string_lossy(), ctx.home_str(), false),
+        editor: ctx.editor_setting(),
+    };
+
+    let mut out = term::Listing::stdout();
+    for line in render_report(&report(&ctx.config, &env), ctx.color()) {
+        if !out.line(&line)? {
+            return Ok(());
         }
     }
-
-    println!();
-    println!("[note]");
-    println!(
-        "root: {}",
-        ctx.config.note.root.as_deref().unwrap_or("(unset)")
-    );
-    if !ctx.config.note.labels.is_empty() {
-        println!("labels:");
-        for (label, dirs) in &ctx.config.note.labels {
-            println!("  {label}: {}", dirs.join(", "));
-        }
-    }
-    println!(
-        "scratch: {}",
-        ctx.config
-            .note
-            .scratch
-            .as_deref()
-            .unwrap_or(crate::note::DEFAULT_SCRATCH)
-    );
-    println!(
-        "editor: {}",
-        ctx.note_editor_setting()
-            .unwrap_or("(unset — set `[note] editor`, $VISUAL or $EDITOR)")
-    );
-
-    println!();
-    println!("[history]");
-    println!("file: {}", ctx.history_path.display());
-
-    println!();
-    println!(
-        "editor: {}",
-        ctx.editor_setting()
-            .unwrap_or("(unset — set $VISUAL or $EDITOR)")
-    );
+    out.finish()?;
     Ok(())
 }
 
@@ -268,6 +636,25 @@ impl Status {
             Self::Fail => 1,
         }
     }
+
+    /// The colour the row's name takes, or `None` for the terminal's own
+    /// foreground. Only a failure is coloured: a report where every name is
+    /// green is one nobody reads for the one that is not.
+    fn name_color(self) -> Option<u8> {
+        match self {
+            Self::Fail => Some(self.color()),
+            _ => None,
+        }
+    }
+
+    /// The colour the row's detail takes. What a working setup found is grey;
+    /// what to do about a broken one carries the status colour.
+    fn detail_color(self) -> u8 {
+        match self {
+            Self::Ok => DIM,
+            other => other.color(),
+        }
+    }
 }
 
 /// One thing that was looked at, and what was found.
@@ -277,6 +664,8 @@ struct Check {
     name: &'static str,
     status: Status,
     /// What was found, and — when something is wrong — what to do about it.
+    /// Empty where a working setup has nothing to add: the row is a tick, not
+    /// a place to repeat what `config print` already says.
     detail: String,
 }
 
@@ -302,16 +691,69 @@ impl Check {
     }
 }
 
-/// Render one check as its row: glyph, aligned name, detail. `width` is the
-/// widest name in the report, counted in characters.
-fn render(check: &Check, width: usize, color: bool) -> String {
-    let row = format!(
-        "{glyph} {name:<width$}  {detail}",
-        glyph = check.status.glyph(),
-        name = check.name,
-        detail = check.detail,
+/// `count` with the noun it counts, in the number the count calls for.
+fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+/// A group of checks, named for what they are about.
+struct Section {
+    title: &'static str,
+    checks: Vec<Check>,
+}
+
+/// Render one check as its row: glyph, name, and what was found. `width` is the
+/// widest name in the report, counted in characters — a row with nothing to add
+/// is not padded to it, since nothing lines up behind it.
+fn render_check(check: &Check, width: usize, color: bool) -> String {
+    let name = if check.detail.is_empty() {
+        check.name.to_string()
+    } else {
+        pad(check.name, width)
+    };
+    let mut row = format!(
+        "  {} {}",
+        term::paint(check.status.glyph(), check.status.color(), color),
+        match check.status.name_color() {
+            Some(tint) => term::paint(&name, tint, color),
+            None => name,
+        },
     );
-    term::paint(row.trim_end(), check.status.color(), color)
+    if !check.detail.is_empty() {
+        row.push_str("  ");
+        row.push_str(&term::paint(
+            &check.detail,
+            check.status.detail_color(),
+            color,
+        ));
+    }
+    row
+}
+
+/// What the report came to, and the colour it is painted in.
+fn summary(checks: &[&Check]) -> (String, u8) {
+    let count = |status| checks.iter().filter(|c| c.status == status).count();
+    let (warned, failed) = (count(Status::Warn), count(Status::Fail));
+
+    let mut parts = vec![format!("{} checks", checks.len())];
+    if failed > 0 {
+        parts.push(format!("{failed} failed"));
+    }
+    if warned > 0 {
+        parts.push(format!("{warned} to look at"));
+    }
+    if failed == 0 && warned == 0 {
+        parts.push("all clear".to_string());
+    }
+
+    let status = if failed > 0 {
+        Status::Fail
+    } else if warned > 0 {
+        Status::Warn
+    } else {
+        Status::Ok
+    };
+    (parts.join(" · "), status.color())
 }
 
 /// How many checks failed. Warnings are not failures: the command exits
@@ -360,10 +802,31 @@ fn version_of(program: &str) -> Option<String> {
     text.lines().next().map(str::trim).map(str::to_string)
 }
 
+/// The version out of a `--version` line — `git version 2.51.0` is `2.51.0`.
+///
+/// The first word that starts with a digit, since every tool here writes its
+/// name before the version and its build details after. A `v` prefix is part of
+/// the spelling, not of the version.
+fn version_number(line: &str) -> Option<&str> {
+    line.split_whitespace()
+        .map(|word| word.strip_prefix('v').unwrap_or(word))
+        .find(|word| word.starts_with(|c: char| c.is_ascii_digit()))
+}
+
+/// What a row says about an installed tool: its version, or that it is there
+/// at all when it will not say.
+fn installed(program: &str) -> String {
+    version_of(program)
+        .as_deref()
+        .and_then(version_number)
+        .unwrap_or("installed")
+        .to_string()
+}
+
 /// Whether a tool scriv shells out to is installed, and which version.
 fn tool_check(name: &'static str, program: &str, required: bool, note: &str) -> Check {
     match on_path(program) {
-        Some(_) => Check::ok(name, version_of(program).unwrap_or_else(|| "found".into())),
+        Some(_) => Check::ok(name, installed(program)),
         None if required => Check::fail(name, format!("not on PATH — {note}")),
         None => Check::warn(name, format!("not on PATH — {note}")),
     }
@@ -393,22 +856,24 @@ fn gh_check() -> Check {
     if on_path("gh").is_none() {
         return Check::warn("gh", format!("not on PATH — {GH_NOTE}"));
     }
-    let version = version_of("gh").unwrap_or_else(|| "found".into());
-    let (status, detail) = gh_state(&version, gh::authenticated());
+    let (status, detail) = gh_state(&installed("gh"), gh::authenticated());
     Check::new("gh", status, detail)
 }
 
-/// The config file itself: whether there is one, and where. Reaching this point
-/// means it parsed, so the only question left is whether one exists — and
-/// absent is a warning, since the known-files commands work without one.
+/// The config file itself: whether there is one. Reaching this point means it
+/// parsed, so the only question left is whether one exists — and absent is a
+/// warning, since the known-files commands work without one. Where it is, is
+/// the first line `config print` draws.
 fn config_check(ctx: &Ctx) -> Check {
-    let path = ctx.config_path.display().to_string();
     if ctx.config_path.exists() {
-        Check::ok("config", path)
+        Check::ok("config file", "")
     } else {
         Check::warn(
-            "config",
-            format!("{path} not found — run `scriv config init`"),
+            "config file",
+            format!(
+                "{} not found — run `scriv config init`",
+                ctx.config_path.display()
+            ),
         )
     }
 }
@@ -430,11 +895,13 @@ fn root_checks(ctx: &Ctx) -> Vec<Check> {
         )),
         Some(root) => {
             let expanded = expand_home_dir(root, ctx.home());
-            let shown = expanded.display();
             checks.push(if expanded.is_dir() {
-                Check::ok("repo root", format!("{shown}"))
+                Check::ok("repo root", "")
             } else {
-                Check::fail("repo root", format!("{shown} is not a directory"))
+                Check::fail(
+                    "repo root",
+                    format!("{} is not a directory", expanded.display()),
+                )
             });
         }
     }
@@ -450,7 +917,7 @@ fn root_checks(ctx: &Ctx) -> Vec<Check> {
             .map(String::as_str)
             .collect();
         checks.push(if missing.is_empty() {
-            Check::ok("repo extra", format!("{total} path(s), all present"))
+            Check::ok("repo extra", plural(total, "path", "paths"))
         } else {
             // Discovery treats a missing search path as a hard error.
             Check::fail("repo extra", format!("missing: {}", missing.join(", ")))
@@ -479,102 +946,114 @@ fn discovery_check(ctx: &Ctx, paths_ok: bool) -> Option<Check> {
     )
 }
 
-/// The editor `scriv edit` will launch, and whether it is actually there.
-fn editor_check(ctx: &Ctx) -> Check {
-    let Some(setting) = ctx.editor_setting() else {
-        return Check::warn(
-            "editor",
-            "no $VISUAL or $EDITOR — `scriv edit` has nothing to open files with",
-        );
-    };
-    // The setting may carry arguments (`code -w`); only the program is
-    // looked for, the same split the launch does.
+/// Whether an editor command is a program this machine has. Shared by the
+/// editor `scriv edit` launches and the one `[note] editor` names.
+fn editor_on_path(name: &'static str, setting: &str) -> Check {
+    // The setting may carry arguments (`code -w`); only the program is looked
+    // for, the same split the launch does.
     let program = setting.split_whitespace().next().unwrap_or(setting);
     match on_path(program) {
-        Some(found) => Check::ok("editor", format!("{setting} ({})", found.display())),
-        None => Check::fail("editor", format!("{setting} — `{program}` is not on PATH")),
+        Some(found) => Check::ok(name, found.display().to_string()),
+        None => Check::fail(name, format!("`{program}` is not on PATH")),
     }
 }
 
-/// The notes vault: where it is, and how many notes are in it.
-///
-/// One row rather than two — a root that resolves and a count of what is under
-/// it are the same question — and a warning rather than a failure when it is
-/// unset, since every other group works without one.
-fn note_checks(ctx: &Ctx) -> Vec<Check> {
-    let mut checks = Vec::new();
+/// The editor `scriv edit` will launch, and whether it is actually there.
+fn editor_check(ctx: &Ctx) -> Check {
+    match ctx.editor_setting() {
+        Some(setting) => editor_on_path("editor", setting),
+        None => Check::warn(
+            "editor",
+            "no $VISUAL or $EDITOR — `scriv edit` has nothing to open files with",
+        ),
+    }
+}
 
+/// The editor `note edit` will launch, when `[note] editor` names one of its
+/// own. Unset, it is the editor the row above already reported, and a second
+/// row saying so is a second row saying so.
+fn note_editor_check(ctx: &Ctx) -> Option<Check> {
+    ctx.config
+        .note
+        .editor
+        .as_deref()
+        .map(|setting| editor_on_path("note editor", setting))
+}
+
+/// The notes vault: whether it resolves, and how many notes are under it.
+///
+/// A warning rather than a failure when it is unset, since every other group
+/// works without one.
+fn note_vault_check(ctx: &Ctx) -> Check {
     if ctx.config.note.root.is_none() {
-        checks.push(Check::warn(
+        return Check::warn(
             "note vault",
             "`[note] root` not set — `scriv note` has nowhere to look",
-        ));
-    } else {
-        checks.push(match cmd::note::vault_summary(ctx) {
-            Err(err) => Check::fail("note vault", format!("{err:#}")),
-            Ok((root, 0)) => Check::warn(
-                "note vault",
-                format!("{} holds no Markdown files", root.display()),
-            ),
-            Ok((root, count)) => Check::ok(
-                "note vault",
-                format!("{count} note(s) in {}", root.display()),
-            ),
-        });
+        );
     }
-
-    // Only when it is set: unset, it is the editor the row above already
-    // reported, and a second row saying so is a second row saying so.
-    if let Some(setting) = ctx.config.note.editor.as_deref() {
-        let program = setting.split_whitespace().next().unwrap_or(setting);
-        checks.push(match on_path(program) {
-            Some(found) => Check::ok("note editor", format!("{setting} ({})", found.display())),
-            None => Check::fail(
-                "note editor",
-                format!("{setting} — `{program}` is not on PATH"),
-            ),
-        });
+    match cmd::note::vault_summary(ctx) {
+        Err(err) => Check::fail("note vault", format!("{err:#}")),
+        Ok((root, 0)) => Check::warn(
+            "note vault",
+            format!("{} holds no Markdown files", root.display()),
+        ),
+        Ok((_, count)) => Check::ok("note vault", plural(count, "note", "notes")),
     }
-
-    checks
 }
 
-/// `[shell]`: whether the bindings and aliases resolve to actions that exist.
+/// `[shell]`: whether every key and name resolves to an action that exists.
 ///
 /// A failure here is `scriv init fish` refusing to emit anything, which takes
 /// the whole shell integration with it — so it is a failure rather than a
 /// warning, and this is where it should be found rather than at the next new
-/// shell.
-fn shell_check(ctx: &Ctx) -> Check {
-    match binding::resolve(&ctx.config.shell) {
-        Err(err) => Check::fail("shell integration", format!("{err:#}")),
-        Ok(integration) => Check::ok(
+/// shell. Which key runs what is `config print`; this counts them and says
+/// whether they resolve.
+fn shell_check(cfg: &Config) -> Check {
+    let bindings = binding::entries(cfg.shell.bindings.as_ref(), binding::DEFAULT_BINDINGS);
+    let aliases = binding::entries(cfg.shell.aliases.as_ref(), binding::DEFAULT_ALIASES);
+
+    let unknown: Vec<String> = bindings
+        .iter()
+        .chain(&aliases)
+        .filter(|(_, id)| binding::action(id).is_none())
+        .map(|(trigger, id)| format!("`{trigger}` names `{id}`"))
+        .collect();
+
+    if unknown.is_empty() {
+        Check::ok(
             "shell integration",
             format!(
-                "{} key binding(s), {} alias(es) — {}",
-                integration.bindings.len(),
-                integration.aliases.len(),
-                integration
-                    .aliases
-                    .iter()
-                    .map(|alias| alias.trigger.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                "{}, {}",
+                plural(bindings.len(), "key binding", "key bindings"),
+                plural(aliases.len(), "alias", "aliases"),
             ),
-        ),
+        )
+    } else {
+        Check::fail(
+            "shell integration",
+            format!(
+                "{} — no such action, and `scriv init` refuses until there is",
+                unknown.join(", ")
+            ),
+        )
     }
 }
 
 /// fish's history file: whether it is where scriv looked, and how much is in
 /// it.
 fn history_check(ctx: &Ctx) -> Check {
-    let shown = ctx.history_path.display().to_string();
     match std::fs::read(&ctx.history_path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Check::warn(
             "fish history",
-            format!("{shown} not found — set `[history] file` if yours is elsewhere"),
+            format!(
+                "{} not found — set `[history] file` if yours is elsewhere",
+                ctx.history_path.display()
+            ),
         ),
-        Err(e) => Check::fail("fish history", format!("{shown}: {e}")),
+        Err(e) => Check::fail(
+            "fish history",
+            format!("{}: {e}", ctx.history_path.display()),
+        ),
         Ok(data) => {
             // The same list `history sel` offers, so the count is the one the
             // selector will show rather than one that counts key presses.
@@ -583,7 +1062,7 @@ fn history_check(ctx: &Ctx) -> Check {
             )));
             Check::ok(
                 "fish history",
-                format!("{} unique command(s) in {shown}", entries.len()),
+                plural(entries.len(), "unique command", "unique commands"),
             )
         }
     }
@@ -616,31 +1095,33 @@ fn files_check(ctx: &Ctx) -> Check {
     }
 }
 
-/// Everything `config check` looks at, in the order it is reported: the config
-/// first, then what it points at, then the tools scriv shells out to.
-fn collect(ctx: &Ctx) -> Vec<Check> {
-    let mut checks = vec![config_check(ctx)];
-
+/// Everything `config check` looks at, in the order it is reported: what the
+/// configuration points at, then the programs scriv shells out to, then the
+/// files it keeps.
+fn collect(ctx: &Ctx) -> Vec<Section> {
+    let mut settings = vec![config_check(ctx)];
     let paths = root_checks(ctx);
     let paths_ok = failures(&paths) == 0;
-    checks.extend(paths);
-    checks.extend(discovery_check(ctx, paths_ok));
+    settings.extend(paths);
+    settings.extend(discovery_check(ctx, paths_ok));
+    settings.push(shell_check(&ctx.config));
 
-    checks.push(editor_check(ctx));
-    checks.push(tool_check(
+    let mut tools = vec![editor_check(ctx)];
+    tools.extend(note_editor_check(ctx));
+    tools.push(tool_check(
         "git",
         "git",
         true,
         "`branch` and `repo` cannot work without it",
     ));
-    checks.push(gh_check());
-    checks.push(tool_check(
+    tools.push(gh_check());
+    tools.push(tool_check(
         "bat",
         "bat",
         false,
         "previews fall back to `head`, without highlighting or a theme",
     ));
-    checks.push(tool_check(
+    tools.push(tool_check(
         "rg",
         "rg",
         false,
@@ -648,7 +1129,7 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
     ));
     // `kill` and `lsof` get no row: both ship in the same base system `ps`
     // does, and a report of three lines saying the same thing is one line.
-    checks.push(tool_check(
+    tools.push(tool_check(
         "ps",
         "ps",
         true,
@@ -657,42 +1138,71 @@ fn collect(ctx: &Ctx) -> Vec<Check> {
     // The one row `project` earns: everything else it runs is whatever the
     // project in front of it asks for, and a missing one of those is already
     // reported where it is skipped.
-    checks.push(tool_check(
+    tools.push(tool_check(
         "mise",
         "mise",
         false,
         "`project` runs a project's own tools through it (https://mise.jdx.dev)",
     ));
-    checks.push(shell_check(ctx));
-    checks.push(history_check(ctx));
-    checks.push(files_check(ctx));
-    checks.extend(note_checks(ctx));
-    checks
+
+    let content = vec![history_check(ctx), files_check(ctx), note_vault_check(ctx)];
+
+    vec![
+        Section {
+            title: "configuration",
+            checks: settings,
+        },
+        Section {
+            title: "tools",
+            checks: tools,
+        },
+        Section {
+            title: "content",
+            checks: content,
+        },
+    ]
 }
 
 /// `scriv config check` — look at everything scriv depends on in one go and say
 /// what is wrong with it. The exit status is non-zero only when something is
 /// genuinely broken, so it is worth putting in a setup script.
+///
+/// A checklist, not a report of the configuration: what each setting is set to
+/// is `scriv config print`, and a row here repeats it only where repeating it
+/// is the way out of a problem.
 pub fn check(ctx: &Ctx) -> Result<()> {
-    let checks = collect(ctx);
+    let sections = collect(ctx);
     let color = ctx.color();
-    let width = checks
+    let all: Vec<&Check> = sections.iter().flat_map(|s| &s.checks).collect();
+    let width = all
         .iter()
         .map(|c| c.name.chars().count())
         .max()
         .unwrap_or(0);
 
     let mut out = term::Listing::stdout();
-    for check in &checks {
-        if !out.line(&render(check, width, color))? {
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 && !out.line("")? {
             return Ok(());
         }
+        if !out.line(&term::paint(section.title, HEADING, color))? {
+            return Ok(());
+        }
+        for check in &section.checks {
+            if !out.line(&render_check(check, width, color))? {
+                return Ok(());
+            }
+        }
+    }
+    let (summary, tint) = summary(&all);
+    if !out.line("")? || !out.line(&term::paint(&summary, tint, color))? {
+        return Ok(());
     }
     out.finish()?;
 
-    let failed = failures(&checks);
+    let failed = all.iter().filter(|c| c.status == Status::Fail).count();
     if failed > 0 {
-        bail!("{failed} of {} checks failed", checks.len());
+        bail!("{failed} of {} checks failed", all.len());
     }
     Ok(())
 }
@@ -784,15 +1294,10 @@ mod tests {
 
     #[test]
     fn the_templates_commented_keys_parse_when_uncommented() {
-        let is_key = |line: &str| {
-            line.split_once(" = ").is_some_and(|(name, _)| {
-                !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-            })
-        };
         let uncommented: String = TEMPLATE
             .lines()
             .map(|line| match line.strip_prefix("# ") {
-                Some(rest) if is_key(rest) => rest,
+                Some(rest) if template_key(rest).is_some() => rest,
                 _ => line,
             })
             .collect::<Vec<_>>()
@@ -809,6 +1314,158 @@ mod tests {
         assert_eq!(cfg.repo.display, RepoDisplay::Relative);
         assert_eq!(cfg.repo.label_of("acme"), Some("work"));
         assert!(!cfg.selector.preview_window.is_empty());
+    }
+
+    // --- print ---
+
+    /// The key `line` sets, if it sets one: `root = "~/dev"` is `root`.
+    fn template_key(line: &str) -> Option<&str> {
+        line.split_once(" = ").map(|(name, _)| name).filter(|name| {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+        })
+    }
+
+    fn env() -> Env<'static> {
+        Env {
+            config_path: "~/.config/scriv/config.toml".to_string(),
+            config_exists: true,
+            history_path: "~/.local/share/fish/fish_history".to_string(),
+            editor: Some("nvim"),
+        }
+    }
+
+    fn keys(rows: &[Row]) -> Vec<&str> {
+        rows.iter()
+            .filter_map(|row| match row {
+                Row::Setting { key, .. } => Some(key.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The starter config describes every setting there is, so it is the list
+    /// `config print` has to cover. A setting added to one and not the other
+    /// is a configuration file that cannot be read back.
+    #[test]
+    fn every_setting_the_starter_config_names_is_printed() {
+        let rows = report(&Config::default(), &env());
+        let printed = keys(&rows);
+
+        for line in TEMPLATE.lines() {
+            let Some(key) = template_key(line.strip_prefix("# ").unwrap_or(line)) else {
+                continue;
+            };
+            assert!(
+                printed
+                    .iter()
+                    .any(|shown| *shown == key || shown.starts_with(&format!("{key}."))),
+                "`{key}` is in the starter config but not in `config print`: {printed:?}"
+            );
+        }
+    }
+
+    /// The keys a shell binds are configuration like any other setting, and
+    /// the report is where you look to find out which ones you have.
+    #[test]
+    fn the_default_key_bindings_and_aliases_are_printed() {
+        let rows = report(&Config::default(), &env());
+        let printed = keys(&rows);
+
+        for (trigger, _) in binding::DEFAULT_BINDINGS
+            .iter()
+            .chain(binding::DEFAULT_ALIASES)
+        {
+            assert!(
+                printed.contains(trigger),
+                "`{trigger}` is not in {printed:?}"
+            );
+        }
+        let lines = render_report(&rows, false).join("\n");
+        assert!(
+            lines.contains("Select a repository and cd into it"),
+            "a binding was printed without saying what it does:\n{lines}"
+        );
+    }
+
+    /// A binding naming an action scriv does not define stops `scriv init`
+    /// outright. The report still shows the line, since it is one the file
+    /// really has, and says what is wrong with it.
+    #[test]
+    fn a_binding_that_names_nothing_is_shown_and_marked() {
+        let rows = binding_rows(
+            Some(
+                &[("f6".to_string(), "repo-jump".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            binding::DEFAULT_BINDINGS,
+        );
+
+        let line = &render_report(&rows, false)[0];
+        assert!(line.contains("f6"), "{line}");
+        assert!(line.contains("repo-jump"), "{line}");
+        assert!(line.contains("no such action"), "{line}");
+    }
+
+    /// Which values are scriv's own rather than the user's is most of what the
+    /// report is for: a setting nobody chose reads differently from one
+    /// somebody did.
+    #[test]
+    fn a_value_scriv_chose_is_marked_and_one_the_user_chose_is_not() {
+        let mut cfg = Config::default();
+        cfg.selector.height = "20".to_string();
+        let lines = render_report(&report(&cfg, &env()), false);
+
+        let row = |key: &str| {
+            lines
+                .iter()
+                .find(|line| line.trim_start().starts_with(key))
+                .unwrap_or_else(|| panic!("no `{key}` row in {lines:#?}"))
+                .clone()
+        };
+        assert!(!row("height").contains(DEFAULT), "{}", row("height"));
+        assert!(row("recent").contains(DEFAULT), "{}", row("recent"));
+    }
+
+    #[test]
+    fn a_missing_config_file_says_so_once_rather_than_on_every_row() {
+        let lines = render_report(
+            &report(
+                &Config::default(),
+                &Env {
+                    config_exists: false,
+                    ..env()
+                },
+            ),
+            false,
+        );
+
+        assert!(lines[0].contains("not found"), "{:?}", lines[0]);
+        assert_eq!(
+            lines.iter().filter(|l| l.contains("not found")).count(),
+            1,
+            "{lines:#?}"
+        );
+    }
+
+    #[test]
+    fn keys_line_up_in_one_column_and_carry_no_colour_when_it_is_off() {
+        let lines = render_report(&report(&Config::default(), &env()), false);
+        let settings: Vec<&String> = lines.iter().filter(|line| line.starts_with("  ")).collect();
+
+        // The value starts after the first gap wide enough to be a column break.
+        let value_column = |line: &str| {
+            let rest = &line[2..];
+            let gap = rest.find("  ")?;
+            let padded = &rest[gap..];
+            Some(2 + gap + padded.len() - padded.trim_start().len())
+        };
+        let first = value_column(settings[0]);
+        assert!(first.is_some(), "{:?}", settings[0]);
+        for line in &settings {
+            assert_eq!(value_column(line), first, "{line}");
+            assert!(!line.contains('\x1b'), "colour leaked into a plain report");
+        }
     }
 
     // --- check ---
@@ -836,24 +1493,70 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), glyphs.len(), "two statuses look alike");
 
-        let plain = render(&Check::fail("repo root", "not set"), 9, false);
-        assert_eq!(plain, "✗ repo root  not set");
+        let plain = render_check(&Check::fail("repo root", "not set"), 9, false);
+        assert_eq!(plain, "  ✗ repo root  not set");
         assert!(!plain.contains('\x1b'), "colour leaked into a plain report");
     }
 
     #[test]
     fn names_are_padded_into_one_column() {
         let rows = [
-            render(&Check::ok("gh", "found"), 9, false),
-            render(&Check::ok("repo root", "/tmp"), 9, false),
+            render_check(&Check::ok("gh", "found"), 9, false),
+            render_check(&Check::ok("repo root", "/tmp"), 9, false),
         ];
         let column = |row: &str| row.rfind("  ").map(|i| i + 2);
         assert_eq!(column(&rows[0]), column(&rows[1]), "{rows:?}");
     }
 
+    /// A row with nothing to add is the tick alone: `config print` is where
+    /// the value it would have repeated is written.
+    #[test]
+    fn a_check_with_nothing_to_add_is_the_tick_and_the_name() {
+        let row = render_check(&Check::ok("config file", ""), 9, false);
+        assert_eq!(row, "  ✓ config file");
+    }
+
+    #[test]
+    fn the_summary_counts_what_is_left_to_do() {
+        let clear = [Check::ok("git", ""), Check::ok("gh", "")];
+        let (line, tint) = summary(&clear.iter().collect::<Vec<_>>());
+        assert_eq!(line, "2 checks · all clear");
+        assert_eq!(tint, Status::Ok.color());
+
+        let mixed = [
+            Check::ok("git", ""),
+            Check::warn("gh", "not on PATH"),
+            Check::fail("repo root", "not set"),
+        ];
+        let (line, tint) = summary(&mixed.iter().collect::<Vec<_>>());
+        assert_eq!(line, "3 checks · 1 failed · 1 to look at");
+        assert_eq!(tint, Status::Fail.color());
+    }
+
+    /// The row names the key that is wrong, since the report is where the
+    /// user finds out before `scriv init` does.
+    #[test]
+    fn a_binding_that_names_nothing_fails_the_shell_row() {
+        let mut broken_config = Config::default();
+        broken_config.shell.bindings = Some(
+            [("f6".to_string(), "repo-jump".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        let sound = shell_check(&Config::default());
+        assert_eq!(sound.status, Status::Ok);
+        assert!(sound.detail.contains("10 key bindings"), "{}", sound.detail);
+
+        let broken = shell_check(&broken_config);
+        assert_eq!(broken.status, Status::Fail);
+        assert!(broken.detail.contains("f6"), "{}", broken.detail);
+        assert!(broken.detail.contains("repo-jump"), "{}", broken.detail);
+    }
+
     #[test]
     fn an_unauthenticated_gh_is_a_warning_that_names_the_way_out() {
-        let (status, detail) = gh_state("gh version 2.97.0", false);
+        let (status, detail) = gh_state("2.97.0", false);
         assert_eq!(status, Status::Warn, "a login nobody has is not fatal");
         assert!(detail.contains("gh auth login"), "{detail}");
         assert!(
@@ -861,9 +1564,27 @@ mod tests {
             "the version went missing: {detail}"
         );
 
-        let (status, detail) = gh_state("gh version 2.97.0", true);
+        let (status, detail) = gh_state("2.97.0", true);
         assert_eq!(status, Status::Ok);
         assert!(!detail.contains("gh auth login"), "{detail}");
+    }
+
+    /// Every tool here writes its version differently, and a checklist that
+    /// repeats each one's whole banner is a checklist nobody scans.
+    #[test]
+    fn a_version_line_is_reported_as_the_version() {
+        assert_eq!(version_number("git version 2.51.0"), Some("2.51.0"));
+        assert_eq!(version_number("bat 0.26.1"), Some("0.26.1"));
+        assert_eq!(
+            version_number("gh version 2.97.0 (2026-07-31)"),
+            Some("2.97.0")
+        );
+        assert_eq!(
+            version_number("2026.8.3 macos-arm64 (2026-08-07)"),
+            Some("2026.8.3")
+        );
+        assert_eq!(version_number("ripgrep v15.2.0"), Some("15.2.0"));
+        assert_eq!(version_number("usage: ps [-AaCcEefhjlMmrSTvwXx]"), None);
     }
 
     #[test]

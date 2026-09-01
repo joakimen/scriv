@@ -98,7 +98,10 @@ publishes the crate.
    `scriv <group> --help`, its key-binding table `DEFAULT_BINDINGS`, its
    `Install` line the platforms and external tools, and the prose under each
    heading what the code now does; the starter config must describe every
-   setting that exists and none that does not.
+   setting that exists and none that does not. A test holds `scriv config
+   print` to that config, so a setting written in one and not the other fails
+   the build; a setting in neither still slips through, which is what reading
+   both on every change is for.
 
    The README is still a page, not a manual: reading it is what is required on
    every change, not adding to it. A new flag does not belong there; a new
@@ -149,6 +152,16 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
 - **A new dependency on the outside world gets a `config check` row** in
   `cmd/config.rs`. `Fail` only when scriv is genuinely broken without it, and
   skip a check that repeats an earlier one.
+- **A new setting gets a `config print` row**, under the table it is written
+  in. That report is the whole configuration — every table, whether the file
+  writes it or not — so a setting missing from it is one nobody can read back,
+  and a table added since the last look at the command is how it goes stale. A
+  test holds the report to the starter config and fails when one names a key
+  the other does not, which is what makes that config the list to keep
+  straight. Keep the two commands apart while you are there: `print` says what
+  a setting is and where the value came from, `check` says whether what it
+  points at is actually there, and a `check` row repeats a value only where
+  repeating it is the way out of a problem.
 - **Spawned children explain themselves.** Return `Reported(code)` so scriv
   exits with the child's status rather than printing a vaguer line over git's.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
