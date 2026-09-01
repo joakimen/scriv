@@ -821,18 +821,29 @@ enum ConfigCmd {
         #[arg(short, long)]
         force: bool,
     },
-    /// Print the resolved configuration
+    /// Print every setting and what is in force for it
+    ///
+    /// Every table the config file can hold, whether the file writes that table
+    /// or not: the value in force, and — where that value is scriv's rather
+    /// than yours — that it is a default. The keys `scriv init` binds and the
+    /// names it defines are settings like any other, listed with the action
+    /// each one runs and what that action does.
+    ///
+    /// Whether what the settings point at is actually there is `config check`.
     Print,
     /// Print the configuration file path
     Path,
     /// Check everything scriv depends on and report what is wrong
     ///
-    /// Looks at the config file, the paths it names, the repositories
+    /// A checklist: the config file, the paths it names, the repositories
     /// discovery actually finds, your editor, `git`, `gh` and whether it is
-    /// still logged in, fish's history file and the tracked-file list — all in
-    /// one pass, each with what to do about it. Exits non-zero only when
-    /// something is genuinely broken, so it is worth putting in a setup script;
-    /// a warning still leaves scriv working.
+    /// still logged in, fish's history file, the tracked-file list and the
+    /// notes vault — each a line, with what to do about the ones that are
+    /// wrong. Exits non-zero only when something is genuinely broken, so it is
+    /// worth putting in a setup script; a warning still leaves scriv working.
+    ///
+    /// What each setting is set to is `config print`; a row here repeats a
+    /// value only where repeating it is the way out of a problem.
     ///
     /// The login is asked of GitHub, so this is the one command here that waits
     /// on the network.

@@ -416,7 +416,34 @@ fn config_init_writes_a_config_the_next_command_accepts() {
     let print = sandbox.run(&["config", "print"]);
     print.ok();
     assert!(print.stdout.contains("[repo]"), "{}", print.stdout);
-    assert!(print.stdout.contains("root:"), "{}", print.stdout);
+    assert!(
+        print.stdout.contains("~/dev/github.com"),
+        "the root the starter config sets is not in the report: {}",
+        print.stdout
+    );
+}
+
+/// The report is what the settings actually are, so every table the file can
+/// hold is in it whether the file writes that table or not.
+#[test]
+fn config_print_covers_every_table_and_the_keys_a_shell_binds() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[repo]\nroot = \"~/dev/github.com\"\n");
+
+    let run = sandbox.run(&["config", "print"]);
+    run.ok();
+    for table in ["[repo]", "[worktree]", "[note]", "[history]", "[selector]"] {
+        assert!(run.stdout.contains(table), "no {table} in:\n{}", run.stdout);
+    }
+    // The keys a shell binds are configuration, and this is where they are read
+    // back: the key, what it runs, and what that does.
+    assert!(run.stdout.contains("ctrl-o"), "{}", run.stdout);
+    assert!(run.stdout.contains("repo-cd"), "{}", run.stdout);
+    assert!(
+        run.stdout.contains("Select a repository and cd into it"),
+        "{}",
+        run.stdout
+    );
 }
 
 #[test]
@@ -520,7 +547,7 @@ fn config_check_fails_on_a_missing_root() {
     assert!(
         run.stdout
             .lines()
-            .any(|l| l.starts_with('✗') && l.contains("repo root")),
+            .any(|l| l.trim_start().starts_with('✗') && l.contains("repo root")),
         "{}",
         run.stdout
     );
@@ -552,7 +579,10 @@ fn config_check_does_not_report_one_problem_twice() {
     let run = sandbox.run(&["config", "check"]);
     run.code(1);
     assert_eq!(
-        run.stdout.lines().filter(|l| l.starts_with('✗')).count(),
+        run.stdout
+            .lines()
+            .filter(|l| l.trim_start().starts_with('✗'))
+            .count(),
         1,
         "{}",
         run.stdout
@@ -1883,7 +1913,7 @@ fn config_check_counts_the_notes_in_the_vault() {
     let sandbox = Sandbox::new();
     mk_vault(&sandbox);
     let run = sandbox.run(&["config", "check"]);
-    assert!(run.stdout.contains("3 note(s)"), "{}", run.stdout);
+    assert!(run.stdout.contains("3 notes"), "{}", run.stdout);
     assert!(run.stdout.contains("note editor"), "{}", run.stdout);
     // `note rg` shells out to it, so the report says whether it is there.
     assert!(run.stdout.contains("rg"), "{}", run.stdout);
@@ -2412,20 +2442,29 @@ fn an_action_scriv_does_not_define_stops_init_rather_than_thinning_it() {
     assert!(run.stderr.contains("repo-cd"), "{}", run.stderr);
 }
 
+/// The two commands split this between them: `check` says the integration
+/// resolves, `print` says what it resolves to.
 #[test]
-fn config_check_reports_on_the_shell_integration() {
+fn the_shell_integration_is_counted_by_check_and_named_by_print() {
     let sandbox = Sandbox::new();
     sandbox.write_config("[shell.aliases]\nbuild = \"project-build\"\n");
 
-    let run = sandbox.run(&["config", "check"]);
-    let row = run
+    let check = sandbox.run(&["config", "check"]);
+    let row = check
         .lines()
         .into_iter()
         .find(|line| line.contains("shell integration"))
-        .unwrap_or_else(|| panic!("no shell row:\n{}", run.stdout));
+        .unwrap_or_else(|| panic!("no shell row:\n{}", check.stdout));
+    assert!(row.trim_start().starts_with('✓'), "{row}");
+    assert!(row.contains("1 alias"), "{row}");
+    assert!(
+        !row.contains("build"),
+        "the checklist repeated what `config print` is for: {row}"
+    );
 
-    assert!(row.starts_with('✓'), "{row}");
-    assert!(row.contains("build"), "{row}");
+    let print = sandbox.run(&["config", "print"]);
+    print.ok();
+    assert!(print.stdout.contains("build"), "{}", print.stdout);
 }
 
 #[test]

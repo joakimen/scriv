@@ -50,6 +50,7 @@ a skip rather than a failure.
 ```sh
 scriv config init          # write ~/.config/scriv/config.toml, then set `root`
 scriv init fish | source   # helpers, key bindings, completions
+scriv config print         # every setting, and what is in force for it
 scriv config check         # confirm it all resolves
 ```
 
@@ -155,9 +156,10 @@ i  = "project-deps"
 bb = "project-build"   # `b` by default
 ```
 
-`scriv config check` lists what resolves. An action scriv does not define stops
-`scriv init fish` outright rather than emitting a shell where one key silently
-does nothing.
+`scriv config print` lists every key and name with the action it runs and what
+that action does; `scriv config check` says whether they all resolve. An action
+scriv does not define stops `scriv init fish` outright rather than emitting a
+shell where one key silently does nothing.
 
 Inside a selector, `ctrl-v` hides and shows the preview pane and `tab` takes
 several rows where several are allowed. Anything else a selector answers to is

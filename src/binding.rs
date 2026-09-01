@@ -223,16 +223,27 @@ pub fn resolve(config: &ShellConfig) -> Result<Integration> {
     })
 }
 
-fn bind(what: &str, table: Option<&Bindings>, defaults: &[(&str, &str)]) -> Result<Vec<Bound>> {
-    let written: Vec<(&str, &str)> = match table {
+/// What a table names, in the order it was written — the defaults when it is
+/// absent.
+///
+/// Unlike [`resolve`], an action nobody defines is kept rather than refused:
+/// `scriv config print` reports a line the file really has, and leaves calling
+/// it broken to `scriv config check`.
+pub fn entries<'a>(
+    table: Option<&'a Bindings>,
+    defaults: &'a [(&'a str, &'a str)],
+) -> Vec<(&'a str, &'a str)> {
+    match table {
         Some(table) => table
             .iter()
             .map(|(trigger, id)| (trigger.as_str(), id.as_str()))
             .collect(),
         None => defaults.to_vec(),
-    };
+    }
+}
 
-    written
+fn bind(what: &str, table: Option<&Bindings>, defaults: &[(&str, &str)]) -> Result<Vec<Bound>> {
+    entries(table, defaults)
         .into_iter()
         .map(|(trigger, id)| match action(id) {
             Some(action) => Ok(Bound {
