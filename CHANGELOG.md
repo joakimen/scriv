@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.18.0
+
+*Released 2026-09-02*
+
 ### Added
 
 - `stats show` has an `own` column beside the average: how much of a run was
