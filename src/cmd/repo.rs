@@ -226,7 +226,13 @@ fn owner_candidates(ctx: &Ctx, root: &Path) -> Vec<String> {
             push(&owner, &mut out);
         }
     }
-    match gh::owners() {
+    // A round trip to GitHub, and the owner selector cannot open until it is
+    // back.
+    let asked = {
+        let _spinner = term::spinner("asking GitHub which owners you have", ctx.color());
+        gh::owners()
+    };
+    match asked {
         Ok(owners) => {
             for owner in owners {
                 push(&owner, &mut out);
@@ -352,7 +358,7 @@ fn clone_row(repo: &Repo, present: bool, widths: &Widths) -> (String, Vec<Tint>)
 
     push_column(&mut row, repo.pushed_date(), widths.pushed);
     row.push_str("  ");
-    row.push_str(repo.description.trim());
+    row.push_str(repo.description().trim());
 
     (row.trim_end().to_string(), tints)
 }
@@ -370,7 +376,7 @@ fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
         .map(|repo| {
             let present = destination(root, repo.owner(), repo.name()).exists();
             let (row, tints) = clone_row(repo, present, &widths);
-            SelectItem::new(row, repo.name_with_owner.clone()).tints(tints)
+            SelectItem::new(row, repo.name_with_owner().to_string()).tints(tints)
         })
         .collect()
 }
@@ -445,7 +451,17 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize, archived: bool) -> R
     // as an argument and gets the same check.
     check_slug(&owner)?;
 
-    let repos = gh::list_repos(&owner, limit, archived)?;
+    let repos = {
+        // The listing is several round trips to GitHub, so it says which one it
+        // is on rather than leaving the terminal blank for a second or two.
+        let spinner = term::spinner(&format!("listing {owner}"), ctx.color());
+        gh::list_repos(&owner, limit, archived, &|progress| {
+            spinner.say(format!(
+                "listing {owner} — page {} of {}",
+                progress.done, progress.total
+            ));
+        })?
+    };
     ctx.log
         .info(&format!("{} repositories for {owner}", repos.len()));
     if repos.is_empty() {
@@ -526,12 +542,12 @@ mod tests {
     fn repos() -> Vec<Repo> {
         gh::parse_repos(
             r#"[
-            {"nameWithOwner":"acme/billing-api","description":"Meters usage",
-             "visibility":"PRIVATE","isArchived":false,"isFork":false,
-             "primaryLanguage":{"name":"Rust"},"pushedAt":"2026-07-27T09:12:33Z"},
-            {"nameWithOwner":"acme/old-thing","description":"",
-             "visibility":"PUBLIC","isArchived":true,"isFork":true,
-             "primaryLanguage":null,"pushedAt":"2024-01-02T00:00:00Z"}
+            {"full_name":"acme/billing-api","description":"Meters usage",
+             "visibility":"private","archived":false,"fork":false,
+             "language":"Rust","pushed_at":"2026-07-27T09:12:33Z"},
+            {"full_name":"acme/old-thing","description":null,
+             "visibility":"public","archived":true,"fork":true,
+             "language":null,"pushed_at":"2024-01-02T00:00:00Z"}
         ]"#,
         )
         .unwrap()

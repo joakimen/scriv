@@ -10,6 +10,8 @@
 use std::io::ErrorKind;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
@@ -568,38 +570,31 @@ pub fn merge(
     run(&args)
 }
 
-/// JSON fields requested from `gh repo list`: only what a selector row and its
-/// preview can use.
-const REPO_FIELDS: &str =
-    "nameWithOwner,description,visibility,isArchived,isFork,primaryLanguage,pushedAt";
-
 /// A repository on GitHub, as much of it as the clone selector needs.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+///
+/// Named as the REST API names things, since that is what fills it in.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 pub struct Repo {
     /// `owner/name`.
-    pub name_with_owner: String,
+    pub full_name: String,
+    /// Null for a repository with no description, which is why it is an option
+    /// rather than a defaulted string.
     #[serde(default)]
-    pub description: String,
-    /// GitHub's own word: `PUBLIC`, `PRIVATE` or `INTERNAL`. Read through
+    pub description: Option<String>,
+    /// GitHub's own word: `public`, `private` or `internal`. Read through
     /// [`Repo::visibility`].
     #[serde(default)]
     pub visibility: String,
     #[serde(default)]
-    pub is_archived: bool,
+    pub archived: bool,
     #[serde(default)]
-    pub is_fork: bool,
+    pub fork: bool,
+    /// The language GitHub counts most of, null for a repository with none.
     #[serde(default)]
-    pub primary_language: Option<Language>,
+    pub language: Option<String>,
     /// ISO-8601 timestamp of the last push.
     #[serde(default)]
     pub pushed_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct Language {
-    #[serde(default)]
-    pub name: String,
 }
 
 /// Who can see a repository. `Internal` exists only under an enterprise, where
@@ -648,21 +643,28 @@ impl Visibility {
 impl Repo {
     /// The repository name without its owner — the directory it clones into.
     pub fn name(&self) -> &str {
-        self.name_with_owner
+        self.full_name
             .split_once('/')
-            .map_or(self.name_with_owner.as_str(), |(_, name)| name)
+            .map_or(self.full_name.as_str(), |(_, name)| name)
     }
 
     pub fn owner(&self) -> &str {
-        self.name_with_owner
+        self.full_name
             .split_once('/')
             .map_or("", |(owner, _)| owner)
     }
 
+    /// What `owner/name` is written as everywhere a slug is wanted.
+    pub fn name_with_owner(&self) -> &str {
+        &self.full_name
+    }
+
+    pub fn description(&self) -> &str {
+        self.description.as_deref().unwrap_or_default()
+    }
+
     pub fn language(&self) -> &str {
-        self.primary_language
-            .as_ref()
-            .map_or("", |l| l.name.as_str())
+        self.language.as_deref().unwrap_or_default()
     }
 
     /// Just the date part of [`Self::pushed_at`].
@@ -679,34 +681,32 @@ impl Repo {
     /// nothing.
     pub fn tags(&self) -> Vec<&'static str> {
         let mut tags = Vec::new();
-        if self.is_archived {
+        if self.archived {
             tags.push("archived");
         }
         let visibility = self.visibility().tag();
         if !visibility.is_empty() {
             tags.push(visibility);
         }
-        if self.is_fork {
+        if self.fork {
             tags.push("fork");
         }
         tags
     }
 }
 
-/// Parse the array `gh repo list --json …` prints.
+/// Parse one page of the repository listing.
 pub fn parse_repos(data: &str) -> Result<Vec<Repo>> {
     if data.trim().is_empty() {
         return Ok(Vec::new());
     }
     let mut repos: Vec<Repo> =
-        serde_json::from_str(data).context("parsing `gh repo list` output")?;
-    // `name_with_owner` is deliberately left alone: it is not display text but
-    // the slug handed to `gh repo clone`, guarded by [`valid_slug`].
+        serde_json::from_str(data).context("parsing the repository listing")?;
+    // `full_name` is deliberately left alone: it is not display text but the
+    // slug handed to `gh repo clone`, guarded by [`valid_slug`].
     for repo in &mut repos {
-        repo.description = term::one_row(&repo.description);
-        if let Some(language) = &mut repo.primary_language {
-            language.name = term::one_row(&language.name);
-        }
+        repo.description = repo.description.as_deref().map(term::one_row);
+        repo.language = repo.language.as_deref().map(term::one_row);
     }
     Ok(repos)
 }
@@ -728,32 +728,256 @@ pub fn valid_slug(slug: &str) -> bool {
         })
 }
 
-/// The `gh repo list` invocation for `owner`. Archived repositories are
-/// dropped by GitHub rather than by scriv, so an org whose history is mostly
-/// archived does not spend its `--limit` on rows nobody asked for.
-fn list_repos_args<'a>(owner: &'a str, limit: &'a str, archived: bool) -> Vec<&'a str> {
-    let mut args = vec![
-        "repo",
-        "list",
-        owner,
-        "--json",
-        REPO_FIELDS,
-        "--limit",
-        limit,
-    ];
-    if !archived {
-        args.push("--no-archived");
-    }
-    args
+/// Rows per request. GitHub's maximum, so a listing is as few round trips as
+/// it can be.
+const PAGE_SIZE: usize = 100;
+
+/// How many pages are asked for at once.
+///
+/// The REST listing numbers its pages, so they can be fetched together — which
+/// is the whole reason this is not the GraphQL `gh repo list`, whose cursors
+/// only ever hand out the next one. Eight is well inside GitHub's limit on
+/// concurrent requests and already turns a listing into about one round trip's
+/// wait.
+const PAGE_WORKERS: usize = 8;
+
+/// Where an owner's repositories are listed. GitHub keeps orgs, other people
+/// and the authenticated user in three different places, and only the last of
+/// them shows the private repositories the token's owner has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Source {
+    Org(String),
+    Person(String),
+    /// The authenticated user themselves. `users/{login}/repos` answers for
+    /// them with their public repositories alone, which would hide every
+    /// private repository they have from their own clone listing.
+    Me,
 }
 
-/// Every repository belonging to `owner`, archived ones only when `archived`.
-/// `--limit` drives `gh`'s pagination, and is exposed so an org larger than it
-/// is not silently truncated.
-pub fn list_repos(owner: &str, limit: usize, archived: bool) -> Result<Vec<Repo>> {
-    let limit = limit.to_string();
-    let out = capture(&list_repos_args(owner, &limit, archived))?;
-    parse_repos(&out)
+impl Source {
+    /// The path one page of this listing is read from.
+    fn page(&self, page: usize) -> String {
+        let query = format!("per_page={PAGE_SIZE}&page={page}");
+        match self {
+            Self::Org(owner) => format!("orgs/{owner}/repos?{query}"),
+            Self::Person(owner) => format!("users/{owner}/repos?{query}"),
+            Self::Me => format!("user/repos?affiliation=owner&{query}"),
+        }
+    }
+}
+
+/// One page as it came back: the response headers — read only from the first
+/// page, empty on the rest — and the body.
+type Page = Result<(String, String)>;
+
+/// How far a listing has got, for a caller drawing progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Progress {
+    /// Pages fetched so far, including this one.
+    pub done: usize,
+    /// Pages there are to fetch.
+    pub total: usize,
+}
+
+/// The last page of a listing, read from the `Link` header GitHub sends with
+/// the first — `<…page=4>; rel="last"`. One page when there is no such link,
+/// which is what a listing that fits in one says.
+fn last_page(headers: &str) -> usize {
+    headers
+        .lines()
+        .find(|line| {
+            line.split_once(':')
+                .is_some_and(|(name, _)| name.eq_ignore_ascii_case("link"))
+        })
+        .and_then(|link| {
+            link.split(',')
+                .find(|part| part.contains("rel=\"last\""))
+                // On the separator, not on the name: `per_page=100` ends in one
+                // too, and matching that reads the page size as the page count.
+                .and_then(|part| {
+                    part.split_once("&page=")
+                        .or_else(|| part.split_once("?page="))
+                })
+                .and_then(|(_, rest)| {
+                    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                    digits.parse().ok()
+                })
+        })
+        .unwrap_or(1)
+}
+
+/// Split what `gh api --include` prints into its headers and its body. A
+/// response with no blank line in it is all body, which is what an error page
+/// scriv should try to parse anyway looks like.
+fn split_response(raw: &str) -> (&str, &str) {
+    raw.split_once("\r\n\r\n")
+        .or_else(|| raw.split_once("\n\n"))
+        .unwrap_or(("", raw))
+}
+
+/// Whether a failed `gh api` call failed because there is no such thing, as
+/// opposed to a network or an authentication failure. Only that one is worth
+/// trying somewhere else.
+fn is_not_found(err: &anyhow::Error) -> bool {
+    let message = err.to_string();
+    message.contains("HTTP 404") || message.contains("Not Found")
+}
+
+/// How many pages are asked for before anything is known about how many there
+/// are.
+///
+/// The page count arrives in the first page's own headers, so reading it first
+/// would make every listing two round trips. Asking for four at once instead
+/// costs a small owner three requests that come back empty — in parallel, so
+/// they cost no time — and covers every owner up to four hundred repositories
+/// in one.
+const SPECULATIVE_PAGES: usize = 4;
+
+/// Where `owner` keeps repositories, once GitHub has been asked.
+///
+/// An org is tried first: it is the common case, and the request doubles as the
+/// first page. Only when GitHub says there is no such org does this ask who the
+/// token belongs to, which is what tells a person from the person running
+/// scriv.
+fn person_or_me(owner: &str) -> Source {
+    if login().is_ok_and(|login| login.eq_ignore_ascii_case(owner)) {
+        Source::Me
+    } else {
+        Source::Person(owner.to_string())
+    }
+}
+
+/// Every repository belonging to `owner`, archived ones only when `archived`,
+/// and at most `limit` of them.
+///
+/// `on_page` is called as each page arrives, from whichever thread fetched it.
+pub fn list_repos(
+    owner: &str,
+    limit: usize,
+    archived: bool,
+    on_page: &(dyn Fn(Progress) + Sync),
+) -> Result<Vec<Repo>> {
+    // Archived rows are dropped after the fact — GitHub's listing has no filter
+    // for them — so the cap the limit imposes is on pages rather than on rows.
+    let cap = limit.div_ceil(PAGE_SIZE).max(1);
+    let speculative = cap.min(SPECULATIVE_PAGES);
+
+    let org = Source::Org(owner.to_string());
+    let (source, mut bodies, last) = match first_pages(&org, speculative, on_page) {
+        Ok((bodies, last)) => (org, bodies, last),
+        Err(err) if is_not_found(&err) => {
+            let source = person_or_me(owner);
+            let (bodies, last) = first_pages(&source, speculative, on_page)?;
+            (source, bodies, last)
+        }
+        Err(err) => return Err(err),
+    };
+
+    let wanted = last.min(cap);
+    if wanted > speculative {
+        bodies.extend(fetch_pages(&source, speculative + 1..=wanted, on_page)?);
+    }
+
+    let mut repos = Vec::new();
+    for body in &bodies {
+        repos.extend(parse_repos(body)?);
+    }
+    if !archived {
+        repos.retain(|repo| !repo.archived);
+    }
+    repos.truncate(limit);
+    Ok(repos)
+}
+
+/// The first `pages` pages of `source`, and the page the listing actually ends
+/// at. A page past the end is an empty array rather than a failure, which is
+/// what makes asking for pages nobody may need safe.
+///
+/// An error on the first page is the listing's error — there is no such owner,
+/// or no way to reach GitHub — and is returned rather than joined with the
+/// others, since it is the one the caller can act on.
+fn first_pages(
+    source: &Source,
+    pages: usize,
+    on_page: &(dyn Fn(Progress) + Sync),
+) -> Result<(Vec<String>, usize)> {
+    let mut fetched = fetch(source, 1..=pages, true, on_page);
+    let first = fetched.remove(0)?;
+    let last = last_page(&first.0);
+
+    let mut bodies = vec![first.1];
+    for page in fetched {
+        bodies.push(page?.1);
+    }
+    Ok((bodies, last))
+}
+
+/// Bodies of `pages`, in page order.
+fn fetch_pages(
+    source: &Source,
+    pages: std::ops::RangeInclusive<usize>,
+    on_page: &(dyn Fn(Progress) + Sync),
+) -> Result<Vec<String>> {
+    fetch(source, pages, false, on_page)
+        .into_iter()
+        .map(|page| page.map(|(_, body)| body))
+        .collect()
+}
+
+/// Fetch `pages` of `source`, [`PAGE_WORKERS`] at a time, and hand them back in
+/// page order. `headers` asks for the response headers as well, which only the
+/// first page's are read from.
+fn fetch(
+    source: &Source,
+    pages: std::ops::RangeInclusive<usize>,
+    headers: bool,
+    on_page: &(dyn Fn(Progress) + Sync),
+) -> Vec<Page> {
+    let (first, last) = (*pages.start(), *pages.end());
+    if first > last {
+        return Vec::new();
+    }
+    let count = last - first + 1;
+
+    let next = AtomicUsize::new(first);
+    let done = AtomicUsize::new(0);
+    let fetched: Mutex<Vec<Option<Page>>> = Mutex::new((0..count).map(|_| None).collect());
+
+    std::thread::scope(|scope| {
+        for _ in 0..PAGE_WORKERS.min(count) {
+            scope.spawn(|| {
+                loop {
+                    let page = next.fetch_add(1, Ordering::Relaxed);
+                    if page > last {
+                        return;
+                    }
+                    let path = source.page(page);
+                    let result = if headers && page == first {
+                        capture(&["api", "--include", &path]).map(|raw| {
+                            let (headers, body) = split_response(&raw);
+                            (headers.to_string(), body.to_string())
+                        })
+                    } else {
+                        capture(&["api", &path]).map(|body| (String::new(), body))
+                    };
+                    if let Ok(mut fetched) = fetched.lock() {
+                        fetched[page - first] = Some(result);
+                    }
+                    on_page(Progress {
+                        done: done.fetch_add(1, Ordering::Relaxed) + 1,
+                        total: count,
+                    });
+                }
+            });
+        }
+    });
+
+    fetched
+        .into_inner()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|page| page.unwrap_or_else(|| Ok((String::new(), String::new()))))
+        .collect()
 }
 
 /// Clone `owner/repo` into `dest`. Output is captured because clones run
@@ -783,6 +1007,13 @@ pub fn view_repo_web(dir: &Path) -> Result<()> {
     run_at(Some(dir), &["repo", "view", "--web"])
 }
 
+/// Who the token belongs to. Asked of GitHub rather than of the config, since
+/// it is the answer that decides whether an owner's private repositories are
+/// the user's own to list.
+pub fn login() -> Result<String> {
+    capture(&["api", "user", "--jq", ".login"]).map(|out| out.trim().to_string())
+}
+
 /// The authenticated user's login, and the organisations they belong to — the
 /// owners to suggest on a machine with nothing cloned yet. Failure is returned
 /// rather than swallowed, since a missing `gh` is worth saying.
@@ -792,7 +1023,7 @@ pub fn owners() -> Result<Vec<String>> {
     // the sum.
     let (login, orgs) = std::thread::scope(|scope| {
         let orgs = scope.spawn(|| capture(&["api", "user/orgs", "--jq", ".[].login"]));
-        let login = capture(&["api", "user", "--jq", ".login"]);
+        let login = login();
         (login, orgs.join())
     });
 
@@ -909,14 +1140,26 @@ mod tests {
     #[test]
     fn a_repository_description_cannot_carry_an_escape_either() {
         let repos = parse_repos(
-            r#"[{"nameWithOwner":"acme/api","description":"a\u001b[2Kb",
-                 "primaryLanguage":{"name":"R\u001b[31must"}}]"#,
+            r#"[{"full_name":"acme/api","description":"a\u001b[2Kb",
+                 "language":"R\u001b[31must"}]"#,
         )
         .unwrap();
-        assert_eq!(repos[0].description, "a[2Kb");
+        assert_eq!(repos[0].description(), "a[2Kb");
         assert_eq!(repos[0].language(), "R[31must");
         // Not display text: rewriting it would clone something else.
-        assert_eq!(repos[0].name_with_owner, "acme/api");
+        assert_eq!(repos[0].name_with_owner(), "acme/api");
+    }
+
+    /// A repository with neither description nor language comes back with
+    /// nulls, not with the empty strings GraphQL used to send.
+    #[test]
+    fn a_repository_with_nothing_written_about_it_still_parses() {
+        let repos = parse_repos(r#"[{"full_name":"acme/api","description":null,"language":null}]"#)
+            .unwrap();
+        assert_eq!(repos[0].description(), "");
+        assert_eq!(repos[0].language(), "");
+        assert_eq!(repos[0].name(), "api");
+        assert_eq!(repos[0].owner(), "acme");
     }
 
     #[test]
@@ -1192,21 +1435,50 @@ mod tests {
         );
     }
 
+    /// The three places GitHub keeps repositories, and the one that is not
+    /// interchangeable with the others: `users/{me}/repos` answers for the
+    /// token's owner with their public repositories alone.
     #[test]
-    fn archived_repositories_are_left_to_github_to_filter() {
-        assert!(list_repos_args("acme", "1000", false).contains(&"--no-archived"));
-        assert!(!list_repos_args("acme", "1000", true).contains(&"--no-archived"));
+    fn each_kind_of_owner_is_listed_where_github_keeps_it() {
         assert_eq!(
-            list_repos_args("acme", "50", true),
-            [
-                "repo",
-                "list",
-                "acme",
-                "--json",
-                REPO_FIELDS,
-                "--limit",
-                "50"
-            ]
+            Source::Org("acme".into()).page(2),
+            "orgs/acme/repos?per_page=100&page=2"
         );
+        assert_eq!(
+            Source::Person("torvalds".into()).page(1),
+            "users/torvalds/repos?per_page=100&page=1"
+        );
+        assert_eq!(
+            Source::Me.page(1),
+            "user/repos?affiliation=owner&per_page=100&page=1"
+        );
+    }
+
+    /// How many round trips the listing is comes from the `Link` header of the
+    /// first, which is the only thing that makes the rest of them parallel.
+    #[test]
+    fn the_page_count_comes_from_the_link_header() {
+        let header = "Link: <https://api.github.com/organizations/1/repos?per_page=100&page=2>; \
+             rel=\"next\", <https://api.github.com/organizations/1/repos?per_page=100&page=4>; \
+             rel=\"last\"";
+        assert_eq!(last_page(header), 4);
+
+        // A listing that fits in one page is sent without the header at all.
+        assert_eq!(last_page("Date: today\r\nServer: github.com"), 1);
+        assert_eq!(last_page(""), 1);
+        // A `next` with no `last` is the final page of a cursor-style listing.
+        assert_eq!(last_page("link: <https://x/?page=9>; rel=\"next\""), 1);
+    }
+
+    #[test]
+    fn a_response_is_split_where_its_headers_end() {
+        let (headers, body) = split_response("HTTP/2 200\r\nLink: x\r\n\r\n[{\"a\":1}]");
+        assert_eq!(headers, "HTTP/2 200\r\nLink: x");
+        assert_eq!(body, "[{\"a\":1}]");
+
+        // Nothing but a body is a body, rather than a body read as headers.
+        let (headers, body) = split_response("[]");
+        assert_eq!(headers, "");
+        assert_eq!(body, "[]");
     }
 }
