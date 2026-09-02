@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.17.2
+
+*Released 2026-09-02*
+
 ### Changed
 
 - `ctrl-t` in the `repo clone` selector steps through the two lists on its own,
