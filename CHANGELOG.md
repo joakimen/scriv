@@ -20,10 +20,16 @@ raised, never by hand.
   proc` is a usage error now, so a shell function or a note that spelled it
   needs the new name. The `proc-kill` action a key or an alias can be bound to
   keeps its name, since renaming one silently breaks every config that named it.
+- `scriv repo clone <owner>` lists an owner's repositories about three times
+  faster — a second rather than three for an org of four hundred — and says
+  what it is waiting for while it does. The listing is read a page at a time
+  with the pages fetched together, which GitHub's REST API allows and the
+  GraphQL one `gh repo list` uses does not. Asking for the owner instead of
+  naming one says so too, rather than sitting silent through two round trips.
 
 ### Fixed
 
-- Nothing scriv prints is bright black any more. `proc`, `project deps`,
+- Nothing scriv prints is bright black any more. `ps`, `project deps`,
   `project build` and every selector row drew what they say about a thing —
   durations, counts, the columns before a process's command — in the colour
   several dark themes use as their background, and the rest render as the

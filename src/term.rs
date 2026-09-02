@@ -8,6 +8,7 @@ use std::io::{IsTerminal, Write};
 
 use rustix::fd::AsFd;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -445,10 +446,24 @@ const CLEAR_LINE: &str = "\r\x1b[2K";
 /// when stderr is not a terminal.
 pub struct Spinner {
     stop: Arc<AtomicBool>,
+    /// What the animation says it is waiting for, which the caller can change
+    /// as the wait goes on.
+    label: Arc<Mutex<String>>,
     /// `None` when there was no terminal to draw on.
     thread: Option<JoinHandle<()>>,
     /// Dropped after the animation is erased, handing the row back.
     _row: ScratchRow,
+}
+
+impl Spinner {
+    /// Say what the wait is now for — a page of a listing, a repository being
+    /// cloned. Cheap enough to call per step, and a no-op when there was no
+    /// terminal to draw on.
+    pub fn say(&self, label: impl Into<String>) {
+        if let Ok(mut current) = self.label.lock() {
+            *current = label.into();
+        }
+    }
 }
 
 /// Start a spinner labelled `label` (e.g. `fetching`), running until it is
@@ -464,21 +479,24 @@ pub fn spinner(label: &str, color: bool) -> Spinner {
 
 fn spinner_on(label: &str, color: bool, on_terminal: bool) -> Spinner {
     let stop = Arc::new(AtomicBool::new(false));
+    let label = Arc::new(Mutex::new(label.to_string()));
     if !on_terminal {
         return Spinner {
             stop,
+            label,
             thread: None,
             _row: ScratchRow::none(),
         };
     }
     let row = ScratchRow::take_on(true);
 
-    let label = label.to_string();
+    let said = Arc::clone(&label);
     let flag = Arc::clone(&stop);
     let thread = std::thread::spawn(move || {
         let mut frames = FRAMES.iter().cycle();
         while !flag.load(Ordering::Relaxed) {
             let frame = frames.next().unwrap_or(&FRAMES[0]);
+            let label = said.lock().map(|l| l.clone()).unwrap_or_default();
             let mut err = std::io::stderr().lock();
             let _ = write!(err, "{CLEAR_LINE}{} {label}", paint(frame, 6, color));
             let _ = err.flush();
@@ -494,6 +512,7 @@ fn spinner_on(label: &str, color: bool, on_terminal: bool) -> Spinner {
     });
     Spinner {
         stop,
+        label,
         thread: Some(thread),
         _row: row,
     }
