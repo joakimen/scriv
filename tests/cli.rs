@@ -77,6 +77,11 @@ impl Sandbox {
         self.home().join(".config/scriv/config.toml")
     }
 
+    /// The log every run appends itself to.
+    fn stats_path(&self) -> PathBuf {
+        self.home().join(".local/share/scriv/stats")
+    }
+
     /// The known-files list, which lives beside the config file.
     fn files_path(&self) -> PathBuf {
         self.home().join(".config/scriv/files")
@@ -2504,4 +2509,96 @@ fn verbose_keeps_only_its_long_form() {
     sandbox.run(&["--verbose", "config", "path"]).ok();
     sandbox.run(&["config", "--verbose", "path"]).ok();
     sandbox.run(&["config", "path", "-v"]).code(2);
+}
+
+// --- stats ------------------------------------------------------------------
+
+#[test]
+fn every_run_records_itself_under_the_name_clap_matched() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["config", "path"]).ok();
+    // An alias is the same command, and is recorded as the command.
+    sandbox.run(&["c", "path"]).ok();
+
+    let log = std::fs::read_to_string(sandbox.stats_path()).expect("no stats log");
+    let commands: Vec<&str> = log
+        .lines()
+        .filter_map(|line| line.split('\t').nth(2))
+        .collect();
+    assert_eq!(commands, ["config path", "config path"], "{log}");
+}
+
+#[test]
+fn show_counts_what_has_run_and_names_what_has_not() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["config", "path"]).ok();
+    sandbox.run(&["config", "path"]).ok();
+
+    let run = sandbox.run(&["stats", "show"]);
+    run.ok();
+    let row = |name: &str| {
+        run.stdout
+            .lines()
+            .find(|line| line.contains(name))
+            .unwrap_or_else(|| panic!("no {name} row:\n{}", run.stdout))
+            .to_string()
+    };
+    assert!(row("path").contains(" 2 "), "{}", row("path"));
+    // The whole tree, so the report says what is going unused as well.
+    assert!(row("worktree").contains('-'), "{}", row("worktree"));
+    assert!(run.stdout.starts_with("command"), "{}", run.stdout);
+}
+
+/// The point of taking the selector's time out is that a command left waiting
+/// is not recorded as a slow one, and nothing else in a run takes seconds.
+#[test]
+fn a_run_is_recorded_in_milliseconds_rather_than_in_how_long_it_sat_there() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["config", "path"]).ok();
+
+    let log = std::fs::read_to_string(sandbox.stats_path()).unwrap();
+    let millis: u64 = log
+        .lines()
+        .next()
+        .and_then(|line| line.split('\t').nth(1))
+        .and_then(|millis| millis.parse().ok())
+        .unwrap_or_else(|| panic!("no duration in {log:?}"));
+    assert!(millis < 10_000, "{millis}ms for `config path`");
+}
+
+#[test]
+fn reset_forgets_the_runs_and_says_how_many() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["config", "path"]).ok();
+
+    // Without a terminal to ask at, it names the flag that skips the question.
+    let refused = sandbox.run(&["stats", "reset"]);
+    refused.code(1);
+    assert!(refused.stderr.contains("--yes"), "{}", refused.stderr);
+    assert!(sandbox.stats_path().exists(), "the log went anyway");
+
+    let run = sandbox.run(&["stats", "reset", "--yes"]);
+    run.ok();
+    assert!(run.stdout.contains("forgot"), "{}", run.stdout);
+    assert!(!sandbox.stats_path().exists(), "{}", run.stdout);
+
+    // And again, with nothing to forget.
+    let again = sandbox.run(&["stats", "reset", "--yes"]);
+    again.ok();
+    assert!(
+        again.stdout.contains("nothing recorded"),
+        "{}",
+        again.stdout
+    );
+}
+
+#[test]
+fn improve_prints_the_prompt_it_would_hand_over() {
+    let sandbox = Sandbox::new();
+    sandbox.run(&["config", "path"]).ok();
+
+    let run = sandbox.run(&["stats", "improve", "--dry-run"]);
+    run.ok();
+    assert!(run.stdout.contains("`scriv config path`"), "{}", run.stdout);
+    assert!(run.stdout.contains("| command | runs |"), "{}", run.stdout);
 }

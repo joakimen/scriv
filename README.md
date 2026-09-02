@@ -40,8 +40,8 @@ signal numbers, and the crate refuses to compile for any other target.
 
 External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, `rg`
 for `note rg`, `bat` for syntax-highlighted previews, a fish history file for
-`history`, and `$VISUAL` or `$EDITOR` for `edit` — or `[note] editor` for
-`note`. `scriv config check` reports on each. `project` runs whatever the
+`history`, `claude` for `stats improve`, and `$VISUAL` or `$EDITOR` for `edit` —
+or `[note] editor` for `note`. `scriv config check` reports on each. `project` runs whatever the
 project in front of it asks for, and reports a tool the machine does not have as
 a skip rather than a failure.
 
@@ -95,6 +95,7 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 | `scriv edit` | `file` `dir` — found below `$PWD`, opened in `$EDITOR` |
 | `scriv project` | `deps` `build` — over `$PWD`, whatever it is written in |
 | `scriv config` | `init` `print` `path` `check` |
+| `scriv stats` | `show` `reset` `improve` |
 | `scriv init` | `fish` and every other shell — see Setup |
 
 A note row is the day it was created and what it calls itself, tinted by the
@@ -115,10 +116,18 @@ grouped by the role each dependency is given. `build` runs the repository's own
 `task`, `make` or `just` where it has one, and otherwise builds each toolchain
 in turn. The fish integration calls `scriv project deps` `i`.
 
+`scriv stats` counts scriv itself. Every run appends its command and how long it
+took to a log — with the time you spent in a selector taken out, so a list left
+open over lunch is not a slow command — and `stats show` reads it back as a tree
+of every command there is, including the ones you have never run. Nothing but
+the command's name is recorded: no arguments, no paths, no what you picked.
+`stats improve` hands the busiest commands to Claude Code to work on, and
+`stats reset` forgets the lot.
+
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.
-Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c` — with
-`pj` for `project`; `ps` and `pr` are already two.
+Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c`, `s` —
+with `pj` for `project`; `ps` and `pr` are already two.
 
 ## Key bindings
 

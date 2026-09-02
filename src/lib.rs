@@ -23,6 +23,7 @@ pub mod recent;
 pub mod repo;
 pub mod select;
 pub mod shell;
+pub mod stats;
 pub mod term;
 pub mod walk;
 
@@ -90,6 +91,8 @@ pub struct Ctx {
     pub legacy_kf_path: PathBuf,
     /// fish's history file, which `scriv history` reads.
     pub history_path: PathBuf,
+    /// The log every run appends itself to, which `scriv stats` reads.
+    pub stats_path: PathBuf,
     /// This machine's offset from UTC, for dating history entries.
     utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
@@ -147,11 +150,10 @@ impl Ctx {
         let config = config::load_config(&config_path)?;
 
         // fish's data directory, a different XDG variable from the one above.
-        let history_path = history::history_path(
-            config.history.file.as_deref(),
-            std::env::var(history::XDG_DATA_ENV_VAR).ok().as_deref(),
-            &home,
-        );
+        let data_home = std::env::var(history::XDG_DATA_ENV_VAR).ok();
+        let history_path =
+            history::history_path(config.history.file.as_deref(), data_home.as_deref(), &home);
+        let stats_path = stats::path(data_home.as_deref(), &home);
 
         // Read at the top of the process because it cannot be read later:
         // `time` refuses to determine the local offset once the process is
@@ -188,6 +190,7 @@ impl Ctx {
             recent_path,
             legacy_kf_path,
             history_path,
+            stats_path,
             utc_offset,
             editor,
             note_editor,

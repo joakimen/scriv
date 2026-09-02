@@ -14,4 +14,5 @@ pub mod pr;
 pub mod project;
 pub mod ps;
 pub mod repo;
+pub mod stats;
 pub mod worktree;

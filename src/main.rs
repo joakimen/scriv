@@ -10,14 +10,14 @@
 use std::process::ExitCode;
 
 use clap::builder::styling::{AnsiColor, Effects, Styles};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::Shell;
 
 use scriv::gh::MergeMethod;
 use scriv::git::Filter;
 use scriv::select::Cancelled;
 use scriv::term::ColorChoice;
-use scriv::{Ctx, Reported, cmd, shell};
+use scriv::{Ctx, Reported, cmd, shell, stats};
 
 /// Usage examples appended to the top-level help. Three lines, and it stays
 /// three — see CLAUDE.md.
@@ -238,6 +238,19 @@ enum Command {
     Config {
         #[command(subcommand)]
         command: ConfigCmd,
+    },
+    /// What you run, how often, and how long it takes
+    ///
+    /// Every run appends one line to a log — the command, and how long it took
+    /// with the time you spent in a selector taken out — which `stats show`
+    /// reads back as a tree of every command there is.
+    ///
+    /// Nothing but the command's name is recorded: no arguments, no paths, no
+    /// what you picked.
+    #[command(visible_alias = "s")]
+    Stats {
+        #[command(subcommand)]
+        command: StatsCmd,
     },
     /// Print shell integration for `source`-ing
     ///
@@ -849,8 +862,42 @@ enum ConfigCmd {
     Check,
 }
 
+#[derive(Subcommand)]
+enum StatsCmd {
+    /// Print every command, with how often it has run and what it costs
+    ///
+    /// The whole tree, including the commands you have never run — which is
+    /// half of what the report is for.
+    #[command(visible_alias = "list")]
+    Show,
+    /// Forget every run recorded so far
+    Reset {
+        /// Do not ask first
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Hand the statistics to Claude Code and let it improve what they point at
+    ///
+    /// Runs `claude` in the directory you are standing in, on a prompt built
+    /// from the commands worth the most — total time spent, which has both how
+    /// often a command runs and what each run costs in it. Run it from a scriv
+    /// checkout, since that is what it will be asked to change.
+    Improve {
+        /// Print the prompt instead of running anything
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+    },
+}
+
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    // Parsed through `ArgMatches` rather than straight into `Cli` so the run
+    // can be recorded under the name clap matched — `repo sel`, whatever alias
+    // was typed for it — without a second table of names to keep in step.
+    let matches = Cli::command().get_matches();
+    let command = command_path(&matches);
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
+
+    match run(cli, &command) {
         Ok(()) => ExitCode::SUCCESS,
         // A cancelled selector is a silent, conventional exit, not an error.
         Err(err) if err.is::<Cancelled>() => ExitCode::from(130),
@@ -866,30 +913,64 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> anyhow::Result<()> {
-    let ctx = Ctx::load(cli.config.as_deref(), cli.verbose, cli.color)?;
+/// The command clap matched, as the log spells it: the subcommands from the
+/// root down, joined by spaces, under their canonical names rather than the
+/// aliases they may have been typed as.
+fn command_path(matches: &clap::ArgMatches) -> String {
+    let mut path = Vec::new();
+    let mut node = matches;
+    while let Some((name, sub)) = node.subcommand() {
+        path.push(name.to_string());
+        node = sub;
+    }
+    path.join(" ")
+}
 
-    match cli.command {
+fn run(cli: Cli, command: &str) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let ctx = Ctx::load(cli.config.as_deref(), cli.verbose, cli.color)?;
+    // Started before the command rather than after it: opening the log is what
+    // takes any time, and it happens while the command runs.
+    let recorder = cmd::stats::Recorder::start(ctx.stats_path.clone());
+
+    let result = dispatch(&ctx, cli.command);
+
+    recorder.finish(stats::Record {
+        at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs() as i64)
+            .unwrap_or_default(),
+        millis: stats::ran_for(started.elapsed(), stats::waited())
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+        command: command.to_string(),
+    });
+    result
+}
+
+fn dispatch(ctx: &Ctx, command: Command) -> anyhow::Result<()> {
+    match command {
         Command::Repo { command } => match command {
-            RepoCmd::Ls { absolute_paths } => cmd::repo::ls(&ctx, absolute_paths),
-            RepoCmd::Sel => cmd::repo::sel(&ctx),
-            RepoCmd::Open { select } => cmd::repo::open(&ctx, select),
+            RepoCmd::Ls { absolute_paths } => cmd::repo::ls(ctx, absolute_paths),
+            RepoCmd::Sel => cmd::repo::sel(ctx),
+            RepoCmd::Open { select } => cmd::repo::open(ctx, select),
             RepoCmd::Clone {
                 target,
                 limit,
                 archived,
-            } => cmd::repo::clone(&ctx, target.as_deref(), limit, archived),
+            } => cmd::repo::clone(ctx, target.as_deref(), limit, archived),
         },
         Command::File { command } => match command {
             FileCmd::Ls {
                 status,
                 missing,
                 exists,
-            } => cmd::file::ls(&ctx, status, missing, exists),
-            FileCmd::Sel => cmd::file::sel(&ctx),
-            FileCmd::Add { file } => cmd::file::add(&ctx, file.as_deref()),
-            FileCmd::Rm { file } => cmd::file::remove(&ctx, file.as_deref()),
-            FileCmd::Prune { yes } => cmd::file::prune(&ctx, yes),
+            } => cmd::file::ls(ctx, status, missing, exists),
+            FileCmd::Sel => cmd::file::sel(ctx),
+            FileCmd::Add { file } => cmd::file::add(ctx, file.as_deref()),
+            FileCmd::Rm { file } => cmd::file::remove(ctx, file.as_deref()),
+            FileCmd::Prune { yes } => cmd::file::prune(ctx, yes),
         },
         // No subcommand is `edit file`, dispatched through the same arm so
         // the two spellings cannot drift apart.
@@ -898,50 +979,48 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             files,
             tracked,
         } => match command.unwrap_or(EditCmd::File { files, tracked }) {
-            EditCmd::File { files, tracked } => cmd::edit::file(&ctx, &files, tracked),
-            EditCmd::Dir { dirs } => cmd::edit::dir(&ctx, &dirs),
+            EditCmd::File { files, tracked } => cmd::edit::file(ctx, &files, tracked),
+            EditCmd::Dir { dirs } => cmd::edit::dir(ctx, &dirs),
         },
         Command::Note { command } => match command {
-            NoteCmd::Ls { status } => cmd::note::ls(&ctx, status),
-            NoteCmd::Sel => cmd::note::sel(&ctx),
-            NoteCmd::Edit { notes } => cmd::note::edit(&ctx, &notes),
-            NoteCmd::New { name } => cmd::note::new(&ctx, name.as_deref()),
-            NoteCmd::Rg { query } => cmd::note::rg(&ctx, query.as_deref()),
-            NoteCmd::Scratch => cmd::note::scratch(&ctx),
-            NoteCmd::Cleanup { yes } => cmd::note::cleanup(&ctx, yes),
+            NoteCmd::Ls { status } => cmd::note::ls(ctx, status),
+            NoteCmd::Sel => cmd::note::sel(ctx),
+            NoteCmd::Edit { notes } => cmd::note::edit(ctx, &notes),
+            NoteCmd::New { name } => cmd::note::new(ctx, name.as_deref()),
+            NoteCmd::Rg { query } => cmd::note::rg(ctx, query.as_deref()),
+            NoteCmd::Scratch => cmd::note::scratch(ctx),
+            NoteCmd::Cleanup { yes } => cmd::note::cleanup(ctx, yes),
         },
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {
-                cmd::branch::ls(&ctx, scope.filter(), status, scope.fetch)
+                cmd::branch::ls(ctx, scope.filter(), status, scope.fetch)
             }
-            BranchCmd::Sel { scope } => cmd::branch::sel(&ctx, scope.filter(), scope.fetch),
+            BranchCmd::Sel { scope } => cmd::branch::sel(ctx, scope.filter(), scope.fetch),
             BranchCmd::Checkout { branch, scope } => {
-                cmd::branch::checkout(&ctx, branch.as_deref(), scope.filter(), scope.fetch)
+                cmd::branch::checkout(ctx, branch.as_deref(), scope.filter(), scope.fetch)
             }
-            BranchCmd::Rm { branches, yes } => cmd::branch::rm(&ctx, &branches, yes),
+            BranchCmd::Rm { branches, yes } => cmd::branch::rm(ctx, &branches, yes),
         },
         Command::Worktree { command } => match command {
             WorktreeCmd::Ls {
                 absolute_paths,
                 status,
-            } => cmd::worktree::ls(&ctx, absolute_paths, status),
-            WorktreeCmd::Sel => cmd::worktree::sel(&ctx),
-            WorktreeCmd::Add { branch } => cmd::worktree::add(&ctx, branch.as_deref()),
-            WorktreeCmd::Rm { paths, force, yes } => {
-                cmd::worktree::remove(&ctx, &paths, force, yes)
-            }
+            } => cmd::worktree::ls(ctx, absolute_paths, status),
+            WorktreeCmd::Sel => cmd::worktree::sel(ctx),
+            WorktreeCmd::Add { branch } => cmd::worktree::add(ctx, branch.as_deref()),
+            WorktreeCmd::Rm { paths, force, yes } => cmd::worktree::remove(ctx, &paths, force, yes),
         },
         Command::Pr { command } => match command {
-            PrCmd::Ls { status, scope } => cmd::pr::ls(&ctx, &scope.state, scope.limit, status),
-            PrCmd::Sel { scope } => cmd::pr::sel(&ctx, &scope.state, scope.limit),
+            PrCmd::Ls { status, scope } => cmd::pr::ls(ctx, &scope.state, scope.limit, status),
+            PrCmd::Sel { scope } => cmd::pr::sel(ctx, &scope.state, scope.limit),
             PrCmd::Checkout { number, scope } => {
-                cmd::pr::checkout(&ctx, number, &scope.state, scope.limit)
+                cmd::pr::checkout(ctx, number, &scope.state, scope.limit)
             }
             PrCmd::Open {
                 number,
                 current,
                 scope,
-            } => cmd::pr::open(&ctx, number, current, &scope.state, scope.limit),
+            } => cmd::pr::open(ctx, number, current, &scope.state, scope.limit),
             PrCmd::Merge {
                 number,
                 method,
@@ -949,7 +1028,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 auto,
                 scope,
             } => cmd::pr::merge(
-                &ctx,
+                ctx,
                 number,
                 &scope.state,
                 scope.limit,
@@ -959,8 +1038,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             ),
         },
         Command::Ps { command } => match command {
-            PsCmd::Ls { status, scope } => cmd::ps::ls(&ctx, status, scope.port),
-            PsCmd::Sel { scope } => cmd::ps::sel(&ctx, scope.port),
+            PsCmd::Ls { status, scope } => cmd::ps::ls(ctx, status, scope.port),
+            PsCmd::Sel { scope } => cmd::ps::sel(ctx, scope.port),
             PsCmd::Kill {
                 pids,
                 signal,
@@ -974,22 +1053,29 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 } else {
                     scriv::proc::Signal::parse(&signal)?
                 };
-                cmd::ps::kill(&ctx, &pids, signal, scope.port)
+                cmd::ps::kill(ctx, &pids, signal, scope.port)
             }
         },
         Command::History { command } => match command {
-            HistoryCmd::Ls { status } => cmd::history::ls(&ctx, status),
-            HistoryCmd::Sel { query, print0 } => cmd::history::sel(&ctx, query.as_deref(), print0),
+            HistoryCmd::Ls { status } => cmd::history::ls(ctx, status),
+            HistoryCmd::Sel { query, print0 } => cmd::history::sel(ctx, query.as_deref(), print0),
         },
         Command::Project { command } => match command {
-            ProjectCmd::Deps { dry_run, dump } => cmd::project::deps(&ctx, dry_run, dump),
-            ProjectCmd::Build { dry_run } => cmd::project::build(&ctx, dry_run),
+            ProjectCmd::Deps { dry_run, dump } => cmd::project::deps(ctx, dry_run, dump),
+            ProjectCmd::Build { dry_run } => cmd::project::build(ctx, dry_run),
         },
         Command::Config { command } => match command {
-            ConfigCmd::Init { force } => cmd::config::init(&ctx, force),
-            ConfigCmd::Print => cmd::config::print(&ctx),
-            ConfigCmd::Path => cmd::config::path(&ctx),
-            ConfigCmd::Check => cmd::config::check(&ctx),
+            ConfigCmd::Init { force } => cmd::config::init(ctx, force),
+            ConfigCmd::Print => cmd::config::print(ctx),
+            ConfigCmd::Path => cmd::config::path(ctx),
+            ConfigCmd::Check => cmd::config::check(ctx),
+        },
+        // The tree these report on is the clap command itself, which is the
+        // only place that knows every command there is.
+        Command::Stats { command } => match command {
+            StatsCmd::Show => cmd::stats::show(ctx, &Cli::command()),
+            StatsCmd::Reset { yes } => cmd::stats::reset(ctx, yes),
+            StatsCmd::Improve { dry_run } => cmd::stats::improve(ctx, &Cli::command(), dry_run),
         },
         // Emitted from the config, so this needs Ctx like everything else —
         // and the clap command besides, for the completions.
