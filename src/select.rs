@@ -264,8 +264,9 @@ impl SelectItem {
     }
 }
 
-/// Colour of a [`SelectItem::prefix`]: ANSI 8, the terminal's own grey.
-const PREFIX_COLOR: u8 = 8;
+/// Colour of a [`SelectItem::prefix`] and its suffix: both sit beside the label
+/// rather than in it, which is [`crate::term::SECONDARY`].
+const PREFIX_COLOR: u8 = crate::term::SECONDARY;
 
 /// Recolour the character ranges in `tints`, leaving skim's match highlighting
 /// alone: a span drawn in anything but `base` is a character the query matched,

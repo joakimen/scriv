@@ -310,6 +310,18 @@ fn drop_controls(line: &str) -> String {
         .collect()
 }
 
+/// The hue secondary text takes: what a row says about itself rather than what
+/// it names — a duration, a count, a path, the tool a version came from, where
+/// a setting's value came from.
+///
+/// Colour is the low sixteen indices throughout, which a terminal resolves from
+/// the theme its user chose rather than from a fixed table. 0, 7, 8 and 15 are
+/// never a foreground here: each is the background in a large share of themes,
+/// which leaves the text either invisible or the faintest thing on the row.
+/// Emphasis is [`bold`] for the same reason — an attribute reads the same
+/// whatever is behind it.
+pub const SECONDARY: u8 = 5;
+
 /// Wrap `text` in an ANSI 256-colour sequence when `on`, so the same colour
 /// indices the selector uses also drive plain listings.
 pub fn paint(text: &str, color: u8, on: bool) -> String {

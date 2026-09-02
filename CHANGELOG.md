@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Fixed
+
+- Nothing scriv prints is bright black any more. `proc`, `project deps`,
+  `project build` and every selector row drew what they say about a thing —
+  durations, counts, the columns before a process's command — in the colour
+  several dark themes use as their background, and the rest render as the
+  faintest thing on the row. They now take the same hue `config print` does.
+
 ## v0.16.2
 
 *Released 2026-09-02*

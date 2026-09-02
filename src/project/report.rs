@@ -51,8 +51,8 @@ pub fn color(index: usize) -> u8 {
     STEP_COLORS[index % STEP_COLORS.len()]
 }
 
-/// Grey, for everything a row says about itself rather than names.
-const DIM: u8 = 8;
+/// For everything a row says about itself rather than names.
+const DIM: u8 = crate::term::SECONDARY;
 const GREEN: u8 = 2;
 const RED: u8 = 1;
 
