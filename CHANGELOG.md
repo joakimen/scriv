@@ -13,6 +13,12 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `ctrl-t` in the `repo clone` selector steps through the two lists on its own,
+  and `ctrl-a` is no longer bound: one key is all it needs, and that one was
+  spoken for elsewhere.
+
 ### Fixed
 
 - Opening a repository on GitHub — `repo open`, or `f1` in the `repo sel`
@@ -23,14 +29,10 @@ raised, never by hand.
 
 *Released 2026-09-02*
 
-## v0.17.0
-
-*Released 2026-09-02*
-
 ### Added
 
-- `ctrl-t` in the `repo clone` selector steps between the whole list and the
-  repositories you have not cloned yet.
+- `ctrl-t` in the `repo clone` selector shows only the repositories you have not
+  cloned yet, and `ctrl-a` puts the whole list back.
 
 ### Fixed
 
@@ -42,6 +44,10 @@ raised, never by hand.
 - `repo clone` says `loading repositories for <owner>` while it waits. It used
   to count pages off as they arrived; they are fetched together and arrive in
   whatever order they finish, so the count went up and down and read as a bug.
+
+## v0.17.0
+
+*Released 2026-09-02*
 
 ### Added
 
