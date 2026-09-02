@@ -3,7 +3,7 @@
 //! library crate.
 //!
 //! Top-level commands: `repo`, `file`, `note`, `branch`, `worktree`, `pr`,
-//! `proc` and `history` work with the things scriv finds; `edit` opens a file
+//! `ps` and `history` work with the things scriv finds; `edit` opens a file
 //! from the directory the user is in and `project` builds it; `config` manages
 //! its configuration; `init` prints shell integration.
 
@@ -196,10 +196,9 @@ enum Command {
     ///
     /// `--port` narrows all three verbs to what is listening on a TCP port,
     /// which is `lsof`'s answer rather than `ps`'s.
-    #[command(visible_alias = "pc")]
-    Proc {
+    Ps {
         #[command(subcommand)]
-        command: ProcCmd,
+        command: PsCmd,
     },
     /// Manage shell history
     ///
@@ -686,7 +685,7 @@ enum PrCmd {
     },
 }
 
-/// Narrow a `proc` listing to what holds a TCP port, shared by all three.
+/// Narrow a `ps` listing to what holds a TCP port, shared by all three.
 #[derive(clap::Args)]
 struct PortScope {
     /// Only the process listening on this TCP port
@@ -699,7 +698,7 @@ struct PortScope {
 }
 
 #[derive(Subcommand)]
-enum ProcCmd {
+enum PsCmd {
     /// List running processes, busiest first
     #[command(visible_alias = "list")]
     Ls {
@@ -959,10 +958,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 auto,
             ),
         },
-        Command::Proc { command } => match command {
-            ProcCmd::Ls { status, scope } => cmd::proc::ls(&ctx, status, scope.port),
-            ProcCmd::Sel { scope } => cmd::proc::sel(&ctx, scope.port),
-            ProcCmd::Kill {
+        Command::Ps { command } => match command {
+            PsCmd::Ls { status, scope } => cmd::ps::ls(&ctx, status, scope.port),
+            PsCmd::Sel { scope } => cmd::ps::sel(&ctx, scope.port),
+            PsCmd::Kill {
                 pids,
                 signal,
                 force,
@@ -975,7 +974,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 } else {
                     scriv::proc::Signal::parse(&signal)?
                 };
-                cmd::proc::kill(&ctx, &pids, signal, scope.port)
+                cmd::ps::kill(&ctx, &pids, signal, scope.port)
             }
         },
         Command::History { command } => match command {

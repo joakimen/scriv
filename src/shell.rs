@@ -392,10 +392,7 @@ mod tests {
     #[test]
     fn kl_sends_the_uncatchable_signal() {
         let out = defaults();
-        assert!(
-            out.contains("command scriv proc kill --force $argv"),
-            "{out}"
-        );
+        assert!(out.contains("command scriv ps kill --force $argv"), "{out}");
     }
 
     /// `commandline -f repaint` redraws from where fish believes the cursor is,

@@ -123,7 +123,7 @@ ignore = ["node_modules", "target"]
 # Names defined as shell functions, each passing its arguments through.
 # [shell.aliases]
 # fe = "edit"           # scriv edit
-# kl = "proc-kill"      # scriv proc kill --force
+# kl = "proc-kill"      # scriv ps kill --force
 # i  = "project-deps"   # scriv project deps
 # b  = "project-build"  # scriv project build
 
@@ -1126,7 +1126,7 @@ fn collect(ctx: &Ctx) -> Vec<Section> {
         "ps",
         "ps",
         true,
-        "`proc` reads the process table through it",
+        "`scriv ps` reads the process table through it",
     ));
     // The one row `project` earns: everything else it runs is whatever the
     // project in front of it asks for, and a missing one of those is already
