@@ -21,6 +21,18 @@ raised, never by hand.
   now says so instead of looking like scriv being slow. `stats improve` hands
   that column on with the rest.
 
+### Changed
+
+- `stats improve` ranks the commands it hands over by the time scriv itself
+  spent, not by the wall clock. A build that waits on cargo and an editor
+  session used to head the list, where there was nothing for scriv to speed up.
+
+### Fixed
+
+- Time spent in the editor `scriv edit` opens is no longer counted as time the
+  command took, as time in a selector already was not. An afternoon in vim used
+  to make `edit` the most expensive command scriv had.
+
 ## v0.17.2
 
 *Released 2026-09-02*
@@ -33,9 +45,6 @@ raised, never by hand.
 
 ### Fixed
 
-- Time spent in the editor `scriv edit` opens is no longer counted as time the
-  command took, as time in a selector already was not. An afternoon in vim used
-  to make `edit` the most expensive command scriv had.
 - Opening a repository on GitHub — `repo open`, or `f1` in the `repo sel`
   selector — no longer waits on a call to the GitHub API before the browser
   opens. The same page, roughly half a second sooner.

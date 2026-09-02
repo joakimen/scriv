@@ -101,6 +101,14 @@ impl Totals {
         (self.calls > 0).then(|| Duration::from_millis(self.millis / self.calls))
     }
 
+    /// Time in scriv's own code over every run, with the subprocesses it waited
+    /// on taken out. What [`crate::stats::by_value`] ranks on.
+    ///
+    /// Carries the same lower-bound caveat as [`Self::own_average`].
+    pub fn own_millis(&self) -> u64 {
+        self.millis.saturating_sub(self.child_millis)
+    }
+
     /// What one run costs in scriv's own code, with the subprocesses it waited
     /// on taken out.
     ///
@@ -108,9 +116,7 @@ impl Totals {
     /// once are each counted in full, so a command that fans out reads as doing
     /// less of its own work than it does.
     pub fn own_average(&self) -> Option<Duration> {
-        (self.calls > 0).then(|| {
-            Duration::from_millis(self.millis.saturating_sub(self.child_millis) / self.calls)
-        })
+        (self.calls > 0).then(|| Duration::from_millis(self.own_millis() / self.calls))
     }
 
     fn add(&mut self, other: Totals) {
@@ -326,9 +332,14 @@ fn right(text: &str, width: usize) -> String {
 /// that the ones at the top are the ones being asked about.
 const IMPROVE_ROWS: usize = 10;
 
-/// The commands worth improving, in the order they are worth it: total time
-/// spent, which is the one number that has both how often a command is run and
-/// what each run costs in it.
+/// The commands worth improving, in the order they are worth it: time spent in
+/// scriv's own code, which has both how often a command is run and what each
+/// run costs in it, and none of what a subprocess or the user spent.
+///
+/// Wall time put the build tool and the editor at the top, where there is
+/// nothing for scriv to do about either. What a subprocess costs is still
+/// worth reading — which one gets called is scriv's choice — so the total
+/// stays a column rather than the sort key.
 pub fn by_value(rows: &[TreeRow]) -> Vec<&TreeRow> {
     let mut leaves: Vec<&TreeRow> = rows
         .iter()
@@ -336,8 +347,9 @@ pub fn by_value(rows: &[TreeRow]) -> Vec<&TreeRow> {
         .collect();
     leaves.sort_by(|a, b| {
         b.totals
-            .millis
-            .cmp(&a.totals.millis)
+            .own_millis()
+            .cmp(&a.totals.own_millis())
+            .then_with(|| b.totals.millis.cmp(&a.totals.millis))
             .then_with(|| b.totals.calls.cmp(&a.totals.calls))
             .then_with(|| a.command.cmp(&b.command))
     });
@@ -368,19 +380,22 @@ pub fn improve_prompt(rows: &[TreeRow]) -> String {
         ));
     }
     prompt.push_str(
-        "\nThe rows are ordered by total time spent, which is where making \
-         scriv faster is worth the most. Time spent waiting for the user in a \
-         selector is already excluded from these numbers. `own` takes out the \
-         subprocesses a run waited on as well — `git`, `gh`, a build tool, an \
-         editor — so it is what is left for scriv's own code to answer for.\n\n\
-         A row whose `own` is far below its average spends its time in \
-         something scriv shells out to. That is not a reason to pass it over: \
-         which subprocess gets called, and with which arguments, is scriv's \
-         choice, and a cheaper one that reaches the same answer is often \
-         there. Beware the average as well — a handful of slow runs among many \
-         fast ones raises it without there being anything slow about the \
-         command, so look at the log itself before concluding where the time \
-         went.\n\n\
+        "\nTime you spent deciding — in a selector, at a yes/no question, in \
+         the editor a command opened — is already out of every number here. \
+         `own` takes out the subprocesses a run waited on as well, so it is \
+         what is left for scriv's own code to answer for, and `total` is what \
+         the command cost including them.\n\n\
+         The rows are ordered by `own` × runs, which is where making scriv \
+         faster is worth the most: ordering by total put a build tool and an \
+         editor at the top, and neither is scriv's to speed up.\n\n\
+         Read the `total` column anyway. A row whose `own` is a sliver of it \
+         spends its time in something scriv shells out to, and which \
+         subprocess gets called, with which arguments, is still scriv's \
+         choice — a cheaper one that reaches the same answer is often there, \
+         and the ordering will have buried that row. Beware the average as \
+         well: a handful of slow runs among many fast ones raises it without \
+         there being anything slow about the command, so read the log itself \
+         before concluding where the time went.\n\n\
          Take the highest-value row you can actually improve, work out where \
          its time goes, and implement the improvement. Measure before and \
          after and say what the numbers were. Follow CLAUDE.md in this \
@@ -698,6 +713,26 @@ mod tests {
 
     /// The whole point of the column: a command that is slow because of what
     /// it shells out to has to be told apart from one that is slow itself.
+    /// The row that is expensive only because of what it shells out to still
+    /// has to be findable: it sinks in the ranking, so the total is what says
+    /// there is something there.
+    #[test]
+    fn a_row_that_is_all_subprocess_keeps_its_total_while_losing_its_place() {
+        let totals = totals(&[
+            child_record("repo ls", 9_000, 8_980),
+            record("repo sel", 40),
+        ]);
+        let rows = rows(&tree(&cli()), &totals);
+        let ranked: Vec<&str> = by_value(&rows).iter().map(|r| r.command.as_str()).collect();
+        assert_eq!(ranked, ["repo sel", "repo ls"]);
+
+        let prompt = improve_prompt(&rows);
+        assert!(
+            prompt.contains("`scriv repo ls` | 1 | 9.0s | 20ms | 9.0s"),
+            "{prompt}"
+        );
+    }
+
     #[test]
     fn what_a_run_spent_in_a_subprocess_comes_off_its_own_time() {
         let totals = totals(&[
@@ -765,7 +800,9 @@ mod tests {
         let rows = rows(&tree(&cli()), &totals);
 
         let ranked: Vec<&str> = by_value(&rows).iter().map(|r| r.command.as_str()).collect();
-        assert_eq!(ranked, ["edit", "repo sel", "repo ls"]);
+        // `edit` cost the most wall clock and is last: 2.99 of its 3 seconds
+        // were the editor's, and scriv cannot make those go faster.
+        assert_eq!(ranked, ["repo sel", "repo ls", "edit"]);
         // Groups are not rows to improve: `repo` is not a command anyone runs.
         assert!(!ranked.contains(&"repo"), "{ranked:?}");
 
