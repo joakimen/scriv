@@ -13,6 +13,15 @@ raised, never by hand.
 
 ## Unreleased
 
+### Fixed
+
+- `scriv config print` and `scriv config check` no longer draw half their output
+  in bright black. It is the background colour on a good share of dark themes
+  and barely-there grey on the rest, so the keys, the notes beside a value and
+  everything a passing check found were hard to read. Field names are bold now,
+  and the text beside them takes a colour the terminal resolves from its own
+  theme.
+
 ## v0.16.1
 
 *Released 2026-09-01*
