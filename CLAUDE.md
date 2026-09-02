@@ -164,6 +164,15 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   repeating it is the way out of a problem.
 - **Spawned children explain themselves.** Return `Reported(code)` so scriv
   exits with the child's status rather than printing a vaguer line over git's.
+- **Colour is the low sixteen indices, and never 0, 7, 8 or 15.** Those four are
+  the background in a large share of themes, and a terminal resolves the rest
+  from the theme the user chose rather than from a fixed table. Secondary text
+  — where a value came from, what a check found — takes a hue of its own
+  (magenta), and a heading or a field label takes bold rather than a colour, so
+  the row still reads under `--color never` and on a background nobody
+  predicted. Nothing means anything by colour alone: the glyph or the word says
+  it too. `cmd/config.rs` follows this; `proc.rs`, `select.rs`, `cmd/project.rs`,
+  `project/report.rs` and `project/deps.rs` still hold a `= 8` that predates it.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
   `SCRIV_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
 - **`repo`/`file`/`branch`/`worktree`/`pr`/`history` are registries; `edit` and

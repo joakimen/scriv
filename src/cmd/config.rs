@@ -183,9 +183,14 @@ pub fn init(ctx: &Ctx, force: bool) -> Result<()> {
 
 // --- print ------------------------------------------------------------------
 
-/// Grey, for everything on a row that is not the value itself: the key it is
-/// written under, and where the value came from.
-const DIM: u8 = 8;
+/// Magenta, for everything on a row that is not the value itself: where the
+/// value came from, and what a check found.
+///
+/// Colour here is the low sixteen indices only, which a terminal resolves from
+/// its own theme. Bright black reads as secondary on a dark theme and as
+/// invisible on the several themes that use it as their background, which is
+/// why a hue carries the secondary text and bold carries the labels.
+const SECONDARY: u8 = 5;
 
 /// Cyan, for the `[table]` a group of settings is written under.
 const HEADING: u8 = 6;
@@ -260,7 +265,7 @@ impl Value {
     fn color(&self) -> Option<u8> {
         match self {
             Self::Set(_) => None,
-            Self::Missing(_) => Some(DIM),
+            Self::Missing(_) => Some(SECONDARY),
             Self::Broken(_) => Some(BROKEN),
         }
     }
@@ -513,12 +518,12 @@ fn render_report(rows: &[Row], color: bool) -> Vec<String> {
                 let mut line = term::paint(title, HEADING, color);
                 if !note.is_empty() {
                     line.push_str("  ");
-                    line.push_str(&term::paint(note, DIM, color));
+                    line.push_str(&term::paint(note, SECONDARY, color));
                 }
                 line
             }
             Row::Setting { key, value, note } => {
-                let mut line = format!("  {}  ", term::paint(&pad(key, key_width), DIM, color));
+                let mut line = format!("  {}  ", term::bold(&pad(key, key_width), color));
                 let text = if note.is_empty() {
                     value.text().to_string()
                 } else {
@@ -530,7 +535,7 @@ fn render_report(rows: &[Row], color: bool) -> Vec<String> {
                 });
                 if !note.is_empty() {
                     line.push_str("  ");
-                    line.push_str(&term::paint(note, DIM, color));
+                    line.push_str(&term::paint(note, SECONDARY, color));
                 }
                 line
             }
@@ -647,11 +652,11 @@ impl Status {
         }
     }
 
-    /// The colour the row's detail takes. What a working setup found is grey;
-    /// what to do about a broken one carries the status colour.
+    /// The colour the row's detail takes. What a working setup found is
+    /// secondary text; what to do about a broken one carries the status colour.
     fn detail_color(self) -> u8 {
         match self {
-            Self::Ok => DIM,
+            Self::Ok => SECONDARY,
             other => other.color(),
         }
     }
@@ -714,10 +719,7 @@ fn render_check(check: &Check, width: usize, color: bool) -> String {
     let mut row = format!(
         "  {} {}",
         term::paint(check.status.glyph(), check.status.color(), color),
-        match check.status.name_color() {
-            Some(tint) => term::paint(&name, tint, color),
-            None => name,
-        },
+        term::style(&name, check.status.name_color(), true, color),
     );
     if !check.detail.is_empty() {
         row.push_str("  ");

@@ -313,11 +313,39 @@ fn drop_controls(line: &str) -> String {
 /// Wrap `text` in an ANSI 256-colour sequence when `on`, so the same colour
 /// indices the selector uses also drive plain listings.
 pub fn paint(text: &str, color: u8, on: bool) -> String {
-    if on {
-        format!("\x1b[38;5;{color}m{text}\x1b[0m")
-    } else {
-        text.to_string()
+    style(text, Some(color), false, on)
+}
+
+/// Bold `text` when `on`, without giving it a colour.
+///
+/// What a heading or a field label takes. Bold is an attribute rather than a
+/// hue, so it is the one emphasis that reads the same whatever the terminal's
+/// theme has painted behind it.
+pub fn bold(text: &str, on: bool) -> String {
+    style(text, None, true, on)
+}
+
+/// `text` under an optional foreground colour and an optional bold attribute,
+/// as one sequence — or unchanged when `on` is false.
+///
+/// Colours are the low sixteen indices, which a terminal resolves from its own
+/// theme rather than from a fixed table. Indices outside them are a colour
+/// chosen for somebody else's background.
+pub fn style(text: &str, color: Option<u8>, bold: bool, on: bool) -> String {
+    if !on {
+        return text.to_string();
     }
+    let mut codes = String::new();
+    if bold {
+        codes.push_str("\x1b[1m");
+    }
+    if let Some(color) = color {
+        codes.push_str(&format!("\x1b[38;5;{color}m"));
+    }
+    if codes.is_empty() {
+        return text.to_string();
+    }
+    format!("{codes}{text}\x1b[0m")
 }
 
 /// Paint `text`, then return to `back` rather than to the terminal default —
@@ -722,6 +750,22 @@ mod tests {
     #[test]
     fn paint_wraps_when_on() {
         assert_eq!(paint("main", 2, true), "\x1b[38;5;2mmain\x1b[0m");
+    }
+
+    #[test]
+    fn bold_is_an_attribute_rather_than_a_colour() {
+        assert_eq!(bold("root", true), "\x1b[1mroot\x1b[0m");
+        assert_eq!(bold("root", false), "root");
+    }
+
+    #[test]
+    fn a_style_with_both_writes_both_and_resets_once() {
+        assert_eq!(
+            style("failed", Some(1), true, true),
+            "\x1b[1m\x1b[38;5;1mfailed\x1b[0m"
+        );
+        // Nothing asked for is nothing written, rather than a bare reset.
+        assert_eq!(style("plain", None, false, true), "plain");
     }
 
     #[test]
