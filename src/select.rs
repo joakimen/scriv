@@ -177,10 +177,14 @@ pub struct Tint {
 /// theme), and `preview` fills the preview pane while the row is highlighted.
 pub struct SelectItem {
     pub label: String,
-    /// Drawn dim, ahead of the label, and *not* matched against — for a column
-    /// that identifies a row without being what one searches for, such as the
-    /// date on a history entry.
+    /// Drawn ahead of the label and *not* matched against — for a column that
+    /// identifies a row without being what one searches for, such as the date
+    /// on a history entry. Dim, unless [`SelectItem::prefix_tints`] says
+    /// otherwise.
     pub prefix: Option<String>,
+    /// Colours within the prefix, as character ranges into it. Indexed from
+    /// the start of the prefix, not of the row.
+    pub prefix_tints: Vec<Tint>,
     /// Drawn after the label and *not* matched against — [`SelectItem::prefix`]
     /// on the other side, for a column that belongs to the right-hand edge
     /// rather than the left. Dim, unless [`SelectItem::suffix_tints`] says
@@ -203,6 +207,7 @@ impl SelectItem {
         Self {
             label: text.into(),
             prefix: None,
+            prefix_tints: Vec::new(),
             suffix: None,
             suffix_tints: Vec::new(),
             value: None,
@@ -217,6 +222,7 @@ impl SelectItem {
         Self {
             label: label.into(),
             prefix: None,
+            prefix_tints: Vec::new(),
             suffix: None,
             suffix_tints: Vec::new(),
             value: Some(value.into()),
@@ -226,9 +232,11 @@ impl SelectItem {
         }
     }
 
-    /// Draw `prefix` dim, ahead of the label, outside what the query matches.
-    pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
+    /// Draw `prefix` ahead of the label, outside what the query matches, with
+    /// `tints` colouring ranges of it.
+    pub fn prefix(mut self, prefix: impl Into<String>, tints: Vec<Tint>) -> Self {
         self.prefix = Some(prefix.into());
+        self.prefix_tints = tints;
         self
     }
 
@@ -346,7 +354,9 @@ impl SkimItem for SkItem {
         let dim = Style::default().fg(Color::Indexed(PREFIX_COLOR));
         let mut out = Line::default();
         if let Some(prefix) = &self.item.prefix {
-            out.push_span(Span::styled(prefix.clone(), dim));
+            let plain = Line::from(Span::styled(prefix.clone(), dim));
+            out.spans
+                .extend(tinted(plain, &self.item.prefix_tints, dim).spans);
         }
         out.spans.extend(line.spans);
         if let Some(suffix) = &self.item.suffix {
@@ -397,6 +407,7 @@ pub fn select_one_queried(
         reload: None,
         search: None,
         modes: &[],
+        views: &[],
         actions: &[],
     };
     run_selector(Feed::batch(items), run, cfg)?
@@ -445,12 +456,14 @@ pub struct Chosen {
     pub action: Option<&'static str>,
 }
 
-/// Fetches a fresh set of rows. Called on a background thread, so it may block
-/// for as long as the network takes.
+/// Fetches a fresh set of rows for the view at that index. Called on a
+/// background thread, so it may block for as long as the network takes.
+///
+/// A selector with no [`views`](Run::views) is always asked for view 0.
 ///
 /// Infallible by construction: a reload that fails should hand back the old
 /// rows and remember the error, which only the caller can do.
-pub type Reload = Box<dyn FnMut() -> Vec<SelectItem> + Send>;
+pub type Reload = Box<dyn FnMut(usize) -> Vec<SelectItem> + Send>;
 
 /// [`select_one`], with [`REFRESH_KEY`] bound to reloading the list in place.
 ///
@@ -471,6 +484,7 @@ pub fn select_one_reloading(
         reload: Some(reload),
         search: None,
         modes: &[],
+        views: &[],
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -490,6 +504,7 @@ pub fn select_one_acting(
         reload: None,
         search: None,
         modes: &[],
+        views: &[],
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -510,6 +525,9 @@ fn chosen(outcome: Outcome) -> Result<Chosen> {
 /// running a command, and it is calling a closure.
 struct ReloadCollector {
     reload: Arc<Mutex<Reload>>,
+    /// Which view the next reload produces. Held across reloads because only a
+    /// view *key* names one: [`REFRESH_KEY`] reloads whatever is on screen.
+    view: Arc<AtomicUsize>,
 }
 
 /// How often the counted thread looks up from waiting to see whether skim has
@@ -519,12 +537,16 @@ const RELOAD_POLL: Duration = Duration::from_millis(20);
 impl CommandCollector for ReloadCollector {
     fn invoke(
         &mut self,
-        _cmd: &str,
+        cmd: &str,
         components_to_stop: Arc<AtomicUsize>,
     ) -> (SkimItemReceiver, Sender<i32>) {
         let (tx_item, rx_item): (SkimItemSender, SkimItemReceiver) = unbounded();
         let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
         let reload = Arc::clone(&self.reload);
+        if let (Some(view), _) = read_mode(cmd) {
+            self.view.store(view, Ordering::SeqCst);
+        }
+        let view = self.view.load(Ordering::SeqCst);
 
         // `ReaderControl::kill` *busy-waits* on this counter, so the counted
         // thread has to decrement promptly when asked. The reload itself
@@ -534,7 +556,7 @@ impl CommandCollector for ReloadCollector {
         std::thread::spawn(move || {
             let (tx_rows, rx_rows) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let rows = (reload.lock().expect("reload closure poisoned"))();
+                let rows = (reload.lock().expect("reload closure poisoned"))(view);
                 let _ = tx_rows.send(rows);
             });
 
@@ -770,6 +792,7 @@ pub fn select_many_searching(
         reload: None,
         search: Some(search),
         modes,
+        views: &[],
         actions: &[],
     };
     Ok(run_selector(Feed::none(true), run, cfg)?.values)
@@ -809,6 +832,27 @@ pub fn select_many(
     cfg: &SelectorConfig,
 ) -> Result<Vec<String>> {
     run(Feed::batch(items), prompt, true, cfg)
+}
+
+/// [`select_many`], with each of `views` on a key that swaps the whole list for
+/// the rows `rows` produces for it.
+///
+/// `items` is the first view, already built — the selector draws it without
+/// waiting for a reload. What each view is called, and the key that reaches it,
+/// is in the header for as long as the selector is open.
+pub fn select_many_viewing(
+    items: Vec<SelectItem>,
+    prompt: &str,
+    cfg: &SelectorConfig,
+    views: &'static [Mode],
+    rows: Reload,
+) -> Result<Vec<String>> {
+    let run = Run {
+        reload: Some(rows),
+        views,
+        ..Run::new(prompt, true)
+    };
+    Ok(run_selector(Feed::batch(items), run, cfg)?.values)
 }
 
 /// [`select_one`] over rows that arrive as they are found. No row exists when
@@ -946,6 +990,10 @@ struct Run<'a> {
     /// The ways `search` can read the query, each on a key of its own. The
     /// first is what the selector opens in.
     modes: &'static [Mode],
+    /// Whole lists on keys of their own, each swapping what the selector
+    /// shows. Fed by [`Run::reload`], which is asked for the view by index.
+    /// The first is what the selector opens in.
+    views: &'static [Mode],
     /// Keys that close the selector meaning something other than enter.
     actions: &'static [Action],
 }
@@ -959,6 +1007,7 @@ impl<'a> Run<'a> {
             reload: None,
             search: None,
             modes: &[],
+            views: &[],
             actions: &[],
         }
     }
@@ -1044,7 +1093,9 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         }
     }
 
-    let reloadable = run.reload.is_some();
+    // A selector whose reload exists to swap views has no refresh of its own:
+    // there is nothing behind the list to fetch again.
+    let reloadable = run.reload.is_some() && run.views.is_empty();
     let searching = run.search.is_some();
     let header = hints(actions, reloadable, multi, run.modes);
 
@@ -1068,22 +1119,28 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     if let Some(reload) = run.reload {
         let collector = ReloadCollector {
             reload: Arc::new(Mutex::new(reload)),
+            view: Arc::new(AtomicUsize::new(0)),
         };
+        // `no_clear_if_empty` keeps a refresh from flickering, but a view is
+        // asked for: one that holds nothing has to be seen to hold nothing.
         builder
-            .no_clear_if_empty(true)
+            .no_clear_if_empty(run.views.is_empty())
             .cmd_collector(Rc::new(RefCell::new(collector)) as Rc<RefCell<dyn CommandCollector>>);
     }
 
     // A searching selector opens in its first mode, and the header says so
     // from the outset rather than only after a key is pressed.
-    let opening = match run.modes.first() {
-        Some(_) => mode_header(run.modes, 0, &header),
-        None => header.clone(),
+    let opening = match (run.modes.first(), run.views.first()) {
+        (Some(_), _) => chosen_header(run.modes, 0, &header, " match"),
+        (_, Some(_)) => chosen_header(run.views, 0, &header, ""),
+        _ => header.clone(),
     };
     if !opening.is_empty() {
         builder.header(opening);
     }
-    let binds = binds(actions, reloadable, previewing, run.modes, &header);
+    let binds = binds(
+        actions, reloadable, previewing, run.modes, run.views, &header,
+    );
     if !binds.is_empty() {
         builder.bind(binds);
     }
@@ -1184,6 +1241,7 @@ fn binds(
     reloadable: bool,
     previewing: bool,
     modes: &[Mode],
+    views: &[Mode],
     header: &str,
 ) -> Vec<String> {
     let mut binds: Vec<String> = actions
@@ -1202,17 +1260,29 @@ fn binds(
         binds.push(format!(
             "{}:reload({MODE_MARKER}{index}{MODE_MARKER}{{q}})+set-header({})",
             mode.key,
-            mode_header(modes, index, header),
+            chosen_header(modes, index, header, " match"),
+        ));
+    }
+    // A view key reloads the list itself. The query is left out of the reload:
+    // it filters whatever comes back, and putting it in the template would
+    // hand the collector a search it does not run.
+    for (index, view) in views.iter().enumerate() {
+        binds.push(format!(
+            "{}:reload({MODE_MARKER}{index}{MODE_MARKER})+set-header({})",
+            view.key,
+            chosen_header(views, index, header, ""),
         ));
     }
     binds
 }
 
-/// The header while `chosen` is the mode in force: what the selector could
-/// already do, with the mode named at the front of it.
-fn mode_header(modes: &[Mode], chosen: usize, header: &str) -> String {
+/// The header while `chosen` is the one in force: what the selector could
+/// already do, with the mode or view named at the front of it and the keys to
+/// the others after it. `noun` is what the chosen one is called — a mode reads
+/// as "fuzzy match", a view as its own name.
+fn chosen_header(modes: &[Mode], chosen: usize, header: &str, noun: &str) -> String {
     let mut parts = vec![match modes.get(chosen) {
-        Some(mode) => format!("{} match", mode.label),
+        Some(mode) => format!("{}{noun}", mode.label),
         None => String::new(),
     }];
     for (index, mode) in modes.iter().enumerate() {
@@ -1394,17 +1464,44 @@ mod tests {
         #[test]
         fn a_mode_key_says_which_mode_it_put_the_selector_in() {
             let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
-            let header = mode_header(&modes, 0, "tab select");
+            let header = chosen_header(&modes, 0, "tab select", " match");
             assert!(header.starts_with("fuzzy match"), "{header}");
             assert!(header.contains("ctrl-x exact"), "{header}");
             assert!(!header.contains("ctrl-f"), "{header}");
             assert!(header.contains("tab select"), "{header}");
         }
 
+        /// A view is a whole list on a key, and the header is where the one in
+        /// force can be read — there is nothing else on screen that says it.
+        #[test]
+        fn a_view_key_reloads_the_list_and_names_the_view_it_chose() {
+            let views = [Mode::new("ctrl-a", "all"), Mode::new("ctrl-t", "missing")];
+            let binds = binds(&[], false, false, &[], &views, "tab select");
+
+            assert!(
+                binds
+                    .iter()
+                    .any(|b| b.starts_with("ctrl-t:reload(") && b.contains("missing")),
+                "{binds:?}"
+            );
+            // No `{q}`: the query filters what comes back rather than fetching
+            // it, so a view reload carries none.
+            assert!(
+                binds.iter().all(|b| !b.contains("{q}")),
+                "a view asked for a search: {binds:?}"
+            );
+
+            let header = chosen_header(&views, 1, "tab select", "");
+            assert!(header.starts_with("missing"), "{header}");
+            assert!(header.contains("ctrl-a all"), "{header}");
+            assert!(!header.contains("ctrl-t"), "{header}");
+            assert!(header.contains("tab select"), "{header}");
+        }
+
         #[test]
         fn every_mode_gets_a_key_that_searches_again_and_sets_the_header() {
             let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
-            let binds = binds(&[], false, false, &modes, "");
+            let binds = binds(&[], false, false, &modes, &[], "");
             assert!(
                 binds.iter().any(|b| b.starts_with("ctrl-f:reload(")),
                 "{binds:?}"
@@ -1532,7 +1629,7 @@ mod tests {
 
     #[test]
     fn a_prefix_is_drawn_dim_before_the_label() {
-        let item = SelectItem::plain("git status").prefix("2026-07-30 13:57  ");
+        let item = SelectItem::plain("git status").prefix("2026-07-30 13:57  ", Vec::new());
         let line = rendered(item, vec![]);
         assert_eq!(text_of(&line), "2026-07-30 13:57  git status");
         assert_eq!(line.spans[0].content, "2026-07-30 13:57  ");
@@ -1544,7 +1641,7 @@ mod tests {
         // Character 0 of the label: the `g` of `git`.
         let matched = Style::default().fg(Color::Indexed(1));
         let with = rendered(
-            SelectItem::plain("git status").prefix("2026-07-30 13:57  "),
+            SelectItem::plain("git status").prefix("2026-07-30 13:57  ", Vec::new()),
             vec![0],
         );
         let hit: String = with
@@ -1751,7 +1848,7 @@ mod tests {
     fn every_key_the_header_names_is_bound() {
         let actions = [Action::new("f2", "open"), Action::new("f7", "check out")];
         let header = hints(&actions, true, true, &[]);
-        let binds = binds(&actions, true, true, &[], &header);
+        let binds = binds(&actions, true, true, &[], &[], &header);
 
         for hint in header.split(HINT_SEPARATOR) {
             let key = hint.split(' ').next().expect("a hint with no key");
@@ -1771,7 +1868,7 @@ mod tests {
     #[test]
     fn an_action_key_closes_the_selector_and_the_preview_key_does_not() {
         let actions = [Action::new("f2", "open")];
-        let binds = binds(&actions, false, true, &[], "");
+        let binds = binds(&actions, false, true, &[], &[], "");
         assert!(binds.contains(&"f2:accept".to_string()), "{binds:?}");
         assert!(
             binds.contains(&format!("{PREVIEW_KEY}:toggle-preview")),
@@ -1781,7 +1878,7 @@ mod tests {
 
     #[test]
     fn a_plain_selector_binds_nothing_of_its_own() {
-        assert!(binds(&[], false, false, &[], "").is_empty());
+        assert!(binds(&[], false, false, &[], &[], "").is_empty());
     }
 
     #[test]
@@ -1800,10 +1897,11 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&calls);
         let mut collector = ReloadCollector {
-            reload: Arc::new(Mutex::new(Box::new(move || {
+            reload: Arc::new(Mutex::new(Box::new(move |_view| {
                 counter.fetch_add(1, Ordering::SeqCst);
                 vec![SelectItem::plain("fresh")]
             }))),
+            view: Arc::new(AtomicUsize::new(0)),
         };
 
         let components = Arc::new(AtomicUsize::new(0));
@@ -1822,15 +1920,43 @@ mod tests {
         }
     }
 
+    /// A view key names its view once; every reload after it — a refresh, or
+    /// skim re-running the template — has to stay in the view the user chose.
+    #[test]
+    fn a_view_marker_reaches_the_closure_and_the_next_reload_keeps_it() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let asked = Arc::clone(&seen);
+        let mut collector = ReloadCollector {
+            reload: Arc::new(Mutex::new(Box::new(move |view| {
+                asked.lock().expect("poisoned").push(view);
+                vec![SelectItem::plain("row")]
+            }))),
+            view: Arc::new(AtomicUsize::new(0)),
+        };
+
+        let components = Arc::new(AtomicUsize::new(0));
+        for command in ["", &format!("{MODE_MARKER}1{MODE_MARKER}"), ""] {
+            let (rx, _interrupt) = collector.invoke(command, Arc::clone(&components));
+            let _ = rx.recv();
+            while rx.recv().is_ok() {}
+        }
+        while components.load(Ordering::SeqCst) != 0 {
+            std::thread::yield_now();
+        }
+
+        assert_eq!(*seen.lock().expect("poisoned"), vec![0, 1, 1]);
+    }
+
     #[test]
     fn an_interrupted_reload_stops_without_waiting_for_the_work() {
         let (release, blocked) = std::sync::mpsc::channel::<()>();
         let mut collector = ReloadCollector {
-            reload: Arc::new(Mutex::new(Box::new(move || {
+            reload: Arc::new(Mutex::new(Box::new(move |_view| {
                 // Stands in for a fetch that has not come back yet.
                 let _ = blocked.recv();
                 vec![SelectItem::plain("late")]
             }))),
+            view: Arc::new(AtomicUsize::new(0)),
         };
 
         let components = Arc::new(AtomicUsize::new(0));

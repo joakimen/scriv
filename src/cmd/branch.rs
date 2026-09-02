@@ -155,7 +155,7 @@ fn select(ctx: &Ctx, branches: Vec<Branch>, filter: Filter, prompt: &str) -> Res
 
     let reload = {
         let (known, failure) = (Arc::clone(&known), Arc::clone(&failure));
-        Box::new(move || {
+        Box::new(move |_view| {
             // Fetched outside the lock: it is a network round trip, and holding
             // the list for it would make a second ctrl-r — or closing the
             // selector — wait on the remote rather than on the list.

@@ -302,7 +302,7 @@ fn select(
 
     let reload = {
         let (known, failure, state) = (Arc::clone(&known), Arc::clone(&failure), state.to_string());
-        Box::new(move || {
+        Box::new(move |_view| {
             // Asked for outside the lock: `gh` is a network round trip, and
             // holding the list for it would make a second ctrl-r wait on the
             // first rather than on GitHub.

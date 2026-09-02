@@ -63,7 +63,10 @@ fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<SelectItem> {
             } else {
                 SelectItem::new(folded, entry.cmd.clone())
             };
-            item.prefix(format!("{}  ", history::stamp(entry.when, offset)))
+            item.prefix(
+                format!("{}  ", history::stamp(entry.when, offset)),
+                Vec::new(),
+            )
         })
         .collect()
 }
