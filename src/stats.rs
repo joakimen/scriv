@@ -413,6 +413,11 @@ static WAITED: AtomicU64 = AtomicU64::new(0);
 
 /// Time spent in front of a person, counted from when this is bound until it is
 /// dropped. Bind it — `let _waiting = stats::interacting()`.
+///
+/// A child the user works in — an editor, a Claude Code session — is bound here
+/// rather than as a [`Child`]: scriv hands over the terminal and waits, which
+/// makes the wait the user's however long they stay. A child scriv is merely
+/// held up by is the other one.
 #[must_use]
 pub struct Interaction(Instant);
 
@@ -444,6 +449,10 @@ static IN_CHILD: AtomicU64 = AtomicU64::new(0);
 /// it. A counter rather than a value threaded through the call graph, for the
 /// reason [`Interaction`] is one, and independent of it: a child spawned while
 /// a selector is open is counted by both.
+///
+/// Work scriv delegated, not a terminal it handed over — an editor is an
+/// [`Interaction`], and counting it here as well would charge the user's
+/// afternoon in vim to `git`.
 #[must_use]
 pub struct Child(Instant);
 

@@ -771,7 +771,9 @@ fn open_matches(ctx: &Ctx, editor: &[String], matches: &[note::Match]) -> Result
         command.push("copen".into());
     }
 
-    let _child = stats::in_child();
+    // The editor owns the terminal until the user leaves it, as in
+    // [`crate::cmd::edit::launch`].
+    let _waiting = stats::interacting();
     let status = std::process::Command::new(program)
         .args(&command)
         .status()

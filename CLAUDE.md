@@ -187,11 +187,16 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c`, `s` — and two where the letter
   is spoken for: `pj`, as `p` meets `pr`. `pr` and `ps` are spelled in two to
   begin with and take no alias of their own.
-- **Anything that waits for a person binds [`stats::interacting`].** Every run
-  records what it cost, and a selector left open over lunch would otherwise be
-  recorded as a command that takes an hour. There are two such places — the
-  selector and the yes/no question — and a third would be a new one to bind it
-  in, not a reason to thread a clock through the call graph.
+- **Anything that waits for a person binds [`stats::interacting`], and
+  everything else scriv waits on binds [`stats::in_child`].** Every run records
+  what it cost, and a selector left open over lunch would otherwise be recorded
+  as a command that takes an hour. The first counter covers the selector, the
+  yes/no question, and the children that take the terminal and give it back
+  when the user is done — the editor, `stats improve`'s Claude Code session.
+  The second covers the work scriv delegates and is held up by: `git`, `gh`,
+  a build tool. A wait bound in neither is charged to scriv, and one bound in
+  both is charged twice. A new place to bind either is a new place to bind it,
+  not a reason to thread a clock through the call graph.
 - **The stats log is appended to, never rewritten.** One line per run, so two
   scriv processes finishing at once cannot lose each other's row and a run that
   is killed loses only itself. The totals are worked out when they are read.

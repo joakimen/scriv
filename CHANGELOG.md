@@ -17,9 +17,9 @@ raised, never by hand.
 
 - `stats show` has an `own` column beside the average: how much of a run was
   scriv's own work, with the subprocesses it waited on — `git`, `gh`, a build
-  tool, your editor — taken out. A command that is only slow because of what it
-  shells out to now says so instead of looking like scriv being slow.
-  `stats improve` hands that column on with the rest.
+  tool — taken out. A command that is only slow because of what it shells out to
+  now says so instead of looking like scriv being slow. `stats improve` hands
+  that column on with the rest.
 
 ## v0.17.2
 
@@ -33,6 +33,9 @@ raised, never by hand.
 
 ### Fixed
 
+- Time spent in the editor `scriv edit` opens is no longer counted as time the
+  command took, as time in a selector already was not. An afternoon in vim used
+  to make `edit` the most expensive command scriv had.
 - Opening a repository on GitHub — `repo open`, or `f1` in the `repo sel`
   selector — no longer waits on a call to the GitHub API before the browser
   opens. The same page, roughly half a second sooner.

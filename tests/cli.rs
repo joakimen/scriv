@@ -2567,6 +2567,39 @@ fn a_run_is_recorded_in_milliseconds_rather_than_in_how_long_it_sat_there() {
     assert!(millis < 10_000, "{millis}ms for `config path`");
 }
 
+/// An editor holds the terminal for as long as the user stays in it, which is
+/// their time and not the command's. Counted, it made `edit` the most expensive
+/// command scriv had.
+#[cfg(unix)]
+#[test]
+fn the_time_spent_in_an_editor_is_not_the_time_the_command_took() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new();
+    let editor = sandbox.home().join("slow-editor");
+    std::fs::write(&editor, "#!/bin/sh\nsleep 1\n").unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    sandbox
+        .run_with_env(
+            &["edit", "notes.md"],
+            &[("EDITOR", &editor.to_string_lossy())],
+        )
+        .ok();
+
+    let log = std::fs::read_to_string(sandbox.stats_path()).unwrap();
+    let millis: u64 = log
+        .lines()
+        .next()
+        .and_then(|line| line.split('\t').nth(1))
+        .and_then(|millis| millis.parse().ok())
+        .unwrap_or_else(|| panic!("no duration in {log:?}"));
+    assert!(
+        millis < 500,
+        "the editor's second was charged to `edit`: {millis}ms"
+    );
+}
+
 #[test]
 fn reset_forgets_the_runs_and_says_how_many() {
     let sandbox = Sandbox::new();
