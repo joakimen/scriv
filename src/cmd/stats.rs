@@ -131,10 +131,15 @@ pub fn reset(ctx: &Ctx, yes: bool) -> Result<()> {
         ),
     }
 
-    match std::fs::remove_file(&ctx.stats_path) {
-        Ok(()) => {}
+    // Emptied rather than removed: this run has the log open already, and a
+    // file removed from under an open handle is one the next write brings
+    // back with a hole where the rows were.
+    match OpenOptions::new().write(true).open(&ctx.stats_path) {
+        Ok(file) => file
+            .set_len(0)
+            .map_err(|e| anyhow::anyhow!("emptying {}: {e}", ctx.stats_path.display()))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => bail!("removing {}: {e}", ctx.stats_path.display()),
+        Err(e) => bail!("emptying {}: {e}", ctx.stats_path.display()),
     }
     println!("forgot {} recorded runs", records.len());
     Ok(())
