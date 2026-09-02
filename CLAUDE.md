@@ -171,8 +171,9 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   (magenta), and a heading or a field label takes bold rather than a colour, so
   the row still reads under `--color never` and on a background nobody
   predicted. Nothing means anything by colour alone: the glyph or the word says
-  it too. `cmd/config.rs` follows this; `proc.rs`, `select.rs`, `cmd/project.rs`,
-  `project/report.rs` and `project/deps.rs` still hold a `= 8` that predates it.
+  it too. The hue is
+  [`term::SECONDARY`], one constant for the whole tree, so the tool reads as one
+  thing rather than as the colour each command was written in.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
   `SCRIV_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
 - **`repo`/`file`/`branch`/`worktree`/`pr`/`history` are registries; `edit` and

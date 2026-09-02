@@ -183,15 +183,6 @@ pub fn init(ctx: &Ctx, force: bool) -> Result<()> {
 
 // --- print ------------------------------------------------------------------
 
-/// Magenta, for everything on a row that is not the value itself: where the
-/// value came from, and what a check found.
-///
-/// Colour here is the low sixteen indices only, which a terminal resolves from
-/// its own theme. Bright black reads as secondary on a dark theme and as
-/// invisible on the several themes that use it as their background, which is
-/// why a hue carries the secondary text and bold carries the labels.
-const SECONDARY: u8 = 5;
-
 /// Cyan, for the `[table]` a group of settings is written under.
 const HEADING: u8 = 6;
 
@@ -265,7 +256,7 @@ impl Value {
     fn color(&self) -> Option<u8> {
         match self {
             Self::Set(_) => None,
-            Self::Missing(_) => Some(SECONDARY),
+            Self::Missing(_) => Some(term::SECONDARY),
             Self::Broken(_) => Some(BROKEN),
         }
     }
@@ -518,7 +509,7 @@ fn render_report(rows: &[Row], color: bool) -> Vec<String> {
                 let mut line = term::paint(title, HEADING, color);
                 if !note.is_empty() {
                     line.push_str("  ");
-                    line.push_str(&term::paint(note, SECONDARY, color));
+                    line.push_str(&term::paint(note, term::SECONDARY, color));
                 }
                 line
             }
@@ -535,7 +526,7 @@ fn render_report(rows: &[Row], color: bool) -> Vec<String> {
                 });
                 if !note.is_empty() {
                     line.push_str("  ");
-                    line.push_str(&term::paint(note, SECONDARY, color));
+                    line.push_str(&term::paint(note, term::SECONDARY, color));
                 }
                 line
             }
@@ -656,7 +647,7 @@ impl Status {
     /// secondary text; what to do about a broken one carries the status colour.
     fn detail_color(self) -> u8 {
         match self {
-            Self::Ok => SECONDARY,
+            Self::Ok => term::SECONDARY,
             other => other.color(),
         }
     }

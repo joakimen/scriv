@@ -19,8 +19,8 @@ use crate::project::report::{Outcome, Status};
 use crate::project::{Scan, Step, Toolchain, build, deps as manifests, detect, install, report};
 use crate::{Ctx, Reported, term};
 
-/// Grey, for what scriv says about a command rather than what the command said.
-const DIM: u8 = 8;
+/// For what scriv says about a command rather than what the command said.
+const DIM: u8 = term::SECONDARY;
 
 /// `scriv project deps` — install every detected toolchain's dependencies.
 ///

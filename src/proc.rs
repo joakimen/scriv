@@ -229,8 +229,9 @@ pub fn status_row(p: &Process, user_width: usize, color: bool) -> String {
     )
 }
 
-/// Grey, the terminal's own, for the columns before the command.
-const CONTEXT_COLOR: u8 = 8;
+/// The columns before the command say what scriv knows about it rather than
+/// what it is, so they take [`crate::term::SECONDARY`].
+const CONTEXT_COLOR: u8 = crate::term::SECONDARY;
 
 /// The preview pane for a highlighted row, built from the single `ps` call the
 /// listing already made rather than a command of its own.

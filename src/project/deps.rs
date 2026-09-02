@@ -812,7 +812,8 @@ pub fn listing(manifests: &[Manifest], color: bool) -> Vec<String> {
     lines
 }
 
-const DIM: u8 = 8;
+/// For what a row says about a dependency rather than its name.
+const DIM: u8 = crate::term::SECONDARY;
 /// Yellow, the same accent every group heading gets whichever toolchain it is
 /// under — the toolchain is already coloured, and a second cycling palette
 /// inside it would say nothing.
