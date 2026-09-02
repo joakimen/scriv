@@ -29,9 +29,8 @@ raised, never by hand.
 
 ### Added
 
-- `ctrl-t` in the `repo clone` selector shows only the repositories you have not
-  cloned yet, and `ctrl-a` puts the whole list back. The header says which of
-  the two is in force.
+- `ctrl-t` in the `repo clone` selector steps between the whole list and the
+  repositories you have not cloned yet.
 
 ### Fixed
 
