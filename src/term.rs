@@ -132,6 +132,9 @@ pub fn is_yes(answer: &str) -> bool {
 /// Ask `question` on stderr, since stdout is a result, and read the answer
 /// from stdin. Whether there is anyone to answer is [`Confirm`]'s business.
 pub fn confirm(question: &str) -> std::io::Result<bool> {
+    // The wait is the user's, so it is not counted against the command that
+    // asked. See [`crate::stats::interacting`].
+    let _waiting = crate::stats::interacting();
     let mut err = std::io::stderr().lock();
     write!(err, "{question} [y/N] ")?;
     err.flush()?;

@@ -184,9 +184,19 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   answer.
 - **A verb is abbreviated in its own name, not an alias beside it.** `ls`, `sel`
   and `rm` get no long form (`list`, `co` and `switch` predate the rule). Groups
-  take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c` — and two where the letter
+  take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c`, `s` — and two where the letter
   is spoken for: `pj`, as `p` meets `pr`. `pr` and `ps` are spelled in two to
   begin with and take no alias of their own.
+- **Anything that waits for a person binds [`stats::interacting`].** Every run
+  records what it cost, and a selector left open over lunch would otherwise be
+  recorded as a command that takes an hour. There are two such places — the
+  selector and the yes/no question — and a third would be a new one to bind it
+  in, not a reason to thread a clock through the call graph.
+- **The stats log is appended to, never rewritten.** One line per run, so two
+  scriv processes finishing at once cannot lose each other's row and a run that
+  is killed loses only itself. The totals are worked out when they are read.
+  Nothing but the command's name goes in it: no arguments, no paths, no what
+  was picked.
 - **Key bindings and aliases are configuration, not code.** What `scriv init`
   emits comes from `[shell.bindings]` and `[shell.aliases]`, which name
   [`binding::ACTIONS`] rather than holding shell code — that is what lets one

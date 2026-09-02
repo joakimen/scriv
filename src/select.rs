@@ -1103,7 +1103,12 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     };
 
     let _room = room_for(&cfg.height);
-    let output = Skim::run_with(options, source).map_err(|e| anyhow!("running selector: {e}"))?;
+    // Everything from here until skim returns is the user's time, not scriv's,
+    // and `scriv stats` says so.
+    let output = {
+        let _waiting = crate::stats::interacting();
+        Skim::run_with(options, source).map_err(|e| anyhow!("running selector: {e}"))?
+    };
 
     if output.is_abort {
         return Err(Cancelled.into());

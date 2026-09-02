@@ -1137,6 +1137,12 @@ fn collect(ctx: &Ctx) -> Vec<Section> {
         false,
         "`project` runs a project's own tools through it (https://mise.jdx.dev)",
     ));
+    tools.push(tool_check(
+        "claude",
+        "claude",
+        false,
+        "only `stats improve` needs it (https://claude.com/product/claude-code)",
+    ));
 
     let content = vec![history_check(ctx), files_check(ctx), note_vault_check(ctx)];
 

@@ -13,6 +13,19 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `scriv stats` counts scriv itself. Every run appends its command and how long
+  it took to a log, and `stats show` reads that back as a tree of every command
+  there is — with how often you have run each one and what a run of it costs —
+  so the commands going unused are as visible as the ones that are not. The
+  time you spend in a selector is taken out of the numbers: a list left open
+  over lunch is not a slow command. `stats improve` hands the busiest commands
+  to Claude Code to work on, and `stats reset` forgets the lot.
+
+  Nothing but the command's name is recorded: no arguments, no paths, no what
+  you picked. The log is `$XDG_DATA_HOME/scriv/stats`.
+
 ### Changed
 
 - `scriv proc` is `scriv ps`, after the tool it reads the process table with,
