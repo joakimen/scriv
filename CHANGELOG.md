@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.17.1
+
+*Released 2026-09-02*
+
 ## v0.17.0
 
 *Released 2026-09-02*
