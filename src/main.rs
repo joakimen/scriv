@@ -321,8 +321,7 @@ enum RepoCmd {
     ///
     /// Inside a repository, opens that one. Anywhere else, fuzzy-selects from
     /// every repository under your search paths. Either way it hands off to
-    /// `gh repo view --web`, which resolves the page from that checkout's git
-    /// remotes.
+    /// `gh browse`, which resolves the page from that checkout's git remotes.
     Open {
         /// Select a repository even when standing in one
         #[arg(short, long)]

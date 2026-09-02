@@ -969,8 +969,12 @@ pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
 /// Open the GitHub page of the repository checked out at `dir`. Which
 /// repository that is comes from `dir`'s git remotes, not its path — a renamed
 /// clone or a fork makes the two disagree.
+///
+/// `gh browse` and not `gh repo view --web`, which reaches the same page: the
+/// latter fetches the repository's metadata over the API first and waits for
+/// it, so opening a browser tab costs a network round trip nothing here reads.
 pub fn view_repo_web(dir: &Path) -> Result<()> {
-    run_at(Some(dir), &["repo", "view", "--web"])
+    run_at(Some(dir), &["browse"])
 }
 
 /// Who the token belongs to. Asked of GitHub rather than of the config, since

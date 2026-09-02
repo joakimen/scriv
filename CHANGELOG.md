@@ -13,6 +13,12 @@ raised, never by hand.
 
 ## Unreleased
 
+### Fixed
+
+- Opening a repository on GitHub — `repo open`, or `f1` in the `repo sel`
+  selector — no longer waits on a call to the GitHub API before the browser
+  opens. The same page, roughly half a second sooner.
+
 ## v0.17.1
 
 *Released 2026-09-02*
