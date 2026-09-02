@@ -342,8 +342,8 @@ enum RepoCmd {
     /// repositories are left out unless you ask for them.
     ///
     /// What you type is matched against the repository name alone, never the
-    /// columns beside it. `ctrl-t` narrows the list to what you have not cloned
-    /// yet and `ctrl-a` puts it back, as the selector's own header says.
+    /// columns beside it. `ctrl-t` steps between the whole list and the ones
+    /// you have not cloned yet.
     Clone {
         /// `owner` to select from, or `owner/repo` to clone directly
         #[arg(value_name = "OWNER[/REPO]")]

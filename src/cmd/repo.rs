@@ -403,14 +403,14 @@ enum CloneView {
     /// missing from the list would read as "this org does not have that repo".
     All,
     /// Only the ones not already under the root — what there is left to clone.
-    Missing,
+    Uncloned,
 }
 
 impl CloneView {
     /// The view at `index` in [`CLONE_VIEWS`].
     fn of(index: usize) -> Self {
         match index {
-            1 => Self::Missing,
+            1 => Self::Uncloned,
             _ => Self::All,
         }
     }
@@ -420,18 +420,17 @@ impl CloneView {
     fn shows(self, present: bool) -> bool {
         match self {
             Self::All => true,
-            Self::Missing => !present,
+            Self::Uncloned => !present,
         }
     }
 }
 
-/// The keys the clone selector offers its views on, in the order the header
-/// lists them. `ctrl-a` displaces skim's own beginning-of-line, which in a
-/// one-line query is worth less than reaching the whole list again.
-const CLONE_VIEWS: &[select::Mode] = &[
-    select::Mode::new("ctrl-a", "all"),
-    select::Mode::new("ctrl-t", "missing"),
-];
+/// The lists the clone selector steps through, and the key that steps.
+///
+/// One key rather than one each: the keys a terminal has are spoken for by
+/// whatever the user has bound around scriv, and this asks for the fewest it
+/// can. `ctrl-t` displaces nothing skim binds.
+const CLONE_VIEWS: select::Views = select::Views::new("ctrl-t", &["all", "uncloned"]);
 
 /// Build the repository rows for `view`, marking the ones already on disk.
 ///

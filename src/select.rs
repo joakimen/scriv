@@ -407,7 +407,7 @@ pub fn select_one_queried(
         reload: None,
         search: None,
         modes: &[],
-        views: &[],
+        views: Views::NONE,
         actions: &[],
     };
     run_selector(Feed::batch(items), run, cfg)?
@@ -484,7 +484,7 @@ pub fn select_one_reloading(
         reload: Some(reload),
         search: None,
         modes: &[],
-        views: &[],
+        views: Views::NONE,
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -504,7 +504,7 @@ pub fn select_one_acting(
         reload: None,
         search: None,
         modes: &[],
-        views: &[],
+        views: Views::NONE,
         actions,
     };
     chosen(run_selector(Feed::batch(items), run, cfg)?)
@@ -525,9 +525,12 @@ fn chosen(outcome: Outcome) -> Result<Chosen> {
 /// running a command, and it is calling a closure.
 struct ReloadCollector {
     reload: Arc<Mutex<Reload>>,
-    /// Which view the next reload produces. Held across reloads because only a
-    /// view *key* names one: [`REFRESH_KEY`] reloads whatever is on screen.
+    /// Which view the next reload produces. Held across reloads because the
+    /// view key says only "the next one", and [`REFRESH_KEY`] says nothing at
+    /// all: both leave the collector to know where the cycle is.
     view: Arc<AtomicUsize>,
+    /// How many views there are to step through, `0` where there are none.
+    views: usize,
 }
 
 /// How often the counted thread looks up from waiting to see whether skim has
@@ -543,8 +546,9 @@ impl CommandCollector for ReloadCollector {
         let (tx_item, rx_item): (SkimItemSender, SkimItemReceiver) = unbounded();
         let (tx_interrupt, rx_interrupt) = unbounded::<i32>();
         let reload = Arc::clone(&self.reload);
-        if let (Some(view), _) = read_mode(cmd) {
-            self.view.store(view, Ordering::SeqCst);
+        if cmd == NEXT_VIEW && self.views > 0 {
+            let next = (self.view.load(Ordering::SeqCst) + 1) % self.views;
+            self.view.store(next, Ordering::SeqCst);
         }
         let view = self.view.load(Ordering::SeqCst);
 
@@ -621,6 +625,41 @@ impl Mode {
         Self { key, label }
     }
 }
+
+/// Lists the selector can step through on one key, in order.
+///
+/// One key rather than a key each, because a key is a scarce thing in a
+/// terminal and the caller's own bindings have first claim on them. The cost is
+/// that the header cannot name the list in force: skim's `set-header` writes a
+/// fixed string, so a key that alternates would have to carry the text of the
+/// binding that replaces it, which carries the text of the one that replaces
+/// *that*. What the list holds says which it is instead — the marks, and the
+/// count skim draws under the query.
+pub struct Views {
+    /// skim's spelling of the key that steps to the next one — `ctrl-t`.
+    pub key: &'static str,
+    /// What each list is called, in the order the key steps through them. The
+    /// first is what the selector opens in.
+    pub labels: &'static [&'static str],
+}
+
+impl Views {
+    pub const fn new(key: &'static str, labels: &'static [&'static str]) -> Self {
+        Self { key, labels }
+    }
+
+    /// Nothing to step through.
+    const NONE: Self = Self::new("", &[]);
+
+    fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+}
+
+/// What a view key hands the collector. It says "the next one" rather than
+/// which one, since the binding is fixed and the collector is what remembers
+/// where the cycle has got to.
+const NEXT_VIEW: &str = "\u{2}+\u{2}";
 
 /// The marker a mode key's reload puts in front of the query, so the collector
 /// can tell "search again in mode 2" from "the query changed".
@@ -792,7 +831,7 @@ pub fn select_many_searching(
         reload: None,
         search: Some(search),
         modes,
-        views: &[],
+        views: Views::NONE,
         actions: &[],
     };
     Ok(run_selector(Feed::none(true), run, cfg)?.values)
@@ -834,17 +873,17 @@ pub fn select_many(
     run(Feed::batch(items), prompt, true, cfg)
 }
 
-/// [`select_many`], with each of `views` on a key that swaps the whole list for
-/// the rows `rows` produces for it.
+/// [`select_many`], with one key stepping through `views`, each drawn by the
+/// rows `rows` produces for it.
 ///
 /// `items` is the first view, already built — the selector draws it without
-/// waiting for a reload. What each view is called, and the key that reaches it,
-/// is in the header for as long as the selector is open.
+/// waiting for a reload. The key and what it steps through are named in the
+/// header for as long as the selector is open.
 pub fn select_many_viewing(
     items: Vec<SelectItem>,
     prompt: &str,
     cfg: &SelectorConfig,
-    views: &'static [Mode],
+    views: Views,
     rows: Reload,
 ) -> Result<Vec<String>> {
     let run = Run {
@@ -990,10 +1029,9 @@ struct Run<'a> {
     /// The ways `search` can read the query, each on a key of its own. The
     /// first is what the selector opens in.
     modes: &'static [Mode],
-    /// Whole lists on keys of their own, each swapping what the selector
-    /// shows. Fed by [`Run::reload`], which is asked for the view by index.
-    /// The first is what the selector opens in.
-    views: &'static [Mode],
+    /// Lists the selector steps through on one key, fed by [`Run::reload`],
+    /// which is asked for the view by index.
+    views: Views,
     /// Keys that close the selector meaning something other than enter.
     actions: &'static [Action],
 }
@@ -1007,7 +1045,7 @@ impl<'a> Run<'a> {
             reload: None,
             search: None,
             modes: &[],
-            views: &[],
+            views: Views::NONE,
             actions: &[],
         }
     }
@@ -1093,11 +1131,11 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         }
     }
 
-    // A selector whose reload exists to swap views has no refresh of its own:
-    // there is nothing behind the list to fetch again.
+    // A selector whose reload exists to step through views has no refresh of
+    // its own: there is nothing behind the list to fetch again.
     let reloadable = run.reload.is_some() && run.views.is_empty();
     let searching = run.search.is_some();
-    let header = hints(actions, reloadable, multi, run.modes);
+    let header = hints(actions, reloadable, multi, run.modes, &run.views);
 
     // The query drives the search rather than filtering rows, so skim runs it
     // through a "command" — `{q}` being skim's own spelling of what was typed.
@@ -1120,6 +1158,7 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
         let collector = ReloadCollector {
             reload: Arc::new(Mutex::new(reload)),
             view: Arc::new(AtomicUsize::new(0)),
+            views: run.views.labels.len(),
         };
         // `no_clear_if_empty` keeps a refresh from flickering, but a view is
         // asked for: one that holds nothing has to be seen to hold nothing.
@@ -1130,16 +1169,15 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
 
     // A searching selector opens in its first mode, and the header says so
     // from the outset rather than only after a key is pressed.
-    let opening = match (run.modes.first(), run.views.first()) {
-        (Some(_), _) => chosen_header(run.modes, 0, &header, " match"),
-        (_, Some(_)) => chosen_header(run.views, 0, &header, ""),
-        _ => header.clone(),
+    let opening = match run.modes.first() {
+        Some(_) => chosen_header(run.modes, 0, &header, " match"),
+        None => header.clone(),
     };
     if !opening.is_empty() {
         builder.header(opening);
     }
     let binds = binds(
-        actions, reloadable, previewing, run.modes, run.views, &header,
+        actions, reloadable, previewing, run.modes, &run.views, &header,
     );
     if !binds.is_empty() {
         builder.bind(binds);
@@ -1208,7 +1246,13 @@ fn acted(output: &SkimOutput, actions: &'static [Action]) -> Option<&'static str
 ///
 /// Nothing at all when there is nothing to say, so a plain list of paths keeps
 /// the row for a path.
-fn hints(actions: &[Action], reloadable: bool, multi: bool, modes: &[Mode]) -> String {
+fn hints(
+    actions: &[Action],
+    reloadable: bool,
+    multi: bool,
+    modes: &[Mode],
+    views: &Views,
+) -> String {
     let mut hints: Vec<String> = actions
         .iter()
         .map(|action| format!("{} {}", action.key, action.label))
@@ -1218,6 +1262,11 @@ fn hints(actions: &[Action], reloadable: bool, multi: bool, modes: &[Mode]) -> S
     }
     if multi {
         hints.push("tab select".to_string());
+    }
+    // The key and what it steps through, since the header cannot say which of
+    // them is in force: what the list holds does that.
+    if !views.is_empty() {
+        hints.push(format!("{} {}", views.key, views.labels.join("/")));
     }
     // Worth a hint only where the query is not doing what a query usually
     // does: with the search taking it, `ctrl-q` is how you filter what came
@@ -1241,7 +1290,7 @@ fn binds(
     reloadable: bool,
     previewing: bool,
     modes: &[Mode],
-    views: &[Mode],
+    views: &Views,
     header: &str,
 ) -> Vec<String> {
     let mut binds: Vec<String> = actions
@@ -1263,15 +1312,11 @@ fn binds(
             chosen_header(modes, index, header, " match"),
         ));
     }
-    // A view key reloads the list itself. The query is left out of the reload:
-    // it filters whatever comes back, and putting it in the template would
-    // hand the collector a search it does not run.
-    for (index, view) in views.iter().enumerate() {
-        binds.push(format!(
-            "{}:reload({MODE_MARKER}{index}{MODE_MARKER})+set-header({})",
-            view.key,
-            chosen_header(views, index, header, ""),
-        ));
+    // One key for every view, stepping through them: what it reloads says only
+    // "the next one", since a binding cannot alternate. The query is left out
+    // of it — the query filters what comes back rather than fetching it.
+    if !views.is_empty() {
+        binds.push(format!("{}:reload({NEXT_VIEW})", views.key));
     }
     binds
 }
@@ -1471,19 +1516,14 @@ mod tests {
             assert!(header.contains("tab select"), "{header}");
         }
 
-        /// A view is a whole list on a key, and the header is where the one in
-        /// force can be read — there is nothing else on screen that says it.
+        /// One key steps through the views, so the binding cannot name which
+        /// one it lands in — it says only "the next".
         #[test]
-        fn a_view_key_reloads_the_list_and_names_the_view_it_chose() {
-            let views = [Mode::new("ctrl-a", "all"), Mode::new("ctrl-t", "missing")];
+        fn one_key_steps_through_the_views_and_asks_for_no_search() {
+            let views = Views::new("ctrl-t", &["all", "uncloned"]);
             let binds = binds(&[], false, false, &[], &views, "tab select");
 
-            assert!(
-                binds
-                    .iter()
-                    .any(|b| b.starts_with("ctrl-t:reload(") && b.contains("missing")),
-                "{binds:?}"
-            );
+            assert_eq!(binds, vec![format!("ctrl-t:reload({NEXT_VIEW})")]);
             // No `{q}`: the query filters what comes back rather than fetching
             // it, so a view reload carries none.
             assert!(
@@ -1491,17 +1531,17 @@ mod tests {
                 "a view asked for a search: {binds:?}"
             );
 
-            let header = chosen_header(&views, 1, "tab select", "");
-            assert!(header.starts_with("missing"), "{header}");
-            assert!(header.contains("ctrl-a all"), "{header}");
-            assert!(!header.contains("ctrl-t"), "{header}");
+            // The header cannot say which view is in force, so it says what the
+            // key does with them.
+            let header = hints(&[], false, true, &[], &views);
+            assert!(header.contains("ctrl-t all/uncloned"), "{header}");
             assert!(header.contains("tab select"), "{header}");
         }
 
         #[test]
         fn every_mode_gets_a_key_that_searches_again_and_sets_the_header() {
             let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
-            let binds = binds(&[], false, false, &modes, &[], "");
+            let binds = binds(&[], false, false, &modes, &Views::NONE, "");
             assert!(
                 binds.iter().any(|b| b.starts_with("ctrl-f:reload(")),
                 "{binds:?}"
@@ -1813,6 +1853,7 @@ mod tests {
             true,
             true,
             &[],
+            &Views::new("ctrl-t", &["all", "uncloned"]),
         );
         for header in [BUSY_HEADER, every_hint.as_str(), HINT_SEPARATOR] {
             assert!(!header.contains(','), "{header:?} would split the binding");
@@ -1822,7 +1863,7 @@ mod tests {
 
     #[test]
     fn the_header_names_every_key_the_selector_answers_to() {
-        let full = hints(&[Action::new("f2", "open")], true, true, &[]);
+        let full = hints(&[Action::new("f2", "open")], true, true, &[], &Views::NONE);
         assert_eq!(full, "f2 open · ctrl-r refresh · tab select");
     }
 
@@ -1830,13 +1871,13 @@ mod tests {
     /// path than as an empty hint line.
     #[test]
     fn a_selector_with_nothing_to_offer_draws_no_header() {
-        assert!(hints(&[], false, false, &[]).is_empty());
+        assert!(hints(&[], false, false, &[], &Views::NONE).is_empty());
     }
 
     #[test]
     fn each_hint_appears_only_when_its_key_is_bound() {
-        assert_eq!(hints(&[], false, true, &[]), "tab select");
-        assert_eq!(hints(&[], true, false, &[]), "ctrl-r refresh");
+        assert_eq!(hints(&[], false, true, &[], &Views::NONE), "tab select");
+        assert_eq!(hints(&[], true, false, &[], &Views::NONE), "ctrl-r refresh");
     }
 
     /// skim binds `ctrl-r` to rotating the match mode and `tab` to toggling a
@@ -1847,8 +1888,8 @@ mod tests {
     #[test]
     fn every_key_the_header_names_is_bound() {
         let actions = [Action::new("f2", "open"), Action::new("f7", "check out")];
-        let header = hints(&actions, true, true, &[]);
-        let binds = binds(&actions, true, true, &[], &[], &header);
+        let header = hints(&actions, true, true, &[], &Views::NONE);
+        let binds = binds(&actions, true, true, &[], &Views::NONE, &header);
 
         for hint in header.split(HINT_SEPARATOR) {
             let key = hint.split(' ').next().expect("a hint with no key");
@@ -1868,7 +1909,7 @@ mod tests {
     #[test]
     fn an_action_key_closes_the_selector_and_the_preview_key_does_not() {
         let actions = [Action::new("f2", "open")];
-        let binds = binds(&actions, false, true, &[], &[], "");
+        let binds = binds(&actions, false, true, &[], &Views::NONE, "");
         assert!(binds.contains(&"f2:accept".to_string()), "{binds:?}");
         assert!(
             binds.contains(&format!("{PREVIEW_KEY}:toggle-preview")),
@@ -1878,7 +1919,7 @@ mod tests {
 
     #[test]
     fn a_plain_selector_binds_nothing_of_its_own() {
-        assert!(binds(&[], false, false, &[], &[], "").is_empty());
+        assert!(binds(&[], false, false, &[], &Views::NONE, "").is_empty());
     }
 
     #[test]
@@ -1902,6 +1943,7 @@ mod tests {
                 vec![SelectItem::plain("fresh")]
             }))),
             view: Arc::new(AtomicUsize::new(0)),
+            views: 2,
         };
 
         let components = Arc::new(AtomicUsize::new(0));
@@ -1920,10 +1962,11 @@ mod tests {
         }
     }
 
-    /// A view key names its view once; every reload after it — a refresh, or
-    /// skim re-running the template — has to stay in the view the user chose.
+    /// The key says only "the next one", so the collector is what knows where
+    /// the cycle has got to — and every reload that is not a view key, a
+    /// refresh included, has to stay where the user left it.
     #[test]
-    fn a_view_marker_reaches_the_closure_and_the_next_reload_keeps_it() {
+    fn the_view_key_steps_on_and_every_other_reload_stays_put() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let asked = Arc::clone(&seen);
         let mut collector = ReloadCollector {
@@ -1932,10 +1975,11 @@ mod tests {
                 vec![SelectItem::plain("row")]
             }))),
             view: Arc::new(AtomicUsize::new(0)),
+            views: 2,
         };
 
         let components = Arc::new(AtomicUsize::new(0));
-        for command in ["", &format!("{MODE_MARKER}1{MODE_MARKER}"), ""] {
+        for command in ["", NEXT_VIEW, "", NEXT_VIEW, NEXT_VIEW] {
             let (rx, _interrupt) = collector.invoke(command, Arc::clone(&components));
             let _ = rx.recv();
             while rx.recv().is_ok() {}
@@ -1944,7 +1988,8 @@ mod tests {
             std::thread::yield_now();
         }
 
-        assert_eq!(*seen.lock().expect("poisoned"), vec![0, 1, 1]);
+        // Round the cycle and back to where it started.
+        assert_eq!(*seen.lock().expect("poisoned"), vec![0, 1, 1, 0, 1]);
     }
 
     #[test]
@@ -1957,6 +2002,7 @@ mod tests {
                 vec![SelectItem::plain("late")]
             }))),
             view: Arc::new(AtomicUsize::new(0)),
+            views: 2,
         };
 
         let components = Arc::new(AtomicUsize::new(0));
