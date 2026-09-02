@@ -28,12 +28,16 @@ pub fn path(data_home: Option<&str>, home: &Path) -> PathBuf {
 }
 
 /// One run: when it finished, how long it took with the time spent waiting for
-/// the person at the keyboard taken out, and which command it was.
+/// the person at the keyboard taken out, how much of that went on subprocesses,
+/// and which command it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     /// Unix seconds.
     pub at: i64,
     pub millis: u64,
+    /// How much of `millis` was spent waiting for a subprocess to finish —
+    /// `git`, `gh`, a build tool, an editor.
+    pub child_millis: u64,
     /// The command as it is spelled, subcommands included: `repo sel`.
     pub command: String,
 }
@@ -41,7 +45,10 @@ pub struct Record {
 /// A record as its line of the log. Tab-separated with the command last, so a
 /// name that ever grows a space in it still needs no quoting.
 pub fn format(record: &Record) -> String {
-    format!("{}\t{}\t{}\n", record.at, record.millis, record.command)
+    format!(
+        "{}\t{}\t{}\t{}\n",
+        record.at, record.millis, record.child_millis, record.command
+    )
 }
 
 /// Every record in `text`.
@@ -49,23 +56,32 @@ pub fn format(record: &Record) -> String {
 /// A line that does not parse is skipped rather than failing the read: the log
 /// is appended to by every run there has ever been, and one truncated row from
 /// a machine that lost power is not a reason to refuse the rest.
+///
+/// Rows written before the subprocess column existed carry three fields and are
+/// read as having spent none. The third field tells the two apart: a number
+/// there is the column, anything else is the command.
 pub fn parse(text: &str) -> Vec<Record> {
-    text.lines()
-        .filter_map(|line| {
-            let mut fields = line.splitn(3, '\t');
-            let at = fields.next()?.trim().parse().ok()?;
-            let millis = fields.next()?.trim().parse().ok()?;
-            let command = fields.next()?.trim();
-            if command.is_empty() {
-                return None;
-            }
-            Some(Record {
-                at,
-                millis,
-                command: command.to_string(),
-            })
-        })
-        .collect()
+    text.lines().filter_map(parse_line).collect()
+}
+
+fn parse_line(line: &str) -> Option<Record> {
+    let mut fields = line.splitn(4, '\t');
+    let at = fields.next()?.trim().parse().ok()?;
+    let millis = fields.next()?.trim().parse().ok()?;
+    let third = fields.next()?.trim();
+    let (child_millis, command) = match (third.parse(), fields.next()) {
+        (Ok(child), Some(command)) => (child, command.trim()),
+        _ => (0, third),
+    };
+    if command.is_empty() {
+        return None;
+    }
+    Some(Record {
+        at,
+        millis,
+        child_millis,
+        command: command.to_string(),
+    })
 }
 
 /// What one command adds up to over every run of it.
@@ -75,6 +91,8 @@ pub struct Totals {
     /// Wall time over every run, which is what makes a command worth
     /// improving: a fast one run all day costs more than a slow one run twice.
     pub millis: u64,
+    /// How much of [`Self::millis`] went on waiting for subprocesses.
+    pub child_millis: u64,
 }
 
 impl Totals {
@@ -83,9 +101,28 @@ impl Totals {
         (self.calls > 0).then(|| Duration::from_millis(self.millis / self.calls))
     }
 
+    /// Time in scriv's own code over every run, with the subprocesses it waited
+    /// on taken out. What [`crate::stats::by_value`] ranks on.
+    ///
+    /// Carries the same lower-bound caveat as [`Self::own_average`].
+    pub fn own_millis(&self) -> u64 {
+        self.millis.saturating_sub(self.child_millis)
+    }
+
+    /// What one run costs in scriv's own code, with the subprocesses it waited
+    /// on taken out.
+    ///
+    /// A lower bound rather than an exact figure: two children waited on at
+    /// once are each counted in full, so a command that fans out reads as doing
+    /// less of its own work than it does.
+    pub fn own_average(&self) -> Option<Duration> {
+        (self.calls > 0).then(|| Duration::from_millis(self.own_millis() / self.calls))
+    }
+
     fn add(&mut self, other: Totals) {
         self.calls += other.calls;
         self.millis += other.millis;
+        self.child_millis += other.child_millis;
     }
 }
 
@@ -96,6 +133,7 @@ pub fn totals(records: &[Record]) -> BTreeMap<String, Totals> {
         out.entry(record.command.clone()).or_default().add(Totals {
             calls: 1,
             millis: record.millis,
+            child_millis: record.child_millis,
         });
     }
     out
@@ -202,18 +240,22 @@ fn walk(
 }
 
 /// The columns, as `stats show` prints them: the tree, how often each command
-/// has been run, and what one run of it costs.
+/// has been run, what one run of it costs, and how much of that is scriv's own
+/// work rather than a subprocess it waited on.
 pub fn render(rows: &[TreeRow], color: bool) -> Vec<String> {
+    let duration = |value: Option<Duration>| {
+        value
+            .map(format_duration)
+            .unwrap_or_else(|| "-".to_string())
+    };
     let cell = |row: &TreeRow| {
         (
             match row.totals.calls {
                 0 => "-".to_string(),
                 calls => calls.to_string(),
             },
-            row.totals
-                .average()
-                .map(format_duration)
-                .unwrap_or_else(|| "-".to_string()),
+            duration(row.totals.average()),
+            duration(row.totals.own_average()),
         )
     };
 
@@ -229,18 +271,25 @@ pub fn render(rows: &[TreeRow], color: bool) -> Vec<String> {
         .max()
         .unwrap_or(0)
         .max(HEADINGS.1.len());
+    let average_width = rows
+        .iter()
+        .map(|row| cell(row).1.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(HEADINGS.2.len());
 
     let mut out = vec![format!(
-        "{}  {}  {}",
+        "{}  {}  {}  {}",
         term::bold(&pad(HEADINGS.0, name_width), color),
         term::bold(&right(HEADINGS.1, calls_width), color),
-        term::bold(HEADINGS.2, color),
+        term::bold(&right(HEADINGS.2, average_width), color),
+        term::bold(HEADINGS.3, color),
     )];
     out.extend(rows.iter().map(|row| {
-        let (calls, average) = cell(row);
+        let (calls, average, own) = cell(row);
         let drawn = row.branch.chars().count() + row.name.chars().count();
         format!(
-            "{}{}{}  {}  {}",
+            "{}{}{}  {}  {}  {}",
             term::paint(&row.branch, term::SECONDARY, color),
             // A command nobody has run is secondary text: the point of the
             // report is the ones that are.
@@ -250,7 +299,8 @@ pub fn render(rows: &[TreeRow], color: bool) -> Vec<String> {
             },
             " ".repeat(name_width.saturating_sub(drawn)),
             term::paint(&right(&calls, calls_width), term::SECONDARY, color),
-            term::paint(&average, term::SECONDARY, color),
+            term::paint(&right(&average, average_width), term::SECONDARY, color),
+            term::paint(&own, term::SECONDARY, color),
         )
         .trim_end()
         .to_string()
@@ -258,8 +308,9 @@ pub fn render(rows: &[TreeRow], color: bool) -> Vec<String> {
     out
 }
 
-/// What the three columns are called.
-const HEADINGS: (&str, &str, &str) = ("command", "runs", "average");
+/// What the four columns are called. `own` is the average with the time spent
+/// waiting on subprocesses taken out.
+const HEADINGS: (&str, &str, &str, &str) = ("command", "runs", "average", "own");
 
 fn pad(text: &str, width: usize) -> String {
     format!(
@@ -281,9 +332,14 @@ fn right(text: &str, width: usize) -> String {
 /// that the ones at the top are the ones being asked about.
 const IMPROVE_ROWS: usize = 10;
 
-/// The commands worth improving, in the order they are worth it: total time
-/// spent, which is the one number that has both how often a command is run and
-/// what each run costs in it.
+/// The commands worth improving, in the order they are worth it: time spent in
+/// scriv's own code, which has both how often a command is run and what each
+/// run costs in it, and none of what a subprocess or the user spent.
+///
+/// Wall time put the build tool and the editor at the top, where there is
+/// nothing for scriv to do about either. What a subprocess costs is still
+/// worth reading — which one gets called is scriv's choice — so the total
+/// stays a column rather than the sort key.
 pub fn by_value(rows: &[TreeRow]) -> Vec<&TreeRow> {
     let mut leaves: Vec<&TreeRow> = rows
         .iter()
@@ -291,8 +347,9 @@ pub fn by_value(rows: &[TreeRow]) -> Vec<&TreeRow> {
         .collect();
     leaves.sort_by(|a, b| {
         b.totals
-            .millis
-            .cmp(&a.totals.millis)
+            .own_millis()
+            .cmp(&a.totals.own_millis())
+            .then_with(|| b.totals.millis.cmp(&a.totals.millis))
             .then_with(|| b.totals.calls.cmp(&a.totals.calls))
             .then_with(|| a.command.cmp(&b.command))
     });
@@ -305,26 +362,40 @@ pub fn improve_prompt(rows: &[TreeRow]) -> String {
     let mut prompt = String::from(
         "These are scriv's own usage statistics, gathered by `scriv stats`. \
          Each row is a command, how many times it has been run, what one run \
-         costs on average, and what it has cost in total.\n\n\
-         | command | runs | average | total |\n| --- | --- | --- | --- |\n",
+         costs on average, how much of that average is scriv's own work, and \
+         what the command has cost in total.\n\n\
+         | command | runs | average | own | total |\n\
+         | --- | --- | --- | --- | --- |\n",
     );
     for row in by_value(rows).into_iter().take(IMPROVE_ROWS) {
+        let duration =
+            |value: Option<Duration>| value.map(format_duration).unwrap_or_else(|| "-".into());
         prompt.push_str(&format!(
-            "| `scriv {}` | {} | {} | {} |\n",
+            "| `scriv {}` | {} | {} | {} | {} |\n",
             row.command,
             row.totals.calls,
-            row.totals
-                .average()
-                .map(format_duration)
-                .unwrap_or_else(|| "-".into()),
+            duration(row.totals.average()),
+            duration(row.totals.own_average()),
             format_duration(Duration::from_millis(row.totals.millis)),
         ));
     }
     prompt.push_str(
-        "\nThe rows are ordered by total time spent, which is where making \
-         scriv faster is worth the most. Time spent waiting for the user in a \
-         selector is already excluded from these numbers, so what is left is \
-         scriv's own work and what it waits on.\n\n\
+        "\nTime you spent deciding — in a selector, at a yes/no question, in \
+         the editor a command opened — is already out of every number here. \
+         `own` takes out the subprocesses a run waited on as well, so it is \
+         what is left for scriv's own code to answer for, and `total` is what \
+         the command cost including them.\n\n\
+         The rows are ordered by `own` × runs, which is where making scriv \
+         faster is worth the most: ordering by total put a build tool and an \
+         editor at the top, and neither is scriv's to speed up.\n\n\
+         Read the `total` column anyway. A row whose `own` is a sliver of it \
+         spends its time in something scriv shells out to, and which \
+         subprocess gets called, with which arguments, is still scriv's \
+         choice — a cheaper one that reaches the same answer is often there, \
+         and the ordering will have buried that row. Beware the average as \
+         well: a handful of slow runs among many fast ones raises it without \
+         there being anything slow about the command, so read the log itself \
+         before concluding where the time went.\n\n\
          Take the highest-value row you can actually improve, work out where \
          its time goes, and implement the improvement. Measure before and \
          after and say what the numbers were. Follow CLAUDE.md in this \
@@ -357,6 +428,11 @@ static WAITED: AtomicU64 = AtomicU64::new(0);
 
 /// Time spent in front of a person, counted from when this is bound until it is
 /// dropped. Bind it — `let _waiting = stats::interacting()`.
+///
+/// A child the user works in — an editor, a Claude Code session — is bound here
+/// rather than as a [`Child`]: scriv hands over the terminal and waits, which
+/// makes the wait the user's however long they stay. A child scriv is merely
+/// held up by is the other one.
 #[must_use]
 pub struct Interaction(Instant);
 
@@ -377,6 +453,41 @@ pub fn waited() -> Duration {
     Duration::from_nanos(WAITED.load(Ordering::Relaxed))
 }
 
+/// Nanoseconds this process has spent waiting for subprocesses to finish.
+static IN_CHILD: AtomicU64 = AtomicU64::new(0);
+
+/// Time spent waiting for a spawned process, counted from when this is bound
+/// until it is dropped. Bind it — `let _child = stats::in_child()`.
+///
+/// Bound around the wait, not around the spawn, so a child that scriv starts
+/// and reads from while it runs is counted for as long as scriv is held up by
+/// it. A counter rather than a value threaded through the call graph, for the
+/// reason [`Interaction`] is one, and independent of it: a child spawned while
+/// a selector is open is counted by both.
+///
+/// Work scriv delegated, not a terminal it handed over — an editor is an
+/// [`Interaction`], and counting it here as well would charge the user's
+/// afternoon in vim to `git`.
+#[must_use]
+pub struct Child(Instant);
+
+/// Start counting time that belongs to a subprocess rather than to scriv.
+pub fn in_child() -> Child {
+    Child(Instant::now())
+}
+
+impl Drop for Child {
+    fn drop(&mut self) {
+        let spent = u64::try_from(self.0.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        IN_CHILD.fetch_add(spent, Ordering::Relaxed);
+    }
+}
+
+/// How long this process has spent waiting for the ones it spawned.
+pub fn child_time() -> Duration {
+    Duration::from_nanos(IN_CHILD.load(Ordering::Relaxed))
+}
+
 /// What the run itself took: the wall clock less the time the user spent
 /// deciding. A selector left open over lunch is not a slow command.
 pub fn ran_for(total: Duration, waited: Duration) -> Duration {
@@ -387,19 +498,50 @@ pub fn ran_for(total: Duration, waited: Duration) -> Duration {
 mod tests {
     use super::*;
 
+    /// A run that spent `child_millis` of its `millis` waiting on a subprocess.
+    fn child_record(command: &str, millis: u64, child_millis: u64) -> Record {
+        Record {
+            child_millis,
+            ..record(command, millis)
+        }
+    }
+
     fn record(command: &str, millis: u64) -> Record {
         Record {
             at: 1_700_000_000,
             millis,
+            child_millis: 0,
             command: command.to_string(),
         }
     }
 
     #[test]
     fn a_record_survives_the_round_trip_through_a_line() {
-        let written = format(&record("repo sel", 842));
-        assert_eq!(written, "1700000000\t842\trepo sel\n");
-        assert_eq!(parse(&written), vec![record("repo sel", 842)]);
+        let mut written_record = record("repo sel", 842);
+        written_record.child_millis = 800;
+        let written = format(&written_record);
+        assert_eq!(written, "1700000000\t842\t800\trepo sel\n");
+        assert_eq!(parse(&written), vec![written_record]);
+    }
+
+    /// The log outlives the format: every run ever recorded is in it, and the
+    /// rows written before subprocesses were counted still have to read back.
+    #[test]
+    fn a_row_from_before_the_subprocess_column_reads_as_having_spent_none() {
+        assert_eq!(
+            parse("1700000000\t842\trepo sel\n"),
+            vec![record("repo sel", 842)]
+        );
+    }
+
+    /// A command name is the one field that could be mistaken for the column
+    /// ahead of it, and a command named for a number is still a command.
+    #[test]
+    fn a_command_that_looks_like_a_number_is_still_read_as_the_command() {
+        let records = parse("1700000000\t842\t404\n");
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(records[0].command, "404");
+        assert_eq!(records[0].child_millis, 0);
     }
 
     /// The log is every run there has ever been, and a machine that lost power
@@ -435,7 +577,8 @@ mod tests {
             totals["repo sel"],
             Totals {
                 calls: 2,
-                millis: 400
+                millis: 400,
+                child_millis: 0
             }
         );
         assert_eq!(
@@ -552,7 +695,8 @@ mod tests {
             of("repo"),
             Totals {
                 calls: 3,
-                millis: 900
+                millis: 900,
+                child_millis: 0
             },
             "a group is its children"
         );
@@ -560,10 +704,52 @@ mod tests {
             of(""),
             Totals {
                 calls: 4,
-                millis: 940
+                millis: 940,
+                child_millis: 0
             },
             "the root is everything"
         );
+    }
+
+    /// The whole point of the column: a command that is slow because of what
+    /// it shells out to has to be told apart from one that is slow itself.
+    /// The row that is expensive only because of what it shells out to still
+    /// has to be findable: it sinks in the ranking, so the total is what says
+    /// there is something there.
+    #[test]
+    fn a_row_that_is_all_subprocess_keeps_its_total_while_losing_its_place() {
+        let totals = totals(&[
+            child_record("repo ls", 9_000, 8_980),
+            record("repo sel", 40),
+        ]);
+        let rows = rows(&tree(&cli()), &totals);
+        let ranked: Vec<&str> = by_value(&rows).iter().map(|r| r.command.as_str()).collect();
+        assert_eq!(ranked, ["repo sel", "repo ls"]);
+
+        let prompt = improve_prompt(&rows);
+        assert!(
+            prompt.contains("`scriv repo ls` | 1 | 9.0s | 20ms | 9.0s"),
+            "{prompt}"
+        );
+    }
+
+    #[test]
+    fn what_a_run_spent_in_a_subprocess_comes_off_its_own_time() {
+        let totals = totals(&[
+            child_record("repo open", 600, 540),
+            child_record("repo open", 400, 360),
+        ]);
+        let repo_open = totals["repo open"];
+        assert_eq!(repo_open.average(), Some(Duration::from_millis(500)));
+        assert_eq!(repo_open.own_average(), Some(Duration::from_millis(50)));
+    }
+
+    /// Two children waited on at once are each counted in full, so the tally
+    /// can exceed the run. The floor is zero rather than an underflow.
+    #[test]
+    fn a_run_that_waited_on_more_than_it_lasted_owns_none_of_it() {
+        let totals = totals(&[child_record("pr ls", 100, 180)]);
+        assert_eq!(totals["pr ls"].own_average(), Some(Duration::ZERO));
     }
 
     #[test]
@@ -608,18 +794,26 @@ mod tests {
             record("repo sel", 200),
             record("repo sel", 200),
             record("repo sel", 200),
-            record("edit", 10),
+            // Slow, and none of it scriv's: the editor held the terminal.
+            child_record("edit", 3_000, 2_990),
         ]);
         let rows = rows(&tree(&cli()), &totals);
 
         let ranked: Vec<&str> = by_value(&rows).iter().map(|r| r.command.as_str()).collect();
+        // `edit` cost the most wall clock and is last: 2.99 of its 3 seconds
+        // were the editor's, and scriv cannot make those go faster.
         assert_eq!(ranked, ["repo sel", "repo ls", "edit"]);
         // Groups are not rows to improve: `repo` is not a command anyone runs.
         assert!(!ranked.contains(&"repo"), "{ranked:?}");
 
         let prompt = improve_prompt(&rows);
         assert!(
-            prompt.contains("`scriv repo sel` | 5 | 200ms | 1.0s"),
+            prompt.contains("`scriv repo sel` | 5 | 200ms | 200ms | 1.0s"),
+            "{prompt}"
+        );
+        // The row that only looks expensive says so in the column beside it.
+        assert!(
+            prompt.contains("`scriv edit` | 1 | 3.0s | 10ms |"),
             "{prompt}"
         );
         assert!(prompt.contains("CLAUDE.md"), "{prompt}");

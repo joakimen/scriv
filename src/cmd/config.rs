@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::{Bindings, Config, Labels};
 use crate::path::{display_path, expand_home_dir};
-use crate::{Ctx, binding, cmd, files, gh, history, repo, term};
+use crate::{Ctx, binding, cmd, files, gh, history, repo, stats, term};
 
 /// A commented starter config. Settings are grouped by the command that reads
 /// them; users edit it to taste.
@@ -785,6 +785,7 @@ pub(crate) fn on_path(program: &str) -> Option<PathBuf> {
 
 /// The first line of `program --version`, for reporting which one is installed.
 fn version_of(program: &str) -> Option<String> {
+    let _child = stats::in_child();
     let output = Command::new(program)
         .arg("--version")
         .stdin(Stdio::null())

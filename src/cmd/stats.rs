@@ -170,6 +170,9 @@ pub fn improve(ctx: &Ctx, command: &clap::Command, dry_run: bool) -> Result<()> 
 
     ctx.log
         .info(&format!("handing {} rows to {CLAUDE}", rows.len()));
+    // Claude Code takes the terminal and the user works in it, so the session
+    // is their time rather than a subprocess scriv is held up by.
+    let _waiting = stats::interacting();
     let status = std::process::Command::new(CLAUDE)
         .arg(&prompt)
         .status()

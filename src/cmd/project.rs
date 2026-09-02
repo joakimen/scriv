@@ -17,7 +17,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::project::detect::{MANIFESTS, MISE_CONFIGS};
 use crate::project::report::{Outcome, Status};
 use crate::project::{Scan, Step, Toolchain, build, deps as manifests, detect, install, report};
-use crate::{Ctx, Reported, term};
+use crate::{Ctx, Reported, stats, term};
 
 /// For what scriv says about a command rather than what the command said.
 const DIM: u8 = term::SECONDARY;
@@ -284,6 +284,7 @@ fn command(step: &Step, dir: &Path) -> Command {
 }
 
 fn capture(step: &Step, dir: &Path) -> io::Result<Finished> {
+    let _child = stats::in_child();
     let result = command(step, dir).stdin(Stdio::null()).output()?;
 
     Ok(Finished {
@@ -296,6 +297,7 @@ fn capture(step: &Step, dir: &Path) -> io::Result<Finished> {
 /// separate threads so a child that fills one pipe does not block writing to
 /// the other.
 fn stream(step: &Step, dir: &Path, prefix: &str) -> io::Result<Finished> {
+    let _child = stats::in_child();
     let mut child = command(step, dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -368,6 +370,7 @@ fn details(outcomes: &[Outcome]) {
 
 /// Run a build step with the terminal handed to it, and pass its status on.
 fn inherit(step: &Step, dir: &Path) -> Result<()> {
+    let _child = stats::in_child();
     let status = command(step, dir)
         .status()
         .map_err(|error| match error.kind() {

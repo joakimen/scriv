@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use crate::note::{self, Note, Widths};
 use crate::path::expand_home_dir;
 use crate::select::{Preview, SelectItem};
-use crate::{Ctx, cmd, select, term};
+use crate::{Ctx, cmd, select, stats, term};
 
 /// How much of a note is read to find its front matter.
 ///
@@ -771,6 +771,9 @@ fn open_matches(ctx: &Ctx, editor: &[String], matches: &[note::Match]) -> Result
         command.push("copen".into());
     }
 
+    // The editor owns the terminal until the user leaves it, as in
+    // [`crate::cmd::edit::launch`].
+    let _waiting = stats::interacting();
     let status = std::process::Command::new(program)
         .args(&command)
         .status()

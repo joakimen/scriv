@@ -117,10 +117,13 @@ grouped by the role each dependency is given. `build` runs the repository's own
 in turn. The fish integration calls `scriv project deps` `i`.
 
 `scriv stats` counts scriv itself. Every run appends its command and how long it
-took to a log — with the time you spent in a selector taken out, so a list left
-open over lunch is not a slow command — and `stats show` reads it back as a tree
-of every command there is, including the ones you have never run. Nothing but
-the command's name is recorded: no arguments, no paths, no what you picked.
+took to a log — with your own time taken out, whether you spent it in a selector
+or in the editor `scriv edit` opened, so neither left sitting is a slow command
+— and `stats show` reads it back as a tree of every command there is, including
+the ones you have never run. Beside the average sits `own`, the part of it that
+was scriv's own work rather than a subprocess it waited on, so a command that is
+slow because `git` or `gh` is slow says as much. Nothing but the command's name is recorded: no
+arguments, no paths, no what you picked.
 `stats improve` hands the busiest commands to Claude Code to work on, and
 `stats reset` forgets the lot.
 

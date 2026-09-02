@@ -13,6 +13,26 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `stats show` has an `own` column beside the average: how much of a run was
+  scriv's own work, with the subprocesses it waited on — `git`, `gh`, a build
+  tool — taken out. A command that is only slow because of what it shells out to
+  now says so instead of looking like scriv being slow. `stats improve` hands
+  that column on with the rest.
+
+### Changed
+
+- `stats improve` ranks the commands it hands over by the time scriv itself
+  spent, not by the wall clock. A build that waits on cargo and an editor
+  session used to head the list, where there was nothing for scriv to speed up.
+
+### Fixed
+
+- Time spent in the editor `scriv edit` opens is no longer counted as time the
+  command took, as time in a selector already was not. An afternoon in vim used
+  to make `edit` the most expensive command scriv had.
+
 ## v0.17.2
 
 *Released 2026-09-02*
