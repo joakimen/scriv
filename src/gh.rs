@@ -17,6 +17,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::Reported;
+use crate::stats;
 use crate::term;
 
 /// JSON fields requested from `gh pr list`. `body`, `statusCheckRollup` and
@@ -949,6 +950,7 @@ fn fetch(source: &Source, pages: std::ops::RangeInclusive<usize>, headers: bool)
 /// Clone `owner/repo` into `dest`. Output is captured because clones run
 /// concurrently, and returned on failure so the caller can attribute it.
 pub fn clone(name_with_owner: &str, dest: &Path) -> Result<()> {
+    let _child = stats::in_child();
     let output = Command::new("gh")
         .args(["repo", "clone", name_with_owner, &dest.to_string_lossy()])
         .stdin(Stdio::null())
@@ -1011,6 +1013,7 @@ pub fn owners() -> Result<Vec<String>> {
 /// A network round trip, and therefore for `config check` alone — nothing on a
 /// keystroke path may ask this.
 pub fn authenticated() -> bool {
+    let _child = stats::in_child();
     Command::new("gh")
         .args(["auth", "status", "--active"])
         .stdin(Stdio::null())
@@ -1029,6 +1032,7 @@ fn run(args: &[&str]) -> Result<()> {
 /// [`run`], optionally somewhere else. Most `gh` subcommands resolve which
 /// repository they are about from the directory they run in.
 fn run_at(dir: Option<&Path>, args: &[&str]) -> Result<()> {
+    let _child = stats::in_child();
     let mut cmd = Command::new("gh");
     cmd.args(args);
     if let Some(dir) = dir {
@@ -1042,6 +1046,7 @@ fn run_at(dir: Option<&Path>, args: &[&str]) -> Result<()> {
 }
 
 fn capture(args: &[&str]) -> Result<String> {
+    let _child = stats::in_child();
     let output = Command::new("gh")
         .args(args)
         .stdin(Stdio::null())

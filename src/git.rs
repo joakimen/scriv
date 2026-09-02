@@ -17,6 +17,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::Reported;
+use crate::stats;
 
 /// Field separator in the `for-each-ref` format. ASCII unit separator, so
 /// commit subjects containing tabs or pipes cannot split a row.
@@ -555,6 +556,7 @@ fn spawn_error(err: std::io::Error) -> anyhow::Error {
 
 /// Run git with `args`, capturing stdout.
 fn capture(args: &[&str]) -> Result<String> {
+    let _child = stats::in_child();
     let output = Command::new("git")
         .args(args)
         .stdin(Stdio::null())
@@ -577,6 +579,7 @@ fn capture(args: &[&str]) -> Result<String> {
 /// Run git with `args`, letting it write straight to the terminal. A failure is
 /// [`Reported`], since git has already said why.
 fn passthrough(args: &[&str]) -> Result<()> {
+    let _child = stats::in_child();
     let status = Command::new("git")
         .args(args)
         .status()
@@ -600,6 +603,7 @@ fn passthrough_onto_stderr(args: &[&str]) -> Result<()> {
         .as_fd()
         .try_clone_to_owned()
         .context("duplicating stderr")?;
+    let _child = stats::in_child();
     let status = Command::new("git")
         .args(args)
         .stdout(Stdio::from(stderr))
@@ -614,6 +618,7 @@ fn passthrough_onto_stderr(args: &[&str]) -> Result<()> {
 /// Fail early, and with a better message than git's, when the working
 /// directory is not inside a repository.
 pub fn ensure_repo() -> Result<()> {
+    let _child = stats::in_child();
     let inside = Command::new("git")
         .args(["rev-parse", "--is-inside-work-tree"])
         .stdin(Stdio::null())
@@ -639,6 +644,7 @@ pub fn repo_root() -> Option<PathBuf> {
 /// One `rev-parse` answers both questions, so a command that needs the root
 /// does not also spawn git to be told it is in a repository at all.
 pub fn require_repo_root() -> Result<PathBuf> {
+    let _child = stats::in_child();
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .stdin(Stdio::null())
@@ -658,6 +664,7 @@ pub fn require_repo_root() -> Result<PathBuf> {
 /// `HEAD`: there is no branch, and so nothing a pull request could be opened
 /// from. Absence is an answer rather than an error, as in [`repo_root`].
 pub fn current_branch() -> Option<String> {
+    let _child = stats::in_child();
     let output = Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .stdin(Stdio::null())
@@ -745,6 +752,7 @@ pub fn add_worktree(path: &Path, source: &TreeSource) -> Result<()> {
 
 /// Whether git already ignores `path`, by any of the rules it consults.
 fn is_ignored(path: &Path) -> bool {
+    let _child = stats::in_child();
     Command::new("git")
         .args(["check-ignore", "--quiet", "--"])
         .arg(path)

@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `stats show` has an `own` column beside the average: how much of a run was
+  scriv's own work, with the subprocesses it waited on — `git`, `gh`, a build
+  tool, your editor — taken out. A command that is only slow because of what it
+  shells out to now says so instead of looking like scriv being slow.
+  `stats improve` hands that column on with the rest.
+
 ## v0.17.2
 
 *Released 2026-09-02*

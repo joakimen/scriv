@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::proc::{self, Process, Signal};
 use crate::select::{Preview, SelectItem};
-use crate::{Ctx, Reported, select, term};
+use crate::{Ctx, Reported, select, stats, term};
 
 /// The whole process table, as `ps` reported it. One call serves the listing,
 /// the selector rows and every preview pane.
@@ -15,6 +15,7 @@ use crate::{Ctx, Reported, select, term};
 /// Unfiltered, because the entries that must never be *offered* are the ones
 /// [`proc::refuse`] has to recognise when a pid is named on the command line.
 fn table() -> Result<Vec<Process>> {
+    let _child = stats::in_child();
     let output = Command::new("ps")
         .args(proc::PS_ARGS)
         .stdin(Stdio::null())
@@ -59,6 +60,7 @@ fn processes(port: Option<u16>) -> Result<Vec<Process>> {
 /// an answer rather than a failure — hence reading the status only far enough
 /// to tell that apart from `lsof` being absent.
 fn listeners(port: u16) -> Result<Vec<i32>> {
+    let _child = stats::in_child();
     let output = Command::new("lsof")
         .args(proc::lsof_args(port))
         .stdin(Stdio::null())
@@ -200,6 +202,7 @@ fn rows(procs: &[Process]) -> Vec<SelectItem> {
 
 /// Send `signal` to one pid, letting `kill` report its own failures.
 fn send(signal: Signal, pid: i32) -> Result<(), ()> {
+    let _child = stats::in_child();
     let status = Command::new("kill")
         .arg(format!("-{}", signal.name()))
         .arg(pid.to_string())

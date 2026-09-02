@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use crate::note::{self, Note, Widths};
 use crate::path::expand_home_dir;
 use crate::select::{Preview, SelectItem};
-use crate::{Ctx, cmd, select, term};
+use crate::{Ctx, cmd, select, stats, term};
 
 /// How much of a note is read to find its front matter.
 ///
@@ -771,6 +771,7 @@ fn open_matches(ctx: &Ctx, editor: &[String], matches: &[note::Match]) -> Result
         command.push("copen".into());
     }
 
+    let _child = stats::in_child();
     let status = std::process::Command::new(program)
         .args(&command)
         .status()

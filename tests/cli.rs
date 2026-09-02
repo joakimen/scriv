@@ -2523,7 +2523,7 @@ fn every_run_records_itself_under_the_name_clap_matched() {
     let log = std::fs::read_to_string(sandbox.stats_path()).expect("no stats log");
     let commands: Vec<&str> = log
         .lines()
-        .filter_map(|line| line.split('\t').nth(2))
+        .filter_map(|line| line.split('\t').nth(3))
         .collect();
     assert_eq!(commands, ["config path", "config path"], "{log}");
 }
@@ -2544,6 +2544,7 @@ fn show_counts_what_has_run_and_names_what_has_not() {
             .to_string()
     };
     assert!(row("path").contains(" 2 "), "{}", row("path"));
+    assert!(run.stdout.contains("own"), "no own column:\n{}", run.stdout);
     // The whole tree, so the report says what is going unused as well.
     assert!(row("worktree").contains('-'), "{}", row("worktree"));
     assert!(run.stdout.starts_with("command"), "{}", run.stdout);

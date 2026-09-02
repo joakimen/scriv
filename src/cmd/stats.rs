@@ -170,6 +170,7 @@ pub fn improve(ctx: &Ctx, command: &clap::Command, dry_run: bool) -> Result<()> 
 
     ctx.log
         .info(&format!("handing {} rows to {CLAUDE}", rows.len()));
+    let _child = stats::in_child();
     let status = std::process::Command::new(CLAUDE)
         .arg(&prompt)
         .status()

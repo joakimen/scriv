@@ -16,7 +16,7 @@ use anyhow::{Result, anyhow, bail};
 
 use crate::path::{display_path, expand_tilde};
 use crate::select::{Preview, SelectItem, file_preview};
-use crate::{Ctx, Reported, files, select, walk};
+use crate::{Ctx, Reported, files, select, stats, walk};
 
 /// `scriv edit file [FILE]...` — open `paths`, or select interactively when
 /// empty.
@@ -150,6 +150,7 @@ pub(crate) fn launch(ctx: &Ctx, editor: &[String], targets: &[String]) -> Result
     ctx.log
         .info(&format!("opening {} file(s) with {program}", targets.len()));
 
+    let _child = stats::in_child();
     let status = Command::new(program)
         .args(args)
         // `--` first: the walk yields relative paths, so a file named `-c`

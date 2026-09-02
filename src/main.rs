@@ -953,6 +953,10 @@ fn run(cli: Cli, command: &str) -> anyhow::Result<()> {
             .as_millis()
             .try_into()
             .unwrap_or(u64::MAX),
+        child_millis: stats::child_time()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
         command: command.to_string(),
     });
     result
