@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.16.2
+
+*Released 2026-09-02*
+
 ### Fixed
 
 - `scriv config print` and `scriv config check` no longer draw half their output
