@@ -333,6 +333,18 @@ pub fn improve_prompt(rows: &[TreeRow]) -> String {
     prompt
 }
 
+/// The one command whose run is not recorded.
+const RESET: &str = "stats reset";
+
+/// Whether a run is one to record.
+///
+/// Every run but the one that forgets every run: recording that would leave
+/// the log holding the command that had just emptied it, and the count it
+/// reports the next time would be of itself.
+pub fn records(command: &str) -> bool {
+    command != RESET
+}
+
 // --- the clock ----------------------------------------------------------------
 
 /// Nanoseconds this process has spent waiting for the person at the keyboard.
@@ -446,6 +458,16 @@ mod tests {
             ran_for(Duration::from_secs(1), Duration::from_secs(2)),
             Duration::ZERO
         );
+    }
+
+    /// A reset that recorded itself would empty the log and immediately put a
+    /// row back in it — and which of the two won was down to whether the log
+    /// had been opened yet.
+    #[test]
+    fn the_run_that_forgets_every_run_does_not_record_itself() {
+        assert!(!records("stats reset"));
+        assert!(records("stats show"));
+        assert!(records("repo sel"));
     }
 
     #[test]

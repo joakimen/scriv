@@ -871,6 +871,9 @@ enum StatsCmd {
     #[command(visible_alias = "list")]
     Show,
     /// Forget every run recorded so far
+    ///
+    /// The reset is not itself recorded, so what is left is nothing rather than
+    /// the command that did the forgetting.
     Reset {
         /// Do not ask first
         #[arg(short, long)]
@@ -935,6 +938,9 @@ fn run(cli: Cli, command: &str) -> anyhow::Result<()> {
 
     let result = dispatch(&ctx, cli.command);
 
+    if !stats::records(command) {
+        return result;
+    }
     recorder.finish(stats::Record {
         at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

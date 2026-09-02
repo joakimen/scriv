@@ -24,7 +24,8 @@ raised, never by hand.
   to Claude Code to work on, and `stats reset` forgets the lot.
 
   Nothing but the command's name is recorded: no arguments, no paths, no what
-  you picked. The log is `$XDG_DATA_HOME/scriv/stats`.
+  you picked, and `stats reset` does not record itself. The log is
+  `$XDG_DATA_HOME/scriv/stats`.
 
 ### Changed
 

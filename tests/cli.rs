@@ -2579,8 +2579,14 @@ fn reset_forgets_the_runs_and_says_how_many() {
 
     let run = sandbox.run(&["stats", "reset", "--yes"]);
     run.ok();
-    assert!(run.stdout.contains("forgot"), "{}", run.stdout);
-    assert!(!sandbox.stats_path().exists(), "{}", run.stdout);
+    // One run: the reset that was refused is a reset, and no reset records
+    // itself.
+    assert!(run.stdout.contains("forgot 1"), "{}", run.stdout);
+
+    // What is left is nothing at all, rather than the command that did the
+    // forgetting.
+    let left = std::fs::read_to_string(sandbox.stats_path()).unwrap_or_default();
+    assert_eq!(left, "", "the log kept a row");
 
     // And again, with nothing to forget.
     let again = sandbox.run(&["stats", "reset", "--yes"]);
