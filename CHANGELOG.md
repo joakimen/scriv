@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.17.0
+
+*Released 2026-09-02*
+
 ### Added
 
 - `scriv stats` counts scriv itself. Every run appends its command and how long
