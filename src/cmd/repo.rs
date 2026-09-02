@@ -97,10 +97,23 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
                 RepoDisplay::Tilde => display_path(&abs, ctx.home_str(), false),
                 RepoDisplay::Full => abs.clone(),
             };
-            let row = format!("{label:<width$}  {shown}", label = repo.label);
-            let item = SelectItem::new(row, abs.clone()).preview(select::checkout_preview(&abs));
-            match colors.get(repo.label.as_str()) {
-                Some(&color) => item.color(color),
+            // The label is a column, not something anyone searches by: in the
+            // prefix it is drawn and not matched, so a query only ever reaches
+            // the repository itself.
+            let label = format!("{label:<width$}  ", label = repo.label);
+            let color = colors.get(repo.label.as_str()).copied();
+            let tints = color.map_or_else(Vec::new, |color| {
+                vec![Tint {
+                    range: 0..label.chars().count(),
+                    color,
+                }]
+            });
+
+            let item = SelectItem::new(shown, abs.clone())
+                .prefix(label, tints)
+                .preview(select::checkout_preview(&abs));
+            match color {
+                Some(color) => item.color(color),
                 None => item,
             }
         })
@@ -285,9 +298,9 @@ struct Widths {
 }
 
 impl Widths {
-    fn of(repos: &[Repo]) -> Self {
+    fn of<'a>(repos: impl Iterator<Item = &'a Repo> + Clone) -> Self {
         // Character counts, not bytes: a column is padded by characters.
-        let widest = |f: fn(&Repo) -> usize| repos.iter().map(f).max().unwrap_or(0);
+        let widest = |f: fn(&Repo) -> usize| repos.clone().map(f).max().unwrap_or(0);
         Self {
             name: widest(|r| r.name().chars().count()),
             tags: widest(|r| tag_column(r).chars().count()),
@@ -309,74 +322,140 @@ fn push_column(row: &mut String, text: &str, width: usize) {
     }
 }
 
-/// One row of the clone selector, and the columns of it that carry a colour.
+/// One row of the clone selector, split into what a query may match and what it
+/// may not.
 ///
-/// The two are built together because a tint is a character range into the row,
-/// and counting those ranges out a second time is how they drift.
+/// The three are built together because a tint is a character range into the
+/// part it belongs to, and counting those ranges out a second time is how they
+/// drift.
 ///
 /// Nothing tints the row as a whole. A line drawn in one colour reads as a
 /// statement about the repository, and neither "already on disk" nor "private"
 /// is one — the first is about this machine and the second about one column, so
 /// each colours only the thing it is true of.
-fn clone_row(repo: &Repo, present: bool, widths: &Widths) -> (String, Vec<Tint>) {
-    let mut row = String::new();
-    let mut tints = Vec::new();
+struct CloneRow {
+    /// The tick for a repository already on disk, ahead of the name.
+    mark: String,
+    mark_tints: Vec<Tint>,
+    /// The only part a query is matched against.
+    name: String,
+    /// The tags, the date it was last pushed to, and the description.
+    rest: String,
+    rest_tints: Vec<Tint>,
+}
 
-    row.push_str(if present { PRESENT_MARK } else { " " });
-    if present {
-        tints.push(Tint {
-            range: 0..row.chars().count(),
+fn clone_row(repo: &Repo, present: bool, widths: &Widths) -> CloneRow {
+    let mut mark = String::from(if present { PRESENT_MARK } else { " " });
+    let mark_tints = if present {
+        vec![Tint {
+            range: 0..mark.chars().count(),
             color: PRESENT_COLOR,
-        });
-    }
-    row.push(' ');
+        }]
+    } else {
+        Vec::new()
+    };
+    mark.push(' ');
 
-    push_column(&mut row, repo.name(), widths.name);
-    row.push_str("  ");
+    let mut name = String::new();
+    push_column(&mut name, repo.name(), widths.name);
 
+    let mut rest = String::from("  ");
+    let mut rest_tints = Vec::new();
     let visibility = repo.visibility();
-    let tags_at = row.chars().count();
+    let tags_at = rest.chars().count();
     for (index, tag) in repo.tags().iter().enumerate() {
         if index > 0 {
-            row.push(' ');
+            rest.push(' ');
         }
-        let at = row.chars().count();
-        row.push_str(tag);
+        let at = rest.chars().count();
+        rest.push_str(tag);
         if let Some(color) = visibility.color()
             && *tag == visibility.tag()
         {
-            tints.push(Tint {
-                range: at..row.chars().count(),
+            rest_tints.push(Tint {
+                range: at..rest.chars().count(),
                 color,
             });
         }
     }
-    for _ in (row.chars().count() - tags_at)..widths.tags {
-        row.push(' ');
+    for _ in (rest.chars().count() - tags_at)..widths.tags {
+        rest.push(' ');
     }
-    row.push_str("  ");
+    rest.push_str("  ");
 
-    push_column(&mut row, repo.pushed_date(), widths.pushed);
-    row.push_str("  ");
-    row.push_str(repo.description().trim());
+    push_column(&mut rest, repo.pushed_date(), widths.pushed);
+    rest.push_str("  ");
+    rest.push_str(repo.description().trim());
 
-    (row.trim_end().to_string(), tints)
+    CloneRow {
+        mark,
+        mark_tints,
+        name,
+        rest: rest.trim_end().to_string(),
+        rest_tints,
+    }
 }
 
-/// Build the repository rows, marking the ones already on disk. They stay
-/// listed rather than filtered out, since their absence would read as "this org
-/// does not have that repo".
+/// Which of an owner's repositories the clone selector is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloneView {
+    /// Everything the owner has, cloned or not. What it opens on: a repository
+    /// missing from the list would read as "this org does not have that repo".
+    All,
+    /// Only the ones not already under the root — what there is left to clone.
+    Missing,
+}
+
+impl CloneView {
+    /// The view at `index` in [`CLONE_VIEWS`].
+    fn of(index: usize) -> Self {
+        match index {
+            1 => Self::Missing,
+            _ => Self::All,
+        }
+    }
+
+    /// Whether a repository belongs in this view. `present` is whether it is
+    /// already on disk.
+    fn shows(self, present: bool) -> bool {
+        match self {
+            Self::All => true,
+            Self::Missing => !present,
+        }
+    }
+}
+
+/// The keys the clone selector offers its views on, in the order the header
+/// lists them. `ctrl-a` displaces skim's own beginning-of-line, which in a
+/// one-line query is worth less than reaching the whole list again.
+const CLONE_VIEWS: &[select::Mode] = &[
+    select::Mode::new("ctrl-a", "all"),
+    select::Mode::new("ctrl-t", "missing"),
+];
+
+/// Build the repository rows for `view`, marking the ones already on disk.
 ///
-/// No preview pane: everything `gh repo list` returned that is worth seeing is
-/// now a column, and a pane that repeats the row is a pane nobody reads.
-fn repo_items(repos: &[Repo], root: &Path) -> Vec<SelectItem> {
-    let widths = Widths::of(repos);
-    repos
+/// Only the name is matched against: the tags, the date and the description sit
+/// in the row's suffix, so a query cannot find a repository by words nobody
+/// searches by — and cannot scroll the name off the row to show where it hit.
+///
+/// No preview pane: everything the listing returned that is worth seeing is
+/// already a column, and a pane that repeats the row is a pane nobody reads.
+fn repo_items(repos: &[Repo], root: &Path, view: CloneView) -> Vec<SelectItem> {
+    let shown: Vec<(&Repo, bool)> = repos
         .iter()
-        .map(|repo| {
-            let present = destination(root, repo.owner(), repo.name()).exists();
-            let (row, tints) = clone_row(repo, present, &widths);
-            SelectItem::new(row, repo.name_with_owner().to_string()).tints(tints)
+        .map(|repo| (repo, destination(root, repo.owner(), repo.name()).exists()))
+        .filter(|(_, present)| view.shows(*present))
+        .collect();
+
+    let widths = Widths::of(shown.iter().map(|(repo, _)| *repo));
+    shown
+        .iter()
+        .map(|(repo, present)| {
+            let row = clone_row(repo, *present, &widths);
+            SelectItem::new(row.name, repo.name_with_owner().to_string())
+                .prefix(row.mark, row.mark_tints)
+                .suffix(row.rest, row.rest_tints)
         })
         .collect()
 }
@@ -452,15 +531,17 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize, archived: bool) -> R
     check_slug(&owner)?;
 
     let repos = {
-        // The listing is several round trips to GitHub, so it says which one it
-        // is on rather than leaving the terminal blank for a second or two.
-        let spinner = term::spinner(&format!("listing {owner}"), ctx.color());
-        gh::list_repos(&owner, limit, archived, &|progress| {
-            spinner.say(format!(
-                "listing {owner} — page {} of {}",
-                progress.done, progress.total
-            ));
-        })?
+        // The pages are fetched together and arrive in whatever order they
+        // finish, so there is no honest count to report — only that the wait is
+        // this owner's listing.
+        let _spinner = term::spinner(
+            &format!(
+                "loading repositories for {}",
+                term::bold(&owner, ctx.color())
+            ),
+            ctx.color(),
+        );
+        gh::list_repos(&owner, limit, archived)?
     };
     ctx.log
         .info(&format!("{} repositories for {owner}", repos.len()));
@@ -473,11 +554,17 @@ pub fn clone(ctx: &Ctx, target: Option<&str>, limit: usize, archived: bool) -> R
         );
     }
 
-    let chosen = select::select_many(
-        repo_items(&repos, &root),
-        "Repositories to clone (tab to select several)",
-        &ctx.config.selector,
-    )?;
+    let chosen = {
+        let listed = repos.clone();
+        let here = root.clone();
+        select::select_many_viewing(
+            repo_items(&repos, &root, CloneView::All),
+            "Repositories to clone (tab to select several)",
+            &ctx.config.selector,
+            CLONE_VIEWS,
+            Box::new(move |view| repo_items(&listed, &here, CloneView::of(view))),
+        )?
+    };
     if chosen.is_empty() {
         return Ok(());
     }
@@ -651,17 +738,18 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("acme/billing-api")).unwrap();
 
-        let items = repo_items(&repos(), root);
+        let items = repo_items(&repos(), root, CloneView::All);
         assert_eq!(items.len(), 2, "a present repo was dropped from the list");
+        let mark = |item: &SelectItem| item.prefix.clone().unwrap_or_default();
         assert!(
-            items[0].label.starts_with(PRESENT_MARK),
-            "{}",
-            items[0].label
+            mark(&items[0]).starts_with(PRESENT_MARK),
+            "{:?}",
+            mark(&items[0])
         );
         assert!(
-            !items[1].label.starts_with(PRESENT_MARK),
-            "{}",
-            items[1].label
+            !mark(&items[1]).starts_with(PRESENT_MARK),
+            "{:?}",
+            mark(&items[1])
         );
         // The value is still the slug, so selecting it is well-defined.
         assert_eq!(items[0].value(), "acme/billing-api");
@@ -672,62 +760,72 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("acme/billing-api")).unwrap();
-        for item in repo_items(&repos(), root) {
+        for item in repo_items(&repos(), root, CloneView::All) {
             assert_eq!(item.color, None, "{} is drawn in one colour", item.label);
         }
     }
 
     #[test]
     fn the_mark_on_an_existing_clone_is_green_and_only_the_mark() {
-        let widths = Widths::of(&repos());
-        let (row, tints) = clone_row(&repos()[0], true, &widths);
-        assert_eq!(tint_of(&row, &tints, PRESENT_COLOR).as_deref(), Some("✓"));
+        let widths = Widths::of(repos().iter());
+        let row = clone_row(&repos()[0], true, &widths);
+        assert_eq!(
+            tint_of(&row.mark, &row.mark_tints, PRESENT_COLOR).as_deref(),
+            Some("✓")
+        );
         assert_eq!(PRESENT_COLOR, 2, "the mark is not green");
     }
 
     #[test]
     fn an_uncloned_repository_carries_no_mark() {
-        let widths = Widths::of(&repos());
-        let (row, tints) = clone_row(&repos()[0], false, &widths);
-        assert!(!row.starts_with(PRESENT_MARK), "{row}");
-        assert_eq!(tint_of(&row, &tints, PRESENT_COLOR), None);
+        let widths = Widths::of(repos().iter());
+        let row = clone_row(&repos()[0], false, &widths);
+        assert!(!row.mark.contains(PRESENT_MARK), "{:?}", row.mark);
+        assert!(row.mark_tints.is_empty());
     }
 
     #[test]
     fn only_the_visibility_word_takes_the_visibility_colour() {
-        let widths = Widths::of(&repos());
-        let (row, tints) = clone_row(&repos()[0], false, &widths);
+        let widths = Widths::of(repos().iter());
+        let row = clone_row(&repos()[0], false, &widths);
         let color = gh::Visibility::Private.color().unwrap();
-        assert_eq!(tint_of(&row, &tints, color).as_deref(), Some("private"));
+        assert_eq!(
+            tint_of(&row.rest, &row.rest_tints, color).as_deref(),
+            Some("private")
+        );
     }
 
     /// `archived` and `fork` share the tags column with the visibility word and
     /// say nothing about who can see the repository.
     #[test]
     fn the_other_tags_are_left_uncoloured() {
-        let widths = Widths::of(&repos());
-        let (row, tints) = clone_row(&repos()[1], false, &widths);
-        assert!(row.contains("archived fork"), "{row}");
-        assert!(tints.is_empty(), "a public repository is left bare: {row}");
+        let widths = Widths::of(repos().iter());
+        let row = clone_row(&repos()[1], false, &widths);
+        assert!(row.rest.contains("archived fork"), "{:?}", row.rest);
+        assert!(
+            row.rest_tints.is_empty(),
+            "a public repository is left bare: {:?}",
+            row.rest
+        );
     }
 
     #[test]
     fn the_row_carries_the_last_push_date_before_the_description() {
-        let widths = Widths::of(&repos());
-        let (row, _) = clone_row(&repos()[0], false, &widths);
-        let pushed = row.find("2026-07-27").expect(&row);
-        let description = row.find("Meters usage").expect(&row);
-        assert!(pushed < description, "{row}");
+        let widths = Widths::of(repos().iter());
+        let row = clone_row(&repos()[0], false, &widths);
+        let pushed = row.rest.find("2026-07-27").expect(&row.rest);
+        let description = row.rest.find("Meters usage").expect(&row.rest);
+        assert!(pushed < description, "{:?}", row.rest);
     }
 
     /// Every column is padded to the width of the whole list, so a row reads
     /// down the screen rather than only across.
     #[test]
     fn the_columns_line_up() {
-        let widths = Widths::of(&repos());
+        let widths = Widths::of(repos().iter());
         let rows: Vec<String> = repos()
             .iter()
-            .map(|repo| clone_row(repo, false, &widths).0)
+            .map(|repo| clone_row(repo, false, &widths).rest)
             .collect();
         let at = |row: &str, needle: &str| row.find(needle).map(|i| row[..i].chars().count());
         assert_eq!(
@@ -740,7 +838,7 @@ mod tests {
     #[test]
     fn nothing_previews_a_repository() {
         let tmp = tempfile::TempDir::new().unwrap();
-        for item in repo_items(&repos(), tmp.path()) {
+        for item in repo_items(&repos(), tmp.path(), CloneView::All) {
             assert!(item.preview.is_none(), "{} opens a pane", item.label);
         }
     }

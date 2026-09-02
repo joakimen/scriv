@@ -341,6 +341,10 @@ enum RepoCmd {
     /// and the date it was last pushed to. Repositories you already have are
     /// marked with a green tick and skipped rather than re-cloned. Archived
     /// repositories are left out unless you ask for them.
+    ///
+    /// What you type is matched against the repository name alone, never the
+    /// columns beside it. `ctrl-t` narrows the list to what you have not cloned
+    /// yet and `ctrl-a` puts it back, as the selector's own header says.
     Clone {
         /// `owner` to select from, or `owner/repo` to clone directly
         #[arg(value_name = "OWNER[/REPO]")]

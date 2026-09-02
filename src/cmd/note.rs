@@ -245,7 +245,7 @@ fn items(ctx: &Ctx, notes: &[Note]) -> Vec<SelectItem> {
         .iter()
         .map(|note| {
             let item = SelectItem::new(note::row(note), note.path.to_string_lossy().into_owned())
-                .prefix(note::prefix(note, offset))
+                .prefix(note::prefix(note, offset), Vec::new())
                 .preview(Preview::File);
             match note::row_color(note, &cfg) {
                 Some(color) => item.color(color),

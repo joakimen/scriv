@@ -19,6 +19,23 @@ raised, never by hand.
 
 ### Added
 
+- `ctrl-t` in the `repo clone` selector shows only the repositories you have not
+  cloned yet, and `ctrl-a` puts the whole list back. The header says which of
+  the two is in force.
+
+### Fixed
+
+- The `repo clone` and `repo sel` selectors match what you type against the
+  repository alone. A query used to reach the description, the tags and the
+  owner label as well, so a word in a description matched a row it had nothing
+  to do with — and the row was then scrolled sideways to show where it hit,
+  pushing the repository's own name off the screen.
+- `repo clone` says `loading repositories for <owner>` while it waits. It used
+  to count pages off as they arrived; they are fetched together and arrive in
+  whatever order they finish, so the count went up and down and read as a bug.
+
+### Added
+
 - `scriv stats` counts scriv itself. Every run appends its command and how long
   it took to a log, and `stats show` reads that back as a tree of every command
   there is — with how often you have run each one and what a run of it costs —

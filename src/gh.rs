@@ -770,15 +770,6 @@ impl Source {
 /// page, empty on the rest — and the body.
 type Page = Result<(String, String)>;
 
-/// How far a listing has got, for a caller drawing progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Progress {
-    /// Pages fetched so far, including this one.
-    pub done: usize,
-    /// Pages there are to fetch.
-    pub total: usize,
-}
-
 /// The last page of a listing, read from the `Link` header GitHub sends with
 /// the first — `<…page=4>; rel="last"`. One page when there is no such link,
 /// which is what a listing that fits in one says.
@@ -849,25 +840,18 @@ fn person_or_me(owner: &str) -> Source {
 
 /// Every repository belonging to `owner`, archived ones only when `archived`,
 /// and at most `limit` of them.
-///
-/// `on_page` is called as each page arrives, from whichever thread fetched it.
-pub fn list_repos(
-    owner: &str,
-    limit: usize,
-    archived: bool,
-    on_page: &(dyn Fn(Progress) + Sync),
-) -> Result<Vec<Repo>> {
+pub fn list_repos(owner: &str, limit: usize, archived: bool) -> Result<Vec<Repo>> {
     // Archived rows are dropped after the fact — GitHub's listing has no filter
     // for them — so the cap the limit imposes is on pages rather than on rows.
     let cap = limit.div_ceil(PAGE_SIZE).max(1);
     let speculative = cap.min(SPECULATIVE_PAGES);
 
     let org = Source::Org(owner.to_string());
-    let (source, mut bodies, last) = match first_pages(&org, speculative, on_page) {
+    let (source, mut bodies, last) = match first_pages(&org, speculative) {
         Ok((bodies, last)) => (org, bodies, last),
         Err(err) if is_not_found(&err) => {
             let source = person_or_me(owner);
-            let (bodies, last) = first_pages(&source, speculative, on_page)?;
+            let (bodies, last) = first_pages(&source, speculative)?;
             (source, bodies, last)
         }
         Err(err) => return Err(err),
@@ -875,7 +859,7 @@ pub fn list_repos(
 
     let wanted = last.min(cap);
     if wanted > speculative {
-        bodies.extend(fetch_pages(&source, speculative + 1..=wanted, on_page)?);
+        bodies.extend(fetch_pages(&source, speculative + 1..=wanted)?);
     }
 
     let mut repos = Vec::new();
@@ -896,12 +880,8 @@ pub fn list_repos(
 /// An error on the first page is the listing's error — there is no such owner,
 /// or no way to reach GitHub — and is returned rather than joined with the
 /// others, since it is the one the caller can act on.
-fn first_pages(
-    source: &Source,
-    pages: usize,
-    on_page: &(dyn Fn(Progress) + Sync),
-) -> Result<(Vec<String>, usize)> {
-    let mut fetched = fetch(source, 1..=pages, true, on_page);
+fn first_pages(source: &Source, pages: usize) -> Result<(Vec<String>, usize)> {
+    let mut fetched = fetch(source, 1..=pages, true);
     let first = fetched.remove(0)?;
     let last = last_page(&first.0);
 
@@ -913,12 +893,8 @@ fn first_pages(
 }
 
 /// Bodies of `pages`, in page order.
-fn fetch_pages(
-    source: &Source,
-    pages: std::ops::RangeInclusive<usize>,
-    on_page: &(dyn Fn(Progress) + Sync),
-) -> Result<Vec<String>> {
-    fetch(source, pages, false, on_page)
+fn fetch_pages(source: &Source, pages: std::ops::RangeInclusive<usize>) -> Result<Vec<String>> {
+    fetch(source, pages, false)
         .into_iter()
         .map(|page| page.map(|(_, body)| body))
         .collect()
@@ -927,12 +903,7 @@ fn fetch_pages(
 /// Fetch `pages` of `source`, [`PAGE_WORKERS`] at a time, and hand them back in
 /// page order. `headers` asks for the response headers as well, which only the
 /// first page's are read from.
-fn fetch(
-    source: &Source,
-    pages: std::ops::RangeInclusive<usize>,
-    headers: bool,
-    on_page: &(dyn Fn(Progress) + Sync),
-) -> Vec<Page> {
+fn fetch(source: &Source, pages: std::ops::RangeInclusive<usize>, headers: bool) -> Vec<Page> {
     let (first, last) = (*pages.start(), *pages.end());
     if first > last {
         return Vec::new();
@@ -940,7 +911,6 @@ fn fetch(
     let count = last - first + 1;
 
     let next = AtomicUsize::new(first);
-    let done = AtomicUsize::new(0);
     let fetched: Mutex<Vec<Option<Page>>> = Mutex::new((0..count).map(|_| None).collect());
 
     std::thread::scope(|scope| {
@@ -963,10 +933,6 @@ fn fetch(
                     if let Ok(mut fetched) = fetched.lock() {
                         fetched[page - first] = Some(result);
                     }
-                    on_page(Progress {
-                        done: done.fetch_add(1, Ordering::Relaxed) + 1,
-                        total: count,
-                    });
                 }
             });
         }
