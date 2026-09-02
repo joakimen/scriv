@@ -161,7 +161,7 @@ fn help_lists_every_top_level_command() {
     let run = sandbox.run(&["--help"]);
     run.ok();
     for command in [
-        "repo", "file", "edit", "branch", "worktree", "pr", "proc", "history", "project", "config",
+        "repo", "file", "edit", "branch", "worktree", "pr", "ps", "history", "project", "config",
         "init",
     ] {
         assert!(
@@ -218,7 +218,7 @@ fn help_names_the_aliases_the_binary_accepts() {
     let sandbox = Sandbox::new();
     let top = sandbox.run(&["--help"]);
     top.ok();
-    for alias in ["r", "f", "e", "b", "w", "pc", "h", "c"] {
+    for alias in ["r", "f", "e", "b", "w", "h", "c"] {
         assert!(
             top.stdout.contains(&format!("[aliases: {alias}]")),
             "`{alias}` is accepted but unmentioned:\n{}",
@@ -261,8 +261,8 @@ fn the_documented_abbreviations_resolve() {
         &["f", "--help"][..],
         &["h", "--help"][..],
         &["n", "--help"][..],
-        &["pc", "--help"][..],
         &["pj", "--help"][..],
+        &["ps", "--help"][..],
         &["branch", "co", "--help"][..],
         &["repo", "list", "--help"][..],
     ] {
@@ -358,7 +358,7 @@ fn pr_outside_a_repository_says_so_before_gh_does() {
 fn every_registry_exposes_sel() {
     let sandbox = Sandbox::new();
     for group in [
-        "repo", "file", "note", "branch", "worktree", "pr", "proc", "history",
+        "repo", "file", "note", "branch", "worktree", "pr", "ps", "history",
     ] {
         sandbox.run(&[group, "sel", "--help"]).ok();
     }
@@ -1268,9 +1268,9 @@ fn color_takes_only_the_three_conventional_values() {
 // --- processes --------------------------------------------------------------
 
 #[test]
-fn proc_ls_leads_every_row_with_a_pid() {
+fn ps_ls_leads_every_row_with_a_pid() {
     let sandbox = Sandbox::new();
-    let run = sandbox.run(&["proc", "ls"]);
+    let run = sandbox.run(&["ps", "ls"]);
     run.ok();
     let lines = run.lines();
     assert!(!lines.is_empty(), "listed no processes at all");
@@ -1283,9 +1283,9 @@ fn proc_ls_leads_every_row_with_a_pid() {
 }
 
 #[test]
-fn proc_ls_offers_neither_scriv_nor_the_process_that_ran_it() {
+fn ps_ls_offers_neither_scriv_nor_the_process_that_ran_it() {
     let sandbox = Sandbox::new();
-    let run = sandbox.run(&["proc", "ls"]);
+    let run = sandbox.run(&["ps", "ls"]);
     run.ok();
     let own = std::process::id().to_string();
     for line in run.lines() {
@@ -1301,7 +1301,7 @@ fn proc_ls_offers_neither_scriv_nor_the_process_that_ran_it() {
 fn a_port_nothing_holds_says_so_rather_than_listing_everything() {
     let sandbox = Sandbox::new();
     for verb in [&["ls"][..], &["sel"][..], &["kill"][..]] {
-        let mut args = vec!["proc"];
+        let mut args = vec!["ps"];
         args.extend_from_slice(verb);
         args.extend_from_slice(&["--port", "0"]);
         let run = sandbox.run(&args);
@@ -1323,15 +1323,15 @@ fn a_port_nothing_holds_says_so_rather_than_listing_everything() {
 #[test]
 fn a_port_has_to_be_one() {
     let sandbox = Sandbox::new();
-    sandbox.run(&["proc", "ls", "--port", "not-a-port"]).code(2);
-    sandbox.run(&["proc", "ls", "--port", "70000"]).code(2);
+    sandbox.run(&["ps", "ls", "--port", "not-a-port"]).code(2);
+    sandbox.run(&["ps", "ls", "--port", "70000"]).code(2);
 }
 
 #[test]
-fn proc_ls_status_adds_columns_ahead_of_the_command() {
+fn ps_ls_status_adds_columns_ahead_of_the_command() {
     let sandbox = Sandbox::new();
-    let plain = sandbox.run(&["proc", "ls"]);
-    let status = sandbox.run(&["proc", "ls", "--status"]);
+    let plain = sandbox.run(&["ps", "ls"]);
+    let status = sandbox.run(&["ps", "ls", "--status"]);
     plain.ok();
     status.ok();
     let widest_plain = plain.lines().iter().map(|l| l.len()).max().unwrap_or(0);
@@ -1344,20 +1344,20 @@ fn proc_ls_status_adds_columns_ahead_of_the_command() {
 }
 
 #[test]
-fn proc_ls_status_is_pipe_safe_by_default() {
+fn ps_ls_status_is_pipe_safe_by_default() {
     let sandbox = Sandbox::new();
-    let run = sandbox.run(&["proc", "ls", "--status"]);
+    let run = sandbox.run(&["ps", "ls", "--status"]);
     run.ok();
     assert!(!run.stdout.contains('\x1b'), "coloured a pipe");
-    let forced = sandbox.run(&["--color", "always", "proc", "ls", "--status"]);
+    let forced = sandbox.run(&["--color", "always", "ps", "ls", "--status"]);
     forced.ok();
     assert!(forced.stdout.contains('\x1b'), "--color always did nothing");
 }
 
 #[test]
-fn proc_kill_refuses_an_unknown_signal_before_selecting() {
+fn ps_kill_refuses_an_unknown_signal_before_selecting() {
     let sandbox = Sandbox::new();
-    let run = sandbox.run(&["proc", "kill", "--signal", "HUPP"]);
+    let run = sandbox.run(&["ps", "kill", "--signal", "HUPP"]);
     run.code(1);
     assert!(run.stderr.contains("unknown signal"), "{}", run.stderr);
     assert!(run.stderr.contains("known signals are"), "{}", run.stderr);
@@ -1366,10 +1366,10 @@ fn proc_kill_refuses_an_unknown_signal_before_selecting() {
 /// To `kill`, `0` and a negative number are process *groups*. Run for real,
 /// with a signal that would work, so the refusal is what the test proves.
 #[test]
-fn proc_kill_refuses_a_pid_that_is_really_a_process_group() {
+fn ps_kill_refuses_a_pid_that_is_really_a_process_group() {
     let sandbox = Sandbox::new();
     for pid in ["0", "-1"] {
-        let run = sandbox.run(&["proc", "kill", "--signal", "CONT", "--", pid]);
+        let run = sandbox.run(&["ps", "kill", "--signal", "CONT", "--", pid]);
         run.code(1);
         assert!(
             run.stderr.contains("refusing to signal"),
@@ -1381,10 +1381,10 @@ fn proc_kill_refuses_a_pid_that_is_really_a_process_group() {
 }
 
 #[test]
-fn proc_kill_still_accepts_an_ordinary_pid() {
+fn ps_kill_still_accepts_an_ordinary_pid() {
     let sandbox = Sandbox::new();
     // What matters is that scriv got as far as asking `kill`.
-    let run = sandbox.run(&["proc", "kill", "--signal", "CONT", "2147483646"]);
+    let run = sandbox.run(&["ps", "kill", "--signal", "CONT", "2147483646"]);
     assert!(
         !run.stderr.contains("refusing to signal"),
         "an ordinary pid was refused: {}",
@@ -1393,17 +1393,17 @@ fn proc_kill_still_accepts_an_ordinary_pid() {
 }
 
 #[test]
-fn proc_kill_will_not_take_a_signal_and_force_at_once() {
+fn ps_kill_will_not_take_a_signal_and_force_at_once() {
     let sandbox = Sandbox::new();
     sandbox
-        .run(&["proc", "kill", "--signal", "TERM", "--force"])
+        .run(&["ps", "kill", "--signal", "TERM", "--force"])
         .code(2);
 }
 
 /// Uses a child of the test's own making, so nothing on the machine is at
 /// risk.
 #[test]
-fn proc_kill_signals_the_pid_it_is_given() {
+fn ps_kill_signals_the_pid_it_is_given() {
     let sandbox = Sandbox::new();
     let mut child = Command::new("sleep")
         .arg("60")
@@ -1411,7 +1411,7 @@ fn proc_kill_signals_the_pid_it_is_given() {
         .expect("spawning a process to kill");
     let pid = child.id().to_string();
 
-    let run = sandbox.run(&["proc", "kill", &pid]);
+    let run = sandbox.run(&["ps", "kill", &pid]);
     run.ok();
     assert!(
         run.stdout.contains("sent TERM to"),
@@ -1427,7 +1427,7 @@ fn proc_kill_signals_the_pid_it_is_given() {
 }
 
 #[test]
-fn proc_kill_force_sends_kill() {
+fn ps_kill_force_sends_kill() {
     let sandbox = Sandbox::new();
     let mut child = Command::new("sleep")
         .arg("60")
@@ -1435,20 +1435,20 @@ fn proc_kill_force_sends_kill() {
         .expect("spawning a process to kill");
     let pid = child.id().to_string();
 
-    let run = sandbox.run(&["proc", "kill", "--force", &pid]);
+    let run = sandbox.run(&["ps", "kill", "--force", &pid]);
     run.ok();
     assert!(run.stdout.contains("sent KILL to"), "{}", run.stdout);
     child.wait().expect("waiting for the killed process");
 }
 
 #[test]
-fn proc_kill_passes_a_failure_through() {
+fn ps_kill_passes_a_failure_through() {
     let sandbox = Sandbox::new();
     let mut child = Command::new("sleep").arg("0").spawn().expect("spawning");
     let pid = child.id().to_string();
     child.wait().expect("reaping");
 
-    let run = sandbox.run(&["proc", "kill", &pid]);
+    let run = sandbox.run(&["ps", "kill", &pid]);
     assert_ne!(run.code, Some(0), "signalled a process that had exited");
     assert!(
         !run.stderr.contains("error: "),

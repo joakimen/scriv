@@ -1,6 +1,6 @@
 //! Running processes: parsing `ps` output, ordering it, and rendering rows.
 //!
-//! No I/O — [`crate::cmd::proc`] runs `ps` and hands the text here. `ps` is
+//! No I/O — [`crate::cmd::ps`] runs `ps` and hands the text here. `ps` is
 //! spawned rather than the process table read directly because every supported
 //! platform ships it.
 
@@ -93,7 +93,7 @@ pub fn ancestry(processes: &[Process], pid: i32) -> HashSet<i32> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
     /// `0` or negative. To `kill(2)` these are process *groups*, not
-    /// processes: `scriv proc kill -- -1` would end the login session.
+    /// processes: `scriv ps kill -- -1` would end the login session.
     NotAProcess,
     /// scriv itself, or something that spawned it — the chain that runs up
     /// through the shell to the terminal emulator.
@@ -189,7 +189,7 @@ pub fn with_pids(procs: &[Process], pids: &[i32]) -> Vec<Process> {
 }
 
 /// A plain listing row: the pid and the command, one space apart, so
-/// `scriv proc ls | grep node | cut -d' ' -f1` reaches the pid.
+/// `scriv ps ls | grep node | cut -d' ' -f1` reaches the pid.
 pub fn plain_row(p: &Process) -> String {
     format!("{} {}", p.pid, p.command)
 }
@@ -250,7 +250,7 @@ pub fn preview(p: &Process) -> String {
     )
 }
 
-/// A signal `scriv proc kill` can send, named as `kill` names it. A closed set,
+/// A signal `scriv ps kill` can send, named as `kill` names it. A closed set,
 /// so an unusable signal is rejected before the selector opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signal(&'static str);

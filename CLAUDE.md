@@ -176,8 +176,8 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   thing rather than as the colour each command was written in.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
   `SCRIV_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
-- **`repo`/`file`/`branch`/`worktree`/`pr`/`history` are registries; `edit` and
-  `project` are not.** A registry is a set, with `ls`/`sel` and verbs over it.
+- **`repo`/`file`/`branch`/`worktree`/`pr`/`ps`/`history` are registries; `edit`
+  and `project` are not.** A registry is a set, with `ls`/`sel` and verbs over it.
   `edit file`/`edit dir` name what is looked for below `$PWD` and `project`
   acts on `$PWD` itself, so none of them has an `ls` — do not add one. `repo
   open` is the sole exception, and only to skip a question it can already
@@ -185,7 +185,8 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
 - **A verb is abbreviated in its own name, not an alias beside it.** `ls`, `sel`
   and `rm` get no long form (`list`, `co` and `switch` predate the rule). Groups
   take one letter — `r`, `f`, `b`, `w`, `e`, `h`, `c` — and two where the letter
-  is spoken for: `pc` and `pj`, as `p` meets `pr`.
+  is spoken for: `pj`, as `p` meets `pr`. `pr` and `ps` are spelled in two to
+  begin with and take no alias of their own.
 - **Key bindings and aliases are configuration, not code.** What `scriv init`
   emits comes from `[shell.bindings]` and `[shell.aliases]`, which name
   [`binding::ACTIONS`] rather than holding shell code — that is what lets one

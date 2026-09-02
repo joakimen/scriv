@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `scriv proc` is `scriv ps`, after the tool it reads the process table with,
+  and the `pc` alias is gone with it: the name is two letters already. `scriv
+  proc` is a usage error now, so a shell function or a note that spelled it
+  needs the new name. The `proc-kill` action a key or an alias can be bound to
+  keeps its name, since renaming one silently breaks every config that named it.
+
 ### Fixed
 
 - Nothing scriv prints is bright black any more. `proc`, `project deps`,

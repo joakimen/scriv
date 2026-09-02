@@ -35,7 +35,7 @@ mise use -g github:joakimen/scriv
 cargo install --git https://github.com/joakimen/scriv
 ```
 
-Supported platform: macOS on Apple Silicon. `scriv proc` depends on Darwin's
+Supported platform: macOS on Apple Silicon. `scriv ps` depends on Darwin's
 signal numbers, and the crate refuses to compile for any other target.
 
 External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, `rg`
@@ -90,7 +90,7 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 | `scriv branch` | `ls` `sel` `checkout` `rm` |
 | `scriv worktree` | `ls` `sel` `add` `rm` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
-| `scriv proc` | `ls` `sel` `kill` |
+| `scriv ps` | `ls` `sel` `kill` |
 | `scriv history` | `ls` `sel` |
 | `scriv edit` | `file` `dir` — found below `$PWD`, opened in `$EDITOR` |
 | `scriv project` | `deps` `build` — over `$PWD`, whatever it is written in |
@@ -118,7 +118,7 @@ in turn. The fish integration calls `scriv project deps` `i`.
 `ls` prints the set, `sel` fuzzy-selects one entry, and the remaining verbs act
 on the selection. `sel` prints to stdout and composes: `cd (scriv repo sel)`.
 Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c` — with
-`pc` for `proc` and `pj` for `project`.
+`pj` for `project`; `ps` and `pr` are already two.
 
 ## Key bindings
 
@@ -137,7 +137,7 @@ Groups abbreviate to one letter — `r`, `f`, `n`, `b`, `w`, `e`, `h`, `c` — w
 | `f7` | check out a pull request |
 | `f10` | open a note from your vault |
 
-`scriv init fish` also defines `fe` (`scriv edit`), `kl` (`scriv proc kill
+`scriv init fish` also defines `fe` (`scriv edit`), `kl` (`scriv ps kill
 --force`), `i` (`scriv project deps`) and `b` (`scriv project build`), each
 passing its arguments through.
 

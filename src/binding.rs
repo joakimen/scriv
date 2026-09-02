@@ -110,7 +110,7 @@ pub const ACTIONS: &[Action] = &[
     Action {
         id: "proc-kill",
         description: "Fuzzy-select running processes and kill them",
-        args: &["proc", "kill", "--force"],
+        args: &["ps", "kill", "--force"],
         kind: Kind::Run,
     },
     Action {

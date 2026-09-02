@@ -1,4 +1,4 @@
-//! `scriv proc` — list, select and signal running processes.
+//! `scriv ps` — list, select and signal running processes.
 
 use std::io::ErrorKind;
 use std::process::{Command, Stdio};
@@ -80,7 +80,7 @@ fn spawn_error(err: std::io::Error) -> anyhow::Error {
     }
 }
 
-/// `scriv proc ls` — print the running processes, busiest first.
+/// `scriv ps ls` — print the running processes, busiest first.
 pub fn ls(ctx: &Ctx, status: bool, port: Option<u16>) -> Result<()> {
     let procs = processes(port)?;
     let width = proc::user_width(&procs);
@@ -99,7 +99,7 @@ pub fn ls(ctx: &Ctx, status: bool, port: Option<u16>) -> Result<()> {
     Ok(())
 }
 
-/// `scriv proc sel` — fuzzy-select a process and print its pid.
+/// `scriv ps sel` — fuzzy-select a process and print its pid.
 pub fn sel(ctx: &Ctx, port: Option<u16>) -> Result<()> {
     let procs = processes(port)?;
     if procs.is_empty() {
@@ -110,7 +110,7 @@ pub fn sel(ctx: &Ctx, port: Option<u16>) -> Result<()> {
     Ok(())
 }
 
-/// `scriv proc kill` — signal processes, by pid or interactively.
+/// `scriv ps kill` — signal processes, by pid or interactively.
 ///
 /// Several pids are signalled one at a time, so a refusal is reported against
 /// the row it belongs to and does not hide the ones that worked.
