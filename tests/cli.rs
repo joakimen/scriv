@@ -1831,6 +1831,101 @@ fn note_ls_status_names_an_unlabelled_directory_after_itself() {
     assert!(run.stdout.contains("scratch"), "{}", run.stdout);
 }
 
+/// A vault that files notes by kind and archives them the same way, with an
+/// `archive` under each kind and one note still in use beside it.
+fn mk_archived_vault(sandbox: &Sandbox) -> PathBuf {
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "work/plan.md", "plan\n", 4_000);
+    mk_note(&vault, "work/archive/old.md", "old\n", 3_000);
+    mk_note(&vault, "personal/idea.md", "idea\n", 2_000);
+    mk_note(&vault, "personal/archive/2023.md", "last year\n", 1_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\neditor = \"echo\"\narchives = [\"work/archive\", \"personal/archive\"]\n",
+        vault.display().to_string()
+    ));
+    vault
+}
+
+/// An archive is what a vault keeps and stops reading, so a listing leaves it
+/// out — and `--all` is how you get at it anyway.
+#[test]
+fn note_ls_leaves_out_the_archives_until_all_asks_for_them() {
+    let sandbox = Sandbox::new();
+    let vault = mk_archived_vault(&sandbox);
+
+    let listed = sandbox.run(&["note", "ls"]);
+    listed.ok();
+    assert_eq!(
+        listed.lines(),
+        vec![
+            vault.join("work/plan.md").to_str().unwrap(),
+            vault.join("personal/idea.md").to_str().unwrap(),
+        ]
+    );
+
+    let all = sandbox.run(&["note", "ls", "--all"]);
+    all.ok();
+    assert_eq!(
+        all.lines(),
+        vec![
+            vault.join("work/plan.md").to_str().unwrap(),
+            vault.join("work/archive/old.md").to_str().unwrap(),
+            vault.join("personal/idea.md").to_str().unwrap(),
+            vault.join("personal/archive/2023.md").to_str().unwrap(),
+        ]
+    );
+}
+
+/// Naming a note is asking for that note, whatever a listing would have shown.
+#[test]
+fn note_open_takes_the_name_of_an_archived_note() {
+    let sandbox = Sandbox::new();
+    let vault = mk_archived_vault(&sandbox);
+
+    let run = sandbox.run(&["note", "open", "work/archive/old.md"]);
+    run.ok();
+    assert!(
+        run.stdout
+            .contains(vault.join("work/archive/old.md").to_str().unwrap()),
+        "{}",
+        run.stdout
+    );
+    assert!(!run.stderr.contains("warning"), "{}", run.stderr);
+}
+
+/// A vault whose every note is archived reports that, rather than reporting a
+/// vault with nothing in it.
+#[test]
+fn note_ls_says_the_archives_are_why_it_found_nothing() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "archive/old.md", "old\n", 1_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\narchives = [\"archive\"]\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["note", "ls"]);
+    run.code(1);
+    assert!(run.stderr.contains("archives"), "{}", run.stderr);
+}
+
+/// An archive path is relative to the vault, and one that names nothing hides
+/// nothing — which is a setting the user meant and did not get.
+#[test]
+fn config_check_reports_an_archive_that_is_not_there() {
+    let sandbox = Sandbox::new();
+    let vault = sandbox.home().join("notes");
+    mk_note(&vault, "work/plan.md", "plan\n", 1_000);
+    sandbox.write_config(&format!(
+        "[note]\nroot = {:?}\narchives = [\"work/archive\"]\n",
+        vault.display().to_string()
+    ));
+
+    let run = sandbox.run(&["config", "check"]);
+    assert!(run.stdout.contains("work/archive"), "{}", run.stdout);
+}
+
 /// `note new` hands the editor a path nobody had to be asked for, and does not
 /// create the file — an abandoned note is one that never existed.
 #[test]

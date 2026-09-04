@@ -13,6 +13,15 @@ raised, never by hand.
 
 ## Unreleased
 
+### Added
+
+- `[note] archives` names the directories in your vault holding notes you keep
+  but no longer read — `archives = ["work/archive", "personal/archive"]`, as
+  paths below `[note] root`. They are left out of `note ls`, `note sel`,
+  `note cleanup` and the `note open` selector, text search included, so a vault
+  that has been going for years lists what you are still working on. `--all`
+  puts them back, and naming a note outright opens it either way.
+
 ### Changed
 
 - scriv no longer binds a key or defines an alias unless you have asked it to.

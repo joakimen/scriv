@@ -129,7 +129,9 @@ enum Command {
     /// Manage the notes in your vault
     ///
     /// The set is every Markdown file under `[note] root` — an Obsidian vault,
-    /// or any tree of notes — most recently modified first.
+    /// or any tree of notes — most recently modified first. `[note] archives`
+    /// names the directories below it holding notes you keep but no longer
+    /// read; those are left out until `--all` asks for them.
     ///
     /// A row leads with what the note calls itself, then says what is true of
     /// it in a column each: the label its directory carries — or the directory
@@ -435,9 +437,16 @@ enum NoteCmd {
         /// may have come from front matter, which names a day.
         #[arg(long)]
         status: bool,
+        /// Also show the notes under `[note] archives`
+        #[arg(short = 'a', long)]
+        all: bool,
     },
     /// Fuzzy-select a note and print its absolute path
-    Sel,
+    Sel {
+        /// Also show the notes under `[note] archives`
+        #[arg(short = 'a', long)]
+        all: bool,
+    },
     /// Start a note and open it straight away
     ///
     /// No question is asked first: with no NAME the note is called after the
@@ -473,12 +482,16 @@ enum NoteCmd {
         /// Delete without asking
         #[arg(short, long)]
         yes: bool,
+        /// Also show the notes under `[note] archives`
+        #[arg(short = 'a', long)]
+        all: bool,
     },
     /// Open notes; omit the names to look for them
     ///
     /// A name is a path below the vault, exactly as `note ls` prints it, and
-    /// several open together. With none, the selector opens on every note in
-    /// the vault and three keys say what the query is read as: `ctrl-e` matches
+    /// several open together — a name outright is never subject to `[note]
+    /// archives`. With none, the selector opens on the vault and three keys say
+    /// what the query is read as: `ctrl-e` matches
     /// the names, `ctrl-r` searches inside every note as you type — the letters
     /// you typed, in order, so `errhand` finds "error handling" — and `ctrl-f`
     /// searches for the query exactly, for a phrase or a snippet of code. The
@@ -500,6 +513,9 @@ enum NoteCmd {
         /// Notes to open; omit to select interactively
         #[arg(value_name = "NAME")]
         notes: Vec<String>,
+        /// Also show the notes under `[note] archives`
+        #[arg(short = 'a', long)]
+        all: bool,
     },
 }
 
@@ -992,12 +1008,12 @@ fn dispatch(ctx: &Ctx, command: Command) -> anyhow::Result<()> {
             EditCmd::Dir { dirs } => cmd::edit::dir(ctx, &dirs),
         },
         Command::Note { command } => match command {
-            NoteCmd::Ls { status } => cmd::note::ls(ctx, status),
-            NoteCmd::Sel => cmd::note::sel(ctx),
-            NoteCmd::Open { notes } => cmd::note::open(ctx, &notes),
+            NoteCmd::Ls { status, all } => cmd::note::ls(ctx, status, all),
+            NoteCmd::Sel { all } => cmd::note::sel(ctx, all),
+            NoteCmd::Open { notes, all } => cmd::note::open(ctx, &notes, all),
             NoteCmd::New { name } => cmd::note::new(ctx, name.as_deref()),
             NoteCmd::Scratch => cmd::note::scratch(ctx),
-            NoteCmd::Cleanup { yes } => cmd::note::cleanup(ctx, yes),
+            NoteCmd::Cleanup { yes, all } => cmd::note::cleanup(ctx, yes, all),
         },
         Command::Branch { command } => match command {
             BranchCmd::Ls { status, scope } => {

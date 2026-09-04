@@ -49,15 +49,25 @@ fn vault(ctx: &Ctx) -> Result<PathBuf> {
 /// one pass rather than a walk followed by a read per note. Dotfiles are
 /// skipped, which is what leaves Obsidian's `.obsidian` and `.trash` out
 /// without naming either.
-fn load(ctx: &Ctx) -> Result<Vec<Note>> {
+///
+/// `[note] archives` is pruned rather than filtered afterwards, unless `all`
+/// asks for it: an archive is the part of a vault that only grows, and not
+/// descending into it is the difference between reading every note ever
+/// written and reading the ones still in use.
+fn load(ctx: &Ctx, all: bool) -> Result<Vec<Note>> {
     let root = vault(ctx)?;
     let offset = ctx.utc_offset();
     let found = Mutex::new(Vec::new());
+    let archives = archives(ctx, all);
 
     ignore::WalkBuilder::new(&root)
         .hidden(true)
         .require_git(false)
         .add_custom_ignore_filename(".fdignore")
+        .filter_entry({
+            let root = root.clone();
+            move |entry| !note::is_archived(&relative(entry.path(), &root), &archives)
+        })
         .build_parallel()
         .run(|| {
             Box::new(|entry| {
@@ -81,12 +91,34 @@ fn load(ctx: &Ctx) -> Result<Vec<Note>> {
         .info(&format!("{} note(s) under {}", notes.len(), root.display()));
     if notes.is_empty() {
         bail!(
-            "no notes under {} — `scriv note` reads Markdown files, and \
+            "no notes under {}{} — `scriv note` reads Markdown files, and \
              `scriv note new` writes one",
-            root.display()
+            root.display(),
+            if all {
+                ""
+            } else {
+                " outside `[note] archives`"
+            }
         );
     }
     Ok(notes)
+}
+
+/// The archive directories a listing hides, or none when `--all` was passed.
+fn archives(ctx: &Ctx, all: bool) -> Vec<String> {
+    match all {
+        true => Vec::new(),
+        false => ctx.config.note.archives.clone(),
+    }
+}
+
+/// `path` as the vault knows it: below `root`, or as it stands when it is not
+/// under one.
+fn relative(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// One note, read: its times from the directory entry's metadata, its front
@@ -106,11 +138,7 @@ fn read_note(path: &Path, root: &Path, offset: time::UtcOffset) -> Option<Note> 
         note::parse_front(block, offset)
     });
 
-    let rel = path
-        .strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned();
+    let rel = relative(path, root);
     Some(Note {
         dir: note::top_dir(&rel).to_string(),
         rel,
@@ -146,10 +174,10 @@ fn unix(time: SystemTime) -> Option<i64> {
 /// `scriv note ls` — print the notes, most recently modified first.
 ///
 /// Plain, one path below the vault per line, which is the name `note open`
-/// takes. `--status` adds the tags and both dates; `--absolute-paths` prints
-/// what a pipe can open.
-pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
-    let notes = load(ctx)?;
+/// takes. `--status` adds the tags and both dates; `--all` adds the notes
+/// under `[note] archives`.
+pub fn ls(ctx: &Ctx, status: bool, all: bool) -> Result<()> {
+    let notes = load(ctx, all)?;
     let cfg = &ctx.config.note;
     let widths = Widths::of(&notes, cfg, ctx.home_str());
     let offset = ctx.utc_offset();
@@ -171,8 +199,8 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
 }
 
 /// `scriv note sel` — fuzzy-select a note and print its absolute path.
-pub fn sel(ctx: &Ctx) -> Result<()> {
-    let notes = load(ctx)?;
+pub fn sel(ctx: &Ctx, all: bool) -> Result<()> {
+    let notes = load(ctx, all)?;
     let (cfg, offset) = (&ctx.config.note, ctx.utc_offset());
     let rows = notes.iter().map(|note| item(note, cfg, offset)).collect();
     let choice = select::select_one(rows, "Select a note", &ctx.config.selector)?;
@@ -187,7 +215,7 @@ pub fn sel(ctx: &Ctx) -> Result<()> {
 /// notes, and — through ripgrep — every line of every note, fuzzily or exactly.
 /// A note is as often looked for by something it says as by what it is called,
 /// and which of the two it is only becomes clear once the looking has started.
-pub fn open(ctx: &Ctx, names: &[String]) -> Result<()> {
+pub fn open(ctx: &Ctx, names: &[String], all: bool) -> Result<()> {
     let editor = ctx.note_editor()?;
     let root = vault(ctx)?;
 
@@ -206,13 +234,14 @@ pub fn open(ctx: &Ctx, names: &[String]) -> Result<()> {
         return cmd::edit::launch(ctx, &editor, &targets);
     }
 
-    let notes = load(ctx)?;
+    let notes = load(ctx, all)?;
     let chosen = match select::select_many_searching(
         searcher(
             root.clone(),
             notes,
             ctx.config.note.clone(),
             ctx.utc_offset(),
+            archives(ctx, all),
         ),
         "Open a note",
         modes(which("rg").is_some()),
@@ -241,6 +270,8 @@ pub fn open(ctx: &Ctx, names: &[String]) -> Result<()> {
 /// A note named on the command line, as a path. A name is relative to the
 /// vault, so `scriv note open` takes back exactly what `scriv note ls` printed;
 /// an absolute path, or one that begins with `~`, is left where it points.
+///
+/// `[note] archives` does not apply: naming a note is asking for that note.
 fn resolve(root: &Path, home: &Path, name: &str) -> String {
     let path = expand_home_dir(name, home);
     if path.is_absolute() {
@@ -352,8 +383,8 @@ fn scratch_path(ctx: &Ctx, root: &Path) -> PathBuf {
 /// Nothing is deleted without being listed and then agreed to, and the listing
 /// says why each note is on it: three rules, applied without judgement, over a
 /// vault only its owner can actually read.
-pub fn cleanup(ctx: &Ctx, yes: bool) -> Result<()> {
-    let notes = load(ctx)?;
+pub fn cleanup(ctx: &Ctx, yes: bool, all: bool) -> Result<()> {
+    let notes = load(ctx, all)?;
     let candidates = junk(ctx, &notes)?;
 
     if candidates.is_empty() {
@@ -559,6 +590,7 @@ fn searcher(
     notes: Vec<Note>,
     cfg: crate::config::NoteConfig,
     offset: time::UtcOffset,
+    archives: Vec<String>,
 ) -> select::Search {
     Box::new(move |query: &str, mode: usize| match Looking::of(mode) {
         Looking::Names => {
@@ -574,7 +606,7 @@ fn searcher(
         // An empty pattern matches every line of every note, which is neither
         // an answer nor a cheap question.
         Looking::Lines(_) if query.trim().is_empty() => nothing(),
-        Looking::Lines(matching) => match Search::start(&root, query, matching) {
+        Looking::Lines(matching) => match Search::start(&root, query, matching, archives.clone()) {
             Ok(search) => search.into_searching(),
             // A failed spawn is an empty list: the selector is open and has
             // nowhere to report an error to, and the next keystroke tries
@@ -647,11 +679,21 @@ struct Search {
     lines: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
     child: Arc<Mutex<Option<std::process::Child>>>,
     root: PathBuf,
+    /// Directories whose hits are dropped as they arrive. ripgrep matches
+    /// `--glob` against paths relative to the working directory rather than to
+    /// the directory it was told to search, so an archive cannot be excluded by
+    /// one; it is read and its lines are thrown away here.
+    archives: Vec<String>,
     found: usize,
 }
 
 impl Search {
-    fn start(root: &Path, query: &str, matching: Matching) -> std::io::Result<Self> {
+    fn start(
+        root: &Path,
+        query: &str,
+        matching: Matching,
+        archives: Vec<String>,
+    ) -> std::io::Result<Self> {
         let (pattern, is_regex) = pattern(query, matching);
         let mut child = std::process::Command::new("rg")
             .args([
@@ -695,6 +737,7 @@ impl Search {
             lines: std::io::BufRead::lines(std::io::BufReader::new(stdout)),
             child: Arc::new(Mutex::new(Some(child))),
             root: root.to_path_buf(),
+            archives,
             found: 0,
         })
     }
@@ -724,6 +767,9 @@ impl Iterator for Search {
             let Some(found) = note::parse_match(&line, &self.root) else {
                 continue;
             };
+            if note::is_archived(&found.rel, &self.archives) {
+                continue;
+            }
             self.found += 1;
             let (label, tints) = note::match_row(&found, MATCH_COLUMN);
             // The pane opens the note at the line that matched, marked, which
@@ -872,20 +918,54 @@ fn which(program: &str) -> Option<PathBuf> {
     })
 }
 
-/// The `config check` row for the vault: where it is, and how much is in it.
-/// One row rather than two, since a root that resolves and holds nothing has
-/// already been reported by the count.
-pub(crate) fn vault_summary(ctx: &Ctx) -> Result<(PathBuf, usize)> {
+/// The `config check` row for the vault: where it is, how much is in it, and
+/// how much of that a listing leaves out. One row rather than two, since a root
+/// that resolves and holds nothing has already been reported by the count.
+pub(crate) fn vault_summary(ctx: &Ctx) -> Result<Vault> {
     let root = vault(ctx)?;
-    let count = ignore::WalkBuilder::new(&root)
+    let archives = &ctx.config.note.archives;
+    let (mut listed, mut archived) = (0, 0);
+    for entry in ignore::WalkBuilder::new(&root)
         .hidden(true)
         .require_git(false)
         .build()
         .flatten()
         .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
         .filter(|entry| note::is_note(entry.path()))
-        .count();
-    Ok((root, count))
+    {
+        match note::is_archived(&relative(entry.path(), &root), archives) {
+            true => archived += 1,
+            false => listed += 1,
+        }
+    }
+    Ok(Vault {
+        root,
+        listed,
+        archived,
+    })
+}
+
+/// What `config check` found in the vault.
+pub(crate) struct Vault {
+    pub root: PathBuf,
+    /// Notes a listing shows.
+    pub listed: usize,
+    /// Notes under `[note] archives`, which only `--all` shows.
+    pub archived: usize,
+}
+
+/// The `[note] archives` entries naming nothing that is there — a typo, or a
+/// directory since renamed, which hides no notes and says nothing about it.
+pub(crate) fn missing_archives(ctx: &Ctx) -> Result<Vec<String>> {
+    let root = vault(ctx)?;
+    Ok(ctx
+        .config
+        .note
+        .archives
+        .iter()
+        .filter(|archive| !root.join(archive).is_dir())
+        .cloned()
+        .collect())
 }
 
 #[cfg(test)]
