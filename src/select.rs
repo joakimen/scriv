@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
+use skim::fuzzy_matcher::FuzzyMatcher;
 use skim::prelude::*;
 
 use crate::config::SelectorConfig;
@@ -64,6 +65,19 @@ pub enum Preview {
     /// the same bar as a [`Preview::Command`] — local, bounded, tens of
     /// milliseconds — and ANSI escapes in what it returns are honoured.
     Deferred(Box<dyn Fn() -> String + Send + Sync>),
+}
+
+/// Score `choice` against `query` the way the selector scores what it matches
+/// itself, or `None` where the two do not match at all.
+///
+/// For a list a searching selector cannot rank on its own: the query has gone
+/// to the search, so a mode that filters something already in memory does its
+/// own matching, and going through skim's matcher is what keeps that list
+/// ordered like every other one.
+pub fn score(choice: &str, query: &str) -> Option<i64> {
+    static MATCHER: std::sync::LazyLock<SkimMatcherV2> =
+        std::sync::LazyLock::new(SkimMatcherV2::default);
+    MATCHER.fuzzy_match(choice, query)
 }
 
 /// Quote `arg` for the shell that runs a [`Preview::Command`], so a branch name
@@ -608,11 +622,15 @@ pub type Search = Box<dyn FnMut(&str, usize) -> Searching + Send>;
 
 /// One way a [`Search`] can read the query, offered on a key of its own.
 ///
-/// Two keys rather than one that toggles, because a header cannot be made to
-/// alternate: skim's `set-header` writes a fixed string, and a binding that
-/// rebinds itself to the opposite mode would have to contain its own text.
-/// Deliberate keys also cost the same one keystroke and never leave a doubt
-/// about which mode is in force — which is the thing the header is for.
+/// A key each rather than one that steps through them, because a header cannot
+/// be made to alternate: skim's `set-header` writes a fixed string, and a
+/// binding that rebinds itself to the next mode would have to contain its own
+/// text. Deliberate keys also cost the same one keystroke and never leave a
+/// doubt about which mode is in force — which is the thing the header is for.
+///
+/// Switching empties the query and the list with it. A query means a different
+/// thing in each mode, and rows left over from the one before it are answers to
+/// a question that is no longer being asked.
 pub struct Mode {
     /// skim's spelling of the key — `ctrl-f`.
     pub key: &'static str,
@@ -820,14 +838,13 @@ impl CommandCollector for SearchCollector {
 pub fn select_many_searching(
     search: Search,
     prompt: &str,
-    query: &str,
     modes: &'static [Mode],
     cfg: &SelectorConfig,
 ) -> Result<Vec<String>> {
     let run = Run {
         prompt,
         multi: true,
-        query,
+        query: "",
         reload: None,
         search: Some(search),
         modes,
@@ -1122,13 +1139,7 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     }
 
     if !run.query.is_empty() {
-        // Two different boxes: in a searching selector what is typed is the
-        // search, and skim keeps that under a name of its own.
-        if run.search.is_some() {
-            builder.cmd_query(run.query.to_string());
-        } else {
-            builder.query(run.query.to_string());
-        }
+        builder.query(run.query.to_string());
     }
 
     // A selector whose reload exists to step through views has no refresh of
@@ -1304,10 +1315,13 @@ fn binds(
         binds.extend(refresh_binds(header));
     }
     // Each mode key searches again in its own mode and says so in the header,
-    // which is the only place the current one can be read.
+    // which is the only place the current one can be read. The query goes with
+    // the old mode: `set-query` empties the box, and the empty reload it fires
+    // in turn is what leaves the list showing the new mode's answer to nothing
+    // rather than the old mode's answer to something.
     for (index, mode) in modes.iter().enumerate() {
         binds.push(format!(
-            "{}:reload({MODE_MARKER}{index}{MODE_MARKER}{{q}})+set-header({})",
+            "{}:reload({MODE_MARKER}{index}{MODE_MARKER})+set-query()+set-header({})",
             mode.key,
             chosen_header(modes, index, header, " match"),
         ));
@@ -1553,6 +1567,23 @@ mod tests {
             assert!(
                 binds.iter().all(|b| b.contains("set-header(")),
                 "a mode key that does not say so: {binds:?}"
+            );
+        }
+
+        /// A query means a different thing in each mode, so the box is emptied
+        /// rather than re-read: the reload carries no `{q}`, and `set-query`
+        /// clears what the box still shows.
+        #[test]
+        fn a_mode_key_leaves_the_query_and_the_list_empty() {
+            let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
+            let binds = binds(&[], false, false, &modes, &Views::NONE, "");
+            assert!(
+                binds.iter().all(|b| !b.contains("{q}")),
+                "a mode key carried the old query: {binds:?}"
+            );
+            assert!(
+                binds.iter().all(|b| b.contains("set-query()")),
+                "a mode key left the old query on screen: {binds:?}"
             );
         }
 

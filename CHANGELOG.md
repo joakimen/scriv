@@ -13,6 +13,22 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- `note edit` and `note rg` are now one command, `scriv note open`. The selector
+  opens on every note in the vault and three keys say what the query is read as:
+  `ctrl-e` matches the names, `ctrl-r` searches inside every note as you type,
+  and `ctrl-f` searches for the query exactly. Which of the two you want is
+  rarely clear before the looking has started, and it no longer has to be:
+  switching costs a keystroke rather than a second command. The mode in force is
+  named in the header, and switching empties the query, since a query means a
+  different thing in each of them.
+- Without `ripgrep`, `note open` offers the names and nothing else, where
+  `note rg` used to refuse to open at all.
+- `scriv note open NAME` opens named notes without a selector, as `note edit`
+  did. The query `note rg` took on the command line is gone — type it in the
+  selector instead.
+
 ## v0.18.0
 
 *Released 2026-09-02*

@@ -488,6 +488,30 @@ pub fn newest_first(notes: &mut [Note]) {
     notes.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.rel.cmp(&b.rel)));
 }
 
+/// The notes whose names match `query`, best first.
+///
+/// A searching selector hands what is typed to the search rather than to the
+/// fuzzy matcher, so a list of names already in memory has to be matched here.
+/// It goes through the selector's own scorer, which is what keeps this list
+/// ranked the way every other list in scriv is.
+///
+/// An empty query is every note, in the order [`newest_first`] left them: the
+/// whole vault is a useful answer to nothing typed yet, where an empty search
+/// of the text is not.
+pub fn by_name<'a>(notes: &'a [Note], query: &str) -> Vec<&'a Note> {
+    if query.trim().is_empty() {
+        return notes.iter().collect();
+    }
+    let mut scored: Vec<(i64, &Note)> = notes
+        .iter()
+        .filter_map(|note| crate::select::score(&row(note), query).map(|score| (score, note)))
+        .collect();
+    // Stable, so notes that score alike stay newest first rather than in
+    // whatever order the walk found them.
+    scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    scored.into_iter().map(|(_, note)| note).collect()
+}
+
 /// Whether a path is one a note listing offers, by extension.
 pub fn is_note(path: &Path) -> bool {
     path.extension()
@@ -847,6 +871,55 @@ mod tests {
         let mut notes = vault();
         newest_first(&mut notes);
         assert_eq!(notes[0].rel, "work/meetings/standup.md");
+    }
+
+    /// The list is worth something before anything is typed: the whole vault,
+    /// in the order the listing already put it in.
+    #[test]
+    fn nothing_typed_matches_every_note_in_the_order_it_arrived() {
+        let notes = vault();
+        let matched = by_name(&notes, "  ");
+        assert_eq!(matched.len(), notes.len());
+        assert_eq!(matched[0].rel, notes[0].rel);
+    }
+
+    /// A query matches what the row shows — the title — and the letters need
+    /// only be in order, so `stnd` finds "standup".
+    #[test]
+    fn a_query_matches_the_name_the_row_shows() {
+        let notes = vault();
+        let matched = by_name(&notes, "stnd");
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].rel, "work/meetings/standup.md");
+    }
+
+    #[test]
+    fn a_query_nothing_is_called_matches_nothing() {
+        assert!(by_name(&vault(), "zzzz").is_empty());
+    }
+
+    /// Notes that score alike keep the order the listing left them in, rather
+    /// than shuffling between keystrokes.
+    #[test]
+    fn notes_that_score_alike_stay_newest_first() {
+        let mut notes = vec![
+            Note {
+                modified: 0,
+                ..note("older-draft.md", Front::default())
+            },
+            Note {
+                modified: DAY,
+                ..note("newer-draft.md", Front::default())
+            },
+        ];
+        newest_first(&mut notes);
+
+        let matched = by_name(&notes, "draft");
+
+        assert_eq!(
+            matched.iter().map(|note| &note.rel).collect::<Vec<_>>(),
+            vec!["newer-draft.md", "older-draft.md"]
+        );
     }
 
     #[test]

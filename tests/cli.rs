@@ -1844,21 +1844,6 @@ fn note_new_never_hands_back_a_name_already_in_use() {
     );
 }
 
-/// The search needs ripgrep, and says so rather than opening an empty selector.
-#[test]
-fn note_rg_without_ripgrep_says_what_is_missing() {
-    let sandbox = Sandbox::new();
-    mk_vault(&sandbox);
-    let empty = sandbox.home().join("empty-path");
-    std::fs::create_dir_all(&empty).unwrap();
-    let run = sandbox.run_with_env(
-        &["note", "rg", "anything"],
-        &[("PATH", empty.to_str().unwrap())],
-    );
-    run.code(1);
-    assert!(run.stderr.contains("ripgrep"), "{}", run.stderr);
-}
-
 #[test]
 fn note_without_a_vault_says_which_key_is_missing() {
     let sandbox = Sandbox::new();
@@ -1880,10 +1865,10 @@ fn note_with_a_vault_that_is_not_there_says_so() {
 /// `[note] editor` is `echo` here, so what it was asked to open comes back on
 /// stdout. A name is a path below the vault — what `note ls` printed.
 #[test]
-fn note_edit_resolves_a_name_against_the_vault() {
+fn note_open_resolves_a_name_against_the_vault() {
     let sandbox = Sandbox::new();
     let vault = mk_vault(&sandbox);
-    let run = sandbox.run(&["note", "edit", "archive/old.md"]);
+    let run = sandbox.run(&["note", "open", "archive/old.md"]);
     run.ok();
     assert_eq!(
         run.stdout.trim(),
@@ -1891,10 +1876,27 @@ fn note_edit_resolves_a_name_against_the_vault() {
     );
 }
 
+/// Several names open together, in the order they were given.
+#[test]
+fn note_open_takes_several_names_at_once() {
+    let sandbox = Sandbox::new();
+    let vault = mk_vault(&sandbox);
+    let run = sandbox.run(&["note", "open", "inbox.md", "archive/old.md"]);
+    run.ok();
+    assert_eq!(
+        run.stdout.trim(),
+        format!(
+            "-- {} {}",
+            vault.join("inbox.md").display(),
+            vault.join("archive/old.md").display()
+        )
+    );
+}
+
 /// The key exists so a note can be opened by something other than the editor
 /// the rest of scriv uses; with none set, it is that editor.
 #[test]
-fn note_edit_falls_back_to_the_environment_editor() {
+fn note_open_falls_back_to_the_environment_editor() {
     let sandbox = Sandbox::new();
     let vault = sandbox.home().join("notes");
     mk_note(&vault, "a.md", "a\n", 1_000);
@@ -1903,7 +1905,7 @@ fn note_edit_falls_back_to_the_environment_editor() {
         vault.display().to_string()
     ));
 
-    let run = sandbox.run_with_env(&["note", "edit", "a.md"], &[("EDITOR", "echo")]);
+    let run = sandbox.run_with_env(&["note", "open", "a.md"], &[("EDITOR", "echo")]);
     run.ok();
     assert_eq!(
         run.stdout.trim(),
@@ -1920,7 +1922,8 @@ fn config_check_counts_the_notes_in_the_vault() {
     let run = sandbox.run(&["config", "check"]);
     assert!(run.stdout.contains("3 notes"), "{}", run.stdout);
     assert!(run.stdout.contains("note editor"), "{}", run.stdout);
-    // `note rg` shells out to it, so the report says whether it is there.
+    // `note open` shells out to it to search, so the report says whether it is
+    // there.
     assert!(run.stdout.contains("rg"), "{}", run.stdout);
     // So does every preview pane, which is where the theme is applied.
     assert!(run.stdout.contains("bat"), "{}", run.stdout);
@@ -1967,10 +1970,10 @@ fn note_scratch_goes_where_the_config_says() {
 /// A mistyped name would otherwise open a new, empty buffer and say nothing,
 /// which is how a typo becomes a second note.
 #[test]
-fn note_edit_warns_when_the_note_named_is_not_there() {
+fn note_open_warns_when_the_note_named_is_not_there() {
     let sandbox = Sandbox::new();
     mk_vault(&sandbox);
-    let run = sandbox.run(&["note", "edit", "inbx.md"]);
+    let run = sandbox.run(&["note", "open", "inbx.md"]);
     run.ok();
     assert!(
         run.stderr.contains("no note called inbx.md"),
@@ -2116,7 +2119,7 @@ fn every_note_command_survives_a_vault_that_is_not_ascii() {
 
     sandbox.run(&["note", "ls"]).ok();
     sandbox.run(&["note", "ls", "--status"]).ok();
-    sandbox.run(&["note", "edit", "øvelser.md"]).ok();
+    sandbox.run(&["note", "open", "øvelser.md"]).ok();
     sandbox.run(&["note", "new", "Løsningsforslag"]).ok();
     sandbox.run(&["note", "scratch"]).ok();
     sandbox.run(&["config", "check"]);

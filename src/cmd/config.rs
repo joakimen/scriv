@@ -80,7 +80,7 @@ ignore = ["node_modules", "target"]
 # the root; its directory is created the first time.
 # scratch = "scratch/scratch.md"
 
-# What `note edit` launches, split on whitespace like $EDITOR. Its own setting
+# What `note open` launches, split on whitespace like $EDITOR. Its own setting
 # because a note is as often read as written — `glow` and `nvim` are both
 # answers. Unset, it is $VISUAL then $EDITOR, as `scriv edit` uses.
 # editor = "nvim"
@@ -963,7 +963,7 @@ fn editor_check(ctx: &Ctx) -> Check {
     }
 }
 
-/// The editor `note edit` will launch, when `[note] editor` names one of its
+/// The editor `note open` will launch, when `[note] editor` names one of its
 /// own. Unset, it is the editor the row above already reported, and a second
 /// row saying so is a second row saying so.
 fn note_editor_check(ctx: &Ctx) -> Option<Check> {
@@ -1119,7 +1119,8 @@ fn collect(ctx: &Ctx) -> Vec<Section> {
         "rg",
         "rg",
         false,
-        "only `note rg` needs it (https://github.com/BurntSushi/ripgrep)",
+        "without it `note open` looks at names only \
+         (https://github.com/BurntSushi/ripgrep)",
     ));
     // `kill` and `lsof` get no row: both ship in the same base system `ps`
     // does, and a report of three lines saying the same thing is one line.

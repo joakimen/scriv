@@ -214,7 +214,7 @@ pub struct NoteConfig {
     /// The one permanent note `note scratch` opens, as a path below
     /// [`Self::root`]. Unset, it is `scratch/scratch.md`.
     pub scratch: Option<String>,
-    /// What `note edit` launches, split on whitespace like `$EDITOR`. Unset, it
+    /// What `note open` launches, split on whitespace like `$EDITOR`. Unset, it
     /// is `$VISUAL` then `$EDITOR`.
     ///
     /// A key of its own because a note is not source: the thing that opens one
