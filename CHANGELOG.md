@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.19.0
+
+*Released 2026-09-04*
+
 ### Added
 
 - `[note] archives` names the directories in your vault holding notes you keep
