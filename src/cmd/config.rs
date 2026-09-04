@@ -102,12 +102,12 @@ ignore = ["node_modules", "target"]
 # print` lists the keys and names you have with what each one runs, and `scriv
 # config check` says whether they resolve.
 #
-# A table written here replaces the defaults rather than adding to them, which
-# is how a key is unbound or a name dropped: leave it out. Both tables below are
-# the defaults exactly, so uncommenting one and editing it changes only what you
-# edited. Leaving them commented keeps whatever scriv ships.
+# scriv binds nothing on its own. The two tables below are suggestions, and
+# stay suggestions until you uncomment one — a key is the scarcest thing a
+# terminal has, and which of yours a tool may take is yours to say.
 #
-# Keys are spelled as fish spells them.
+# What you write is the whole of it, so leaving a key out is how it stays
+# unbound. Keys are spelled as fish spells them.
 # [shell.bindings]
 # ctrl-o = "repo-cd"          # cd to a repository
 # ctrl-t = "worktree-cd"      # cd to a worktree of this repository
@@ -297,10 +297,15 @@ fn label_rows(labels: &Labels) -> Vec<Row> {
         .collect()
 }
 
-/// What a `[shell]` table's heading says: whether the rows under it are the
-/// user's or the ones scriv ships.
+/// What a `[shell]` table's heading says. scriv binds nothing on its own, so an
+/// absent table is not a default in force — it is nothing bound, which the
+/// report has to say outright or a user reads an empty list as a bug.
 fn table_note(written: bool) -> &'static str {
-    if written { "" } else { DEFAULT }
+    if written {
+        ""
+    } else {
+        "not written — nothing is bound"
+    }
 }
 
 /// One row per key or name, with the action it runs and what that action does.
@@ -308,8 +313,8 @@ fn table_note(written: bool) -> &'static str {
 /// An action nobody defines is shown and marked rather than left out: it is a
 /// line the file really has, and a report that silently drops it is a user
 /// hunting for a key that is written right there.
-fn binding_rows(table: Option<&Bindings>, defaults: &[(&str, &str)]) -> Vec<Row> {
-    binding::entries(table, defaults)
+fn binding_rows(table: Option<&Bindings>) -> Vec<Row> {
+    binding::entries(table)
         .into_iter()
         .map(|(trigger, id)| match binding::action(id) {
             Some(action) => Row::setting(trigger, Value::Set(id.to_string()), action.description),
@@ -448,20 +453,14 @@ fn report(cfg: &Config, env: &Env) -> Vec<Row> {
         "[shell.bindings]",
         table_note(cfg.shell.bindings.is_some()),
     ));
-    rows.extend(binding_rows(
-        cfg.shell.bindings.as_ref(),
-        binding::DEFAULT_BINDINGS,
-    ));
+    rows.extend(binding_rows(cfg.shell.bindings.as_ref()));
 
     rows.push(Row::Blank);
     rows.push(Row::heading(
         "[shell.aliases]",
         table_note(cfg.shell.aliases.is_some()),
     ));
-    rows.extend(binding_rows(
-        cfg.shell.aliases.as_ref(),
-        binding::DEFAULT_ALIASES,
-    ));
+    rows.extend(binding_rows(cfg.shell.aliases.as_ref()));
 
     rows.push(Row::Blank);
     rows.push(Row::heading(
@@ -1003,8 +1002,8 @@ fn note_vault_check(ctx: &Ctx) -> Check {
 /// shell. Which key runs what is `config print`; this counts them and says
 /// whether they resolve.
 fn shell_check(cfg: &Config) -> Check {
-    let bindings = binding::entries(cfg.shell.bindings.as_ref(), binding::DEFAULT_BINDINGS);
-    let aliases = binding::entries(cfg.shell.aliases.as_ref(), binding::DEFAULT_ALIASES);
+    let bindings = binding::entries(cfg.shell.bindings.as_ref());
+    let aliases = binding::entries(cfg.shell.aliases.as_ref());
 
     let unknown: Vec<String> = bindings
         .iter()
@@ -1285,11 +1284,11 @@ mod tests {
 
         assert_eq!(
             written(&cfg.shell.bindings),
-            defaults(binding::DEFAULT_BINDINGS)
+            defaults(binding::EXAMPLE_BINDINGS)
         );
         assert_eq!(
             written(&cfg.shell.aliases),
-            defaults(binding::DEFAULT_ALIASES)
+            defaults(binding::EXAMPLE_ALIASES)
         );
     }
 
@@ -1349,7 +1348,16 @@ mod tests {
     /// is a configuration file that cannot be read back.
     #[test]
     fn every_setting_the_starter_config_names_is_printed() {
-        let rows = report(&Config::default(), &env());
+        // The `[shell]` tables are written out, since the report lists what is
+        // bound rather than what could be — and nothing is bound by default.
+        let cfg = Config {
+            shell: crate::config::ShellConfig {
+                bindings: Some(pairs(binding::EXAMPLE_BINDINGS)),
+                aliases: Some(pairs(binding::EXAMPLE_ALIASES)),
+            },
+            ..Config::default()
+        };
+        let rows = report(&cfg, &env());
         let printed = keys(&rows);
 
         for line in TEMPLATE.lines() {
@@ -1368,13 +1376,20 @@ mod tests {
     /// The keys a shell binds are configuration like any other setting, and
     /// the report is where you look to find out which ones you have.
     #[test]
-    fn the_default_key_bindings_and_aliases_are_printed() {
-        let rows = report(&Config::default(), &env());
+    fn the_key_bindings_and_aliases_that_are_written_are_printed() {
+        let cfg = Config {
+            shell: crate::config::ShellConfig {
+                bindings: Some(pairs(binding::EXAMPLE_BINDINGS)),
+                aliases: Some(pairs(binding::EXAMPLE_ALIASES)),
+            },
+            ..Config::default()
+        };
+        let rows = report(&cfg, &env());
         let printed = keys(&rows);
 
-        for (trigger, _) in binding::DEFAULT_BINDINGS
+        for (trigger, _) in binding::EXAMPLE_BINDINGS
             .iter()
-            .chain(binding::DEFAULT_ALIASES)
+            .chain(binding::EXAMPLE_ALIASES)
         {
             assert!(
                 printed.contains(trigger),
@@ -1388,19 +1403,37 @@ mod tests {
         );
     }
 
+    fn pairs(entries: &[(&str, &str)]) -> crate::config::Bindings {
+        entries
+            .iter()
+            .map(|(trigger, id)| ((*trigger).to_string(), (*id).to_string()))
+            .collect()
+    }
+
+    /// An unwritten table is nothing bound, not a set of defaults in force —
+    /// and the report says so rather than printing an empty list.
+    #[test]
+    fn an_unwritten_binding_table_says_that_nothing_is_bound() {
+        let rows = report(&Config::default(), &env());
+        let lines = render_report(&rows, false).join("\n");
+
+        assert!(lines.contains("nothing is bound"), "{lines}");
+        assert!(
+            !keys(&rows).contains(&"ctrl-o"),
+            "a binding was in force that nobody wrote"
+        );
+    }
+
     /// A binding naming an action scriv does not define stops `scriv init`
     /// outright. The report still shows the line, since it is one the file
     /// really has, and says what is wrong with it.
     #[test]
     fn a_binding_that_names_nothing_is_shown_and_marked() {
-        let rows = binding_rows(
-            Some(
-                &[("f6".to_string(), "repo-jump".to_string())]
-                    .into_iter()
-                    .collect(),
-            ),
-            binding::DEFAULT_BINDINGS,
-        );
+        let rows = binding_rows(Some(
+            &[("f6".to_string(), "repo-jump".to_string())]
+                .into_iter()
+                .collect(),
+        ));
 
         let line = &render_report(&rows, false)[0];
         assert!(line.contains("f6"), "{line}");
@@ -1545,9 +1578,17 @@ mod tests {
                 .collect(),
         );
 
-        let sound = shell_check(&Config::default());
+        let mut sound_config = Config::default();
+        sound_config.shell.bindings = Some(pairs(binding::EXAMPLE_BINDINGS));
+
+        let sound = shell_check(&sound_config);
         assert_eq!(sound.status, Status::Ok);
         assert!(sound.detail.contains("10 key bindings"), "{}", sound.detail);
+
+        // Nothing written is nothing bound, and that is a sound state.
+        let empty = shell_check(&Config::default());
+        assert_eq!(empty.status, Status::Ok);
+        assert!(empty.detail.contains("0 key bindings"), "{}", empty.detail);
 
         let broken = shell_check(&broken_config);
         assert_eq!(broken.status, Status::Fail);

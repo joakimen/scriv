@@ -15,6 +15,16 @@ raised, never by hand.
 
 ### Changed
 
+- scriv no longer binds a key or defines an alias unless you have asked it to.
+  `[shell.bindings]` and `[shell.aliases]` were defaults that applied when the
+  tables were absent; they are now suggestions the starter config writes out
+  commented. A key is the scarcest thing a terminal has, and which of yours a
+  tool may take is yours to say. **If you never wrote those tables, uncomment
+  them in `scriv config init`'s output to get your keys back** — `scriv config
+  print` shows what is bound.
+- The README is a page again rather than a manual: what scriv is, how to
+  install it, the command groups, and how to bind a key. Verbs live in
+  `scriv <command> --help` and settings in the generated `config.toml`.
 - `note edit` and `note rg` are now one command, `scriv note open`. The selector
   opens on every note in the vault and three keys say what the query is read as:
   `ctrl-e` matches the names, `ctrl-r` searches inside every note as you type,
