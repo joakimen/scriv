@@ -97,7 +97,7 @@ pub struct Ctx {
     utc_offset: time::UtcOffset,
     /// The editor `scriv edit` launches, from the environment.
     editor: Option<String>,
-    /// The command `scriv note edit` launches: `[note] editor`, else the one
+    /// The command `scriv note open` launches: `[note] editor`, else the one
     /// above. Resolved here so no command looks the environment up itself.
     note_editor: Option<String>,
     /// `GH_REPO`, which names the repository `gh` acts on when the working
@@ -226,14 +226,14 @@ impl Ctx {
         Ok(parts)
     }
 
-    /// The command `scriv note edit` launches, or `None` when neither
+    /// The command `scriv note open` launches, or `None` when neither
     /// `[note] editor` nor the environment names one. For reporting;
     /// [`Ctx::note_editor`] is what launching goes through.
     pub fn note_editor_setting(&self) -> Option<&str> {
         self.note_editor.as_deref()
     }
 
-    /// The command `scriv note edit` launches, split into program and
+    /// The command `scriv note open` launches, split into program and
     /// arguments.
     pub fn note_editor(&self) -> Result<Vec<String>> {
         let command = self

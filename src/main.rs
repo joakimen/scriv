@@ -473,35 +473,28 @@ enum NoteCmd {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Search inside every note, as you type
+    /// Open notes; omit the names to look for them
     ///
-    /// The query goes to `ripgrep` rather than to the fuzzy matcher, so the
-    /// list is every matching *line* in the vault and it is rebuilt on each
-    /// keystroke. `ctrl-q` switches to filtering what came back.
+    /// A name is a path below the vault, exactly as `note ls` prints it, and
+    /// several open together. With none, the selector opens on every note in
+    /// the vault and three keys say what the query is read as: `ctrl-e` matches
+    /// the names, `ctrl-r` searches inside every note as you type — the letters
+    /// you typed, in order, so `errhand` finds "error handling" — and `ctrl-f`
+    /// searches for the query exactly, for a phrase or a snippet of code. The
+    /// header says which is in force, and switching empties the query.
     ///
-    /// Matching is fuzzy — the letters you typed, in order, anywhere on the
-    /// line — so `errhand` finds "error handling". `ctrl-x` searches for the
-    /// query exactly instead, for a phrase or a snippet of code, and `ctrl-f`
-    /// goes back; the header says which is in force.
+    /// Searching the text needs `ripgrep`; without it only the names are
+    /// offered. `ctrl-q` switches to filtering what came back.
     ///
-    /// `tab` takes several. What you pick opens at its line, and anything else
+    /// `tab` takes several. A search hit opens at its line, and anything else
     /// you picked lands in the quickfix list behind it — which needs a vim; any
     /// other editor is handed the files and no line numbers.
-    Rg {
-        /// Text to open the search with
-        #[arg(value_name = "QUERY", allow_hyphen_values = true)]
-        query: Option<String>,
-    },
-    /// Open notes; omit the names to select them
-    ///
-    /// `tab` selects several and they open together. A name is a path below the
-    /// vault, exactly as `note ls` prints it.
     ///
     /// The command is `[note] editor`, falling back to `$VISUAL` then
     /// `$EDITOR`. It is a setting of its own because a note is as often read as
     /// written — `glow` and `nvim` are both answers. The fish integration binds
     /// this to f10.
-    Edit {
+    Open {
         /// Notes to open; omit to select interactively
         #[arg(value_name = "NAME")]
         notes: Vec<String>,
@@ -998,9 +991,8 @@ fn dispatch(ctx: &Ctx, command: Command) -> anyhow::Result<()> {
         Command::Note { command } => match command {
             NoteCmd::Ls { status } => cmd::note::ls(ctx, status),
             NoteCmd::Sel => cmd::note::sel(ctx),
-            NoteCmd::Edit { notes } => cmd::note::edit(ctx, &notes),
+            NoteCmd::Open { notes } => cmd::note::open(ctx, &notes),
             NoteCmd::New { name } => cmd::note::new(ctx, name.as_deref()),
-            NoteCmd::Rg { query } => cmd::note::rg(ctx, query.as_deref()),
             NoteCmd::Scratch => cmd::note::scratch(ctx),
             NoteCmd::Cleanup { yes } => cmd::note::cleanup(ctx, yes),
         },

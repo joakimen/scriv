@@ -145,7 +145,7 @@ fn unix(time: SystemTime) -> Option<i64> {
 
 /// `scriv note ls` — print the notes, most recently modified first.
 ///
-/// Plain, one path below the vault per line, which is the name `note edit`
+/// Plain, one path below the vault per line, which is the name `note open`
 /// takes. `--status` adds the tags and both dates; `--absolute-paths` prints
 /// what a pipe can open.
 pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
@@ -173,23 +173,25 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
 /// `scriv note sel` — fuzzy-select a note and print its absolute path.
 pub fn sel(ctx: &Ctx) -> Result<()> {
     let notes = load(ctx)?;
-    let choice = select::select_one(items(ctx, &notes), "Select a note", &ctx.config.selector)?;
+    let (cfg, offset) = (&ctx.config.note, ctx.utc_offset());
+    let rows = notes.iter().map(|note| item(note, cfg, offset)).collect();
+    let choice = select::select_one(rows, "Select a note", &ctx.config.selector)?;
     println!("{choice}");
     Ok(())
 }
 
-/// `scriv note edit [NAME]...` — open notes in `[note] editor`, selecting them
+/// `scriv note open [NAME]...` — open notes in `[note] editor`, selecting them
 /// when none are named.
-pub fn edit(ctx: &Ctx, names: &[String]) -> Result<()> {
+///
+/// The selector is one list read three ways, each on a key: the names of the
+/// notes, and — through ripgrep — every line of every note, fuzzily or exactly.
+/// A note is as often looked for by something it says as by what it is called,
+/// and which of the two it is only becomes clear once the looking has started.
+pub fn open(ctx: &Ctx, names: &[String]) -> Result<()> {
     let editor = ctx.note_editor()?;
+    let root = vault(ctx)?;
 
-    let targets = if names.is_empty() {
-        match select_notes(ctx)? {
-            Some(targets) => targets,
-            None => return Ok(()),
-        }
-    } else {
-        let root = vault(ctx)?;
+    if !names.is_empty() {
         let targets: Vec<String> = names
             .iter()
             .map(|name| resolve(&root, ctx.home(), name))
@@ -201,17 +203,43 @@ pub fn edit(ctx: &Ctx, names: &[String]) -> Result<()> {
                 eprintln!("warning: no note called {name} — the editor will open it as a new file");
             }
         }
-        targets
-    };
+        return cmd::edit::launch(ctx, &editor, &targets);
+    }
 
-    if targets.is_empty() {
+    let notes = load(ctx)?;
+    let chosen = match select::select_many_searching(
+        searcher(
+            root.clone(),
+            notes,
+            ctx.config.note.clone(),
+            ctx.utc_offset(),
+        ),
+        "Open a note",
+        modes(which("rg").is_some()),
+        &ctx.config.selector,
+    ) {
+        Ok(chosen) => chosen,
+        Err(e) if e.is::<select::Cancelled>() => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if chosen.is_empty() {
         return Ok(());
     }
-    cmd::edit::launch(ctx, &editor, &targets)
+
+    // A mode key empties the list, so what came back is all of one kind: paths
+    // from the names, or places inside notes from a search.
+    let matches: Vec<note::Match> = chosen
+        .iter()
+        .filter_map(|value| note::decode_match(value, &root))
+        .collect();
+    if matches.is_empty() {
+        return cmd::edit::launch(ctx, &editor, &chosen);
+    }
+    open_matches(ctx, &editor, &matches)
 }
 
 /// A note named on the command line, as a path. A name is relative to the
-/// vault, so `scriv note edit` takes back exactly what `scriv note ls` printed;
+/// vault, so `scriv note open` takes back exactly what `scriv note ls` printed;
 /// an absolute path, or one that begins with `~`, is left where it points.
 fn resolve(root: &Path, home: &Path, name: &str) -> String {
     let path = expand_home_dir(name, home);
@@ -221,38 +249,21 @@ fn resolve(root: &Path, home: &Path, name: &str) -> String {
     root.join(path).to_string_lossy().into_owned()
 }
 
-/// Choose notes from the vault. `Ok(None)` when the user cancels.
-fn select_notes(ctx: &Ctx) -> Result<Option<Vec<String>>> {
-    let notes = load(ctx)?;
-    match select::select_many(items(ctx, &notes), "Edit a note", &ctx.config.selector) {
-        Ok(chosen) => Ok(Some(chosen)),
-        Err(e) if e.is::<select::Cancelled>() => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-/// Selector rows: the day a note was created, dim and unsearchable, then what
-/// it calls itself — coloured by its label where its directory carries one.
+/// One selector row: the day a note was created, dim and unsearchable, then
+/// what it calls itself — coloured by its label where its directory carries
+/// one.
 ///
-/// Every pane is built when its row is highlighted rather than now — see
-/// [`Preview::Deferred`]. A vault read up front is one file read per note for
-/// panes the user scrolls past.
-fn items(ctx: &Ctx, notes: &[Note]) -> Vec<SelectItem> {
-    let cfg = ctx.config.note.clone();
-    let offset = ctx.utc_offset();
-
-    notes
-        .iter()
-        .map(|note| {
-            let item = SelectItem::new(note::row(note), note.path.to_string_lossy().into_owned())
-                .prefix(note::prefix(note, offset), Vec::new())
-                .preview(Preview::File);
-            match note::row_color(note, &cfg) {
-                Some(color) => item.color(color),
-                None => item,
-            }
-        })
-        .collect()
+/// The pane is built when the row is highlighted rather than now — see
+/// [`Preview::File`]. A vault read up front is one file read per note for panes
+/// the user scrolls past.
+fn item(note: &Note, cfg: &crate::config::NoteConfig, offset: time::UtcOffset) -> SelectItem {
+    let item = SelectItem::new(note::row(note), note.path.to_string_lossy().into_owned())
+        .prefix(note::prefix(note, offset), Vec::new())
+        .preview(Preview::File);
+    match note::row_color(note, cfg) {
+        Some(color) => item.color(color),
+        None => item,
+    }
 }
 
 /// `scriv note new [NAME]` — start a note and open it.
@@ -482,78 +493,103 @@ const MATCH_LIMIT: usize = 2000;
 /// still running and there is no widest yet.
 const MATCH_COLUMN: usize = 40;
 
-/// `scriv note rg [QUERY]` — search every note as you type, and open what you
-/// pick.
+/// The mode that needs nothing installed, named once because two lists hold it.
+const BY_NAME: select::Mode = select::Mode::new("ctrl-e", "name");
+
+/// The keys `note open` reads the query on, names first.
 ///
-/// The query goes to ripgrep rather than to the fuzzy matcher, so the list is
-/// every matching *line* in the vault rather than the notes whose names match.
-/// `tab` takes several; they become a quickfix list.
-pub fn rg(ctx: &Ctx, query: Option<&str>) -> Result<()> {
-    let root = vault(ctx)?;
-    let editor = ctx.note_editor()?;
-    if which("rg").is_none() {
-        bail!("`rg` is not on PATH — `scriv note rg` searches with ripgrep");
-    }
-
-    // A query given on the command line is where the selector opens, not a
-    // search run without one: what comes back is still chosen by hand.
-    let chosen = match select::select_many_searching(
-        searcher(root.clone()),
-        "Search notes",
-        query.unwrap_or_default(),
-        MODES,
-        &ctx.config.selector,
-    ) {
-        Ok(chosen) => chosen,
-        Err(e) if e.is::<select::Cancelled>() => return Ok(()),
-        Err(e) => return Err(e),
-    };
-
-    let matches: Vec<note::Match> = chosen
-        .iter()
-        .filter_map(|value| note::decode_match(value, &root))
-        .collect();
-    if matches.is_empty() {
-        return Ok(());
-    }
-    open_matches(ctx, &editor, &matches)
-}
-
-/// How `note rg` reads what is typed, fuzzy first.
+/// Names are the default because that is what a note is usually looked for by,
+/// and because the list is worth something before a key is pressed: an empty
+/// query is the whole vault, where an empty search is nothing.
 ///
-/// Fuzzy is the default because it is what a finder is for: typing `errhand`
-/// should find "error handling", and a search that only matches what was typed
-/// exactly makes the user do the remembering. Exact is the other key for when
-/// the query is a phrase, a path or a snippet of code, where subsequence
-/// matching finds a hundred lines that merely contain the letters.
+/// Of the two that search the text, fuzzy comes first for the reason a finder
+/// exists at all — typing `errhand` should find "error handling", and a search
+/// that only matches what was typed exactly makes the user do the remembering.
+/// Exact is the key for a phrase, a path or a snippet of code, where
+/// subsequence matching finds a hundred lines that merely contain the letters.
 const MODES: &[select::Mode] = &[
-    select::Mode::new("ctrl-f", "fuzzy"),
-    select::Mode::new("ctrl-x", "exact"),
+    BY_NAME,
+    select::Mode::new("ctrl-r", "text"),
+    select::Mode::new("ctrl-f", "exact"),
 ];
 
-/// The closure the selector calls on every keystroke: one ripgrep run per
-/// query, its rows streamed as ripgrep prints them.
-fn searcher(root: PathBuf) -> select::Search {
-    Box::new(move |query: &str, mode: usize| {
+/// The one mode left when ripgrep is not installed.
+///
+/// Offering the other two would be offering keys that find nothing and say
+/// nothing about why: the selector owns the screen and has nowhere to report a
+/// missing program to. Names need no ripgrep, so that much still works.
+const NAMES_ONLY: &[select::Mode] = &[BY_NAME];
+
+/// Which modes to offer, given whether ripgrep is on `PATH`.
+const fn modes(has_ripgrep: bool) -> &'static [select::Mode] {
+    match has_ripgrep {
+        true => MODES,
+        false => NAMES_ONLY,
+    }
+}
+
+/// What the query is matched against, and how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Looking {
+    /// The names of the notes, already in hand and scored the way the selector
+    /// scores every other list.
+    Names,
+    /// Every line of every note, through ripgrep.
+    Lines(Matching),
+}
+
+impl Looking {
+    fn of(mode: usize) -> Self {
+        match mode {
+            0 => Self::Names,
+            1 => Self::Lines(Matching::Fuzzy),
+            _ => Self::Lines(Matching::Exact),
+        }
+    }
+}
+
+/// The closure the selector calls on every keystroke: the vault filtered by
+/// name, or one ripgrep run per query with its rows streamed as ripgrep prints
+/// them.
+///
+/// The notes are carried into it rather than re-read, so the name list costs
+/// nothing per keystroke and the vault is walked once for the whole selector.
+fn searcher(
+    root: PathBuf,
+    notes: Vec<Note>,
+    cfg: crate::config::NoteConfig,
+    offset: time::UtcOffset,
+) -> select::Search {
+    Box::new(move |query: &str, mode: usize| match Looking::of(mode) {
+        Looking::Names => {
+            let rows: Vec<SelectItem> = note::by_name(&notes, query)
+                .into_iter()
+                .map(|note| item(note, &cfg, offset))
+                .collect();
+            select::Searching {
+                rows: Box::new(rows.into_iter()),
+                stop: Box::new(|| {}),
+            }
+        }
         // An empty pattern matches every line of every note, which is neither
         // an answer nor a cheap question.
-        if query.trim().is_empty() {
-            return select::Searching {
-                rows: Box::new(std::iter::empty()),
-                stop: Box::new(|| {}),
-            };
-        }
-        match Search::start(&root, query, Matching::of(mode)) {
+        Looking::Lines(_) if query.trim().is_empty() => nothing(),
+        Looking::Lines(matching) => match Search::start(&root, query, matching) {
             Ok(search) => search.into_searching(),
             // A failed spawn is an empty list: the selector is open and has
             // nowhere to report an error to, and the next keystroke tries
             // again.
-            Err(_) => select::Searching {
-                rows: Box::new(std::iter::empty()),
-                stop: Box::new(|| {}),
-            },
-        }
+            Err(_) => nothing(),
+        },
     })
+}
+
+/// A search with no rows in it and nothing to call off.
+fn nothing() -> select::Searching {
+    select::Searching {
+        rows: Box::new(std::iter::empty()),
+        stop: Box::new(|| {}),
+    }
 }
 
 /// How a query becomes something ripgrep can look for.
@@ -563,15 +599,6 @@ enum Matching {
     Fuzzy,
     /// The query, as typed, meaning itself.
     Exact,
-}
-
-impl Matching {
-    fn of(mode: usize) -> Self {
-        match mode {
-            0 => Self::Fuzzy,
-            _ => Self::Exact,
-        }
-    }
 }
 
 /// The pattern ripgrep is given, and whether it is a regular expression.
@@ -1036,10 +1063,24 @@ mod search_tests {
         assert!(!is_regex, "an exact query would be read as a regex");
     }
 
+    /// The mode the selector opens in is the one that needs no ripgrep and has
+    /// something to show before a key is pressed.
     #[test]
-    fn the_first_mode_is_the_fuzzy_one() {
-        assert_eq!(Matching::of(0), Matching::Fuzzy);
-        assert_eq!(Matching::of(1), Matching::Exact);
-        assert_eq!(MODES[0].label, "fuzzy");
+    fn the_first_mode_is_the_one_that_reads_names() {
+        assert_eq!(Looking::of(0), Looking::Names);
+        assert_eq!(Looking::of(1), Looking::Lines(Matching::Fuzzy));
+        assert_eq!(Looking::of(2), Looking::Lines(Matching::Exact));
+        assert_eq!(MODES[0].label, "name");
+    }
+
+    /// Without ripgrep the two keys that would need it are not offered: they
+    /// would find nothing, and a selector has nowhere to say why.
+    #[test]
+    fn the_modes_that_search_the_text_are_offered_only_with_ripgrep() {
+        assert_eq!(modes(true).len(), 3);
+        assert_eq!(modes(false).len(), 1);
+        assert_eq!(modes(false)[0].label, "name");
+        // Whichever list is in force, mode 0 is the same one.
+        assert_eq!(Looking::of(0), Looking::Names);
     }
 }

@@ -39,7 +39,7 @@ Supported platform: macOS on Apple Silicon. `scriv ps` depends on Darwin's
 signal numbers, and the crate refuses to compile for any other target.
 
 External requirements: `git`, plus `gh` for `pr` and `repo clone`/`open`, `rg`
-for `note rg`, `bat` for syntax-highlighted previews, a fish history file for
+for searching inside notes, `bat` for syntax-highlighted previews, a fish history file for
 `history`, `claude` for `stats improve`, and `$VISUAL` or `$EDITOR` for `edit` —
 or `[note] editor` for `note`. `scriv config check` reports on each. `project` runs whatever the
 project in front of it asks for, and reports a tool the machine does not have as
@@ -86,7 +86,7 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 | --- | --- |
 | `scriv repo` | `ls` `sel` `open` `clone` |
 | `scriv file` | `ls` `sel` `add` `rm` `prune` |
-| `scriv note` | `ls` `sel` `new` `scratch` `edit` `rg` `cleanup` |
+| `scriv note` | `ls` `sel` `new` `scratch` `open` `cleanup` |
 | `scriv branch` | `ls` `sel` `checkout` `rm` |
 | `scriv worktree` | `ls` `sel` `add` `rm` |
 | `scriv pr` | `ls` `sel` `checkout` `open` `merge` |
@@ -100,9 +100,11 @@ editor = "nvim"     # what `note` opens one with; unset, $VISUAL / $EDITOR
 
 A note row is the day it was created and what it calls itself, tinted by the
 label its directory carries; everything else about it is in the preview pane.
-`note rg` searches inside every note as you type — fuzzily, or exactly on
-`ctrl-x` — and turns what you pick into a quickfix list. `note ls` prints
-absolute paths, one per line, for piping into whatever reads paths.
+`note open` reads what you type three ways, each on a key: the names of the
+notes on `ctrl-e`, every line of every note on `ctrl-r`, and the same exactly on
+`ctrl-f` — for a phrase or a snippet of code. Switching empties the query, a
+search hit opens at its line, and several become a quickfix list. `note ls`
+prints absolute paths, one per line, for piping into whatever reads paths.
 
 Every preview pane shows the file as it is on disk, drawn by `bat` in
 `[selector] preview_theme` — Catppuccin Mocha unless you say otherwise.

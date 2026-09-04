@@ -83,8 +83,8 @@ pub const ACTIONS: &[Action] = &[
     },
     Action {
         id: "note-edit",
-        description: "Select a note and open it",
-        args: &["note", "edit"],
+        description: "Find a note by name or by what it says, and open it",
+        args: &["note", "open"],
         kind: Kind::Run,
     },
     Action {
