@@ -433,7 +433,9 @@ fn config_init_writes_a_config_the_next_command_accepts() {
 #[test]
 fn config_print_covers_every_table_and_the_keys_a_shell_binds() {
     let sandbox = Sandbox::new();
-    sandbox.write_config("[repo]\nroot = \"~/dev/github.com\"\n");
+    sandbox.write_config(
+        "[repo]\nroot = \"~/dev/github.com\"\n\n[shell.bindings]\nctrl-o = \"repo-cd\"\n",
+    );
 
     let run = sandbox.run(&["config", "print"]);
     run.ok();
@@ -449,6 +451,19 @@ fn config_print_covers_every_table_and_the_keys_a_shell_binds() {
         "{}",
         run.stdout
     );
+}
+
+/// A config with no `[shell]` section binds nothing, and the report says so
+/// rather than listing keys nobody asked for.
+#[test]
+fn config_print_says_when_no_key_is_bound() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[repo]\nroot = \"~/dev/github.com\"\n");
+
+    let run = sandbox.run(&["config", "print"]);
+    run.ok();
+    assert!(run.stdout.contains("nothing is bound"), "{}", run.stdout);
+    assert!(!run.stdout.contains("ctrl-o"), "{}", run.stdout);
 }
 
 #[test]
@@ -1622,6 +1637,10 @@ fn a_listing_ends_quietly_when_the_reader_stops_reading() {
 #[test]
 fn init_fish_emits_functions_bindings_and_completions() {
     let sandbox = Sandbox::new();
+    sandbox.write_config(
+        "[shell.bindings]\nctrl-o = \"repo-cd\"\nctrl-t = \"worktree-cd\"\n\
+         ctrl-r = \"history-select\"\n\n[shell.aliases]\nfe = \"edit\"\n",
+    );
     let run = sandbox.run(&["init", "fish"]);
     run.ok();
     for needle in [
@@ -1634,6 +1653,24 @@ fn init_fish_emits_functions_bindings_and_completions() {
     ] {
         assert!(run.stdout.contains(needle), "missing {needle:?}");
     }
+}
+
+/// scriv takes no key of its own: a config that binds nothing gets a shell
+/// with the completions and an empty binding function, and no more.
+#[test]
+fn init_fish_binds_nothing_until_the_config_says_so() {
+    let sandbox = Sandbox::new();
+    let run = sandbox.run(&["init", "fish"]);
+    run.ok();
+
+    assert!(
+        run.stdout.contains("function scriv_key_bindings"),
+        "{}",
+        run.stdout
+    );
+    assert!(!run.stdout.contains("    bind "), "{}", run.stdout);
+    assert!(!run.stdout.contains("function fe"), "{}", run.stdout);
+    assert!(run.stdout.contains("complete -c scriv"), "{}", run.stdout);
 }
 
 #[test]
@@ -2394,8 +2431,12 @@ fn project_build_runs_each_toolchain_it_found_when_there_is_no_runner() {
 // --- configurable shell integration -----------------------------------------
 
 #[test]
-fn init_fish_emits_the_default_bindings_and_aliases() {
+fn init_fish_emits_what_the_config_binds() {
     let sandbox = Sandbox::new();
+    sandbox.write_config(
+        "[shell.bindings]\nctrl-o = \"repo-cd\"\nup = \"history-up\"\n\n\
+         [shell.aliases]\nb = \"project-build\"\n",
+    );
     let run = sandbox.run(&["init", "fish"]);
     run.ok();
 
@@ -2409,8 +2450,10 @@ fn init_fish_emits_the_default_bindings_and_aliases() {
     }
 }
 
+/// What a table holds is the whole of what is bound: a key left out of it is
+/// one the shell never hears about.
 #[test]
-fn a_configured_binding_table_replaces_the_defaults() {
+fn a_binding_table_is_the_whole_of_what_is_bound() {
     let sandbox = Sandbox::new();
     sandbox.write_config("[shell.bindings]\nf6 = \"repo-cd\"\nctrl-b = \"project-build\"\n");
 
@@ -2419,9 +2462,9 @@ fn a_configured_binding_table_replaces_the_defaults() {
 
     assert!(run.stdout.contains("bind f6 "), "{}", run.stdout);
     assert!(run.stdout.contains("bind ctrl-b "), "{}", run.stdout);
-    assert!(!run.stdout.contains("bind ctrl-o"), "a default survived");
-    // The aliases were not touched, so they are still the defaults.
-    assert!(run.stdout.contains("function b "), "{}", run.stdout);
+    assert!(!run.stdout.contains("bind ctrl-o"), "{}", run.stdout);
+    // The aliases were not written, so there are none.
+    assert!(!run.stdout.contains("function b "), "{}", run.stdout);
 }
 
 #[test]
@@ -2433,7 +2476,7 @@ fn a_configured_alias_takes_the_name_it_was_given() {
     run.ok();
 
     assert!(run.stdout.contains("function build "), "{}", run.stdout);
-    assert!(!run.stdout.contains("function fe "), "a default survived");
+    assert!(!run.stdout.contains("function fe "), "{}", run.stdout);
 }
 
 /// A shell where one key works and another silently does not is worse than one

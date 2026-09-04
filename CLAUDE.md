@@ -58,9 +58,14 @@ That pull request proposes a patch. A change that earns a minor — a new comman
 or flag, while `0.x` — has to say so with a `Release: minor` line in a commit
 message on its branch. Not in the pull request description: this repository
 squashes with `COMMIT_MESSAGES`, so the description is discarded and a marker
-written there is matched by nothing and costs a version silently. README.md
-under *Releasing* has the rest, including the way out when the proposed version
-is wrong anyway.
+written there is matched by nothing and costs a version silently.
+
+Should the open release pull request read the wrong version anyway, edit
+`Cargo.toml` on its branch, run `cargo check` for the lockfile, fix the
+`CHANGELOG.md` heading to match, and merge before anything else lands: the next
+push to `main` rebuilds that branch from scratch. Watch the squash subject too
+— with a single commit GitHub takes that commit's subject, which release-plz
+may have written for an earlier proposed version, so pass `--subject`.
 
 Nothing is built, signed or tagged on a maintainer's machine. Do not cut a
 release locally to work around a red workflow — fix the workflow.
@@ -94,18 +99,20 @@ publishes the crate.
 2. **README.md, and the starter config in `cmd/config.rs`.** Read both on every
    change to `src/` — not only when adding a command — and change every sentence
    the edit has made untrue. They are what most people read instead of the
-   binary, and they go stale silently. The README's command table must match
-   `scriv <group> --help`, its key-binding table `DEFAULT_BINDINGS`, its
-   `Install` line the platforms and external tools, and the prose under each
-   heading what the code now does; the starter config must describe every
-   setting that exists and none that does not. A test holds `scriv config
+   binary, and they go stale silently. The README's command table must name
+   every group `scriv --help` lists, one line each, and the prose under each
+   heading must say what the code now does; the starter config must describe
+   every setting that exists and none that does not. A test holds `scriv config
    print` to that config, so a setting written in one and not the other fails
    the build; a setting in neither still slips through, which is what reading
    both on every change is for.
 
-   The README is still a page, not a manual: reading it is what is required on
-   every change, not adding to it. A new flag does not belong there; a new
-   command *group* does, as one row.
+   The README is a page, not a manual, and keeping it one is the work. It says
+   what scriv is, how to install it, what the groups are and how the shell
+   integration is configured — verbs live in `--help`, settings in the starter
+   config, and release mechanics here. Reading it is what is required on every
+   change; adding to it needs a reason. A new flag does not belong there, and a
+   new command *group* is one row.
 3. **`docs/demo.gif`.** Re-record with `make demo` (needs `vhs`, ~30s) when
    anything changed what a selector draws. CI only plays the tape, so a stale
    GIF is invisible. When nothing changed on screen, say so in the PR.
@@ -209,12 +216,15 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   an existing action is a config edit; only a *new* action is a code change,
   and it goes in that catalogue with an id that never changes afterwards, since
   renaming one breaks every config that named it.
-- **The defaults live in `DEFAULT_BINDINGS` and `DEFAULT_ALIASES`**, and the
-  starter config writes them out commented. A test parses that commented block
-  and holds it to the constants, so the two cannot drift.
-- **Default keys prefer `ctrl-<letter>` and never `alt-`**, which fish mostly
-  presets. Displacing a fish preset is deliberate and named above
-  `DEFAULT_BINDINGS`. Function keys are the fallback, `f4`/`f5` excepted. What
+- **scriv binds no key of its own.** `EXAMPLE_BINDINGS` and `EXAMPLE_ALIASES`
+  are what the starter config writes out *commented*, and an absent table binds
+  nothing — a key is the scarcest thing a terminal has, and which of the user's
+  a tool may take is the user's to say. A test parses that commented block and
+  holds it to the constants, so the two cannot drift. Never make either the
+  fallback for a table nobody wrote.
+- **A suggested key prefers `ctrl-<letter>` and never `alt-`**, which fish
+  mostly presets. Displacing a fish preset is deliberate and named above
+  `EXAMPLE_BINDINGS`. Function keys are the fallback, `f4`/`f5` excepted. What
   a user binds is their business.
 - **Only `cd` and the command line need a shell**, since a child can write to
   neither of its parent's — hence `repo sel` printing a path and `history sel`

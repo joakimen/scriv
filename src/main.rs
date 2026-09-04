@@ -258,9 +258,10 @@ enum Command {
     /// function itself, and completions; other shells emit completions only.
     ///
     /// Which keys and names those are comes from `[shell.bindings]` and
-    /// `[shell.aliases]`, which name actions rather than shell code —
-    /// `scriv config init` writes the defaults out commented, and `scriv config
-    /// check` says whether yours resolve. A configuration that will not parse,
+    /// `[shell.aliases]`, which name actions rather than shell code. scriv
+    /// binds nothing on its own: `scriv config init` writes a suggested set out
+    /// commented, and until a table is written nothing is bound. `scriv config
+    /// check` says whether yours resolve; a configuration that will not parse,
     /// or that names an action scriv does not define, stops this command rather
     /// than emitting a shell where one key silently does nothing.
     Init {
@@ -836,7 +837,8 @@ enum ConfigCmd {
     /// or not: the value in force, and — where that value is scriv's rather
     /// than yours — that it is a default. The keys `scriv init` binds and the
     /// names it defines are settings like any other, listed with the action
-    /// each one runs and what that action does.
+    /// each one runs and what that action does; there are none until the file
+    /// names some.
     ///
     /// Whether what the settings point at is actually there is `config check`.
     Print,

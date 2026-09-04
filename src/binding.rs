@@ -141,18 +141,21 @@ pub const ACTIONS: &[Action] = &[
     },
 ];
 
-/// The keys bound when `[shell.bindings]` is absent.
+/// The key bindings the starter config offers, commented out.
 ///
-/// ctrl-o and ctrl-q are the only keys fish leaves free, and only the first is
-/// taken — `scriv edit` has the `fe` alias instead. What the rest displace:
-/// ctrl-g over `cancel` (escape and ctrl-c both still do that), ctrl-r over
-/// `history-pager`, ctrl-t over `transpose-chars` — swapping the two characters
-/// around the cursor, which is worth less than a jump between worktrees — and
-/// up over `up-line`, which `history-up` hands back wherever the selector would
-/// be wrong. ctrl-p/ctrl-n are deliberately left as `up-line`/`down-line`. f1,
-/// f2, f3, f7 and f10 displace nothing; f4 and f5 are skipped because users'
-/// own tools cluster there.
-pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
+/// Suggestions, not defaults: nothing is bound until the file says so. A key is
+/// the scarcest thing a terminal has, and a tool that takes ten of them the
+/// moment it is installed is a tool that has decided what the user's `ctrl-r`
+/// is for.
+///
+/// What each one costs, since the file cannot say it at every line: ctrl-o and
+/// ctrl-q are the only keys fish leaves free. ctrl-g displaces `cancel` (escape
+/// and ctrl-c both still do that), ctrl-r `history-pager`, ctrl-t
+/// `transpose-chars` — swapping the two characters around the cursor — and up
+/// `up-line`, which `history-up` hands back wherever the selector would be
+/// wrong. f1, f2, f3, f7 and f10 displace nothing; f4 and f5 are left alone
+/// because users' own tools cluster there.
+pub const EXAMPLE_BINDINGS: &[(&str, &str)] = &[
     ("ctrl-o", "repo-cd"),
     ("ctrl-t", "worktree-cd"),
     ("f1", "repo-open"),
@@ -165,9 +168,10 @@ pub const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("up", "history-up"),
 ];
 
-/// The names defined when `[shell.aliases]` is absent. Short because they are
-/// typed many times a day; unprefixed because that is the point of them.
-pub const DEFAULT_ALIASES: &[(&str, &str)] = &[
+/// The aliases the starter config offers, commented out like the bindings
+/// above. Short because they are typed many times a day; unprefixed because
+/// that is the point of them.
+pub const EXAMPLE_ALIASES: &[(&str, &str)] = &[
     ("fe", "edit"),
     ("kl", "proc-kill"),
     ("i", "project-deps"),
@@ -211,39 +215,33 @@ pub fn action(id: &str) -> Option<&'static Action> {
 
 /// Resolve the configuration into what `scriv init` will emit.
 ///
-/// A table that is present replaces the defaults rather than adding to them,
-/// so leaving a key out is how it is unbound; a table that is absent is the
-/// defaults. An action nobody defines is an error rather than a line quietly
-/// left out: a shell where one key works and another silently does not is
-/// worse than one that says why at the moment it is sourced.
+/// The tables are the whole of it: an absent one binds nothing, and a key left
+/// out of a present one is a key scriv does not touch. An action nobody defines
+/// is an error rather than a line quietly left out — a shell where one key works
+/// and another silently does not is worse than one that says why at the moment
+/// it is sourced.
 pub fn resolve(config: &ShellConfig) -> Result<Integration> {
     Ok(Integration {
-        bindings: bind("binding", config.bindings.as_ref(), DEFAULT_BINDINGS)?,
-        aliases: bind("alias", config.aliases.as_ref(), DEFAULT_ALIASES)?,
+        bindings: bind("binding", config.bindings.as_ref())?,
+        aliases: bind("alias", config.aliases.as_ref())?,
     })
 }
 
-/// What a table names, in the order it was written — the defaults when it is
-/// absent.
+/// What a table names, in the order it was written.
 ///
 /// Unlike [`resolve`], an action nobody defines is kept rather than refused:
 /// `scriv config print` reports a line the file really has, and leaves calling
 /// it broken to `scriv config check`.
-pub fn entries<'a>(
-    table: Option<&'a Bindings>,
-    defaults: &'a [(&'a str, &'a str)],
-) -> Vec<(&'a str, &'a str)> {
-    match table {
-        Some(table) => table
-            .iter()
-            .map(|(trigger, id)| (trigger.as_str(), id.as_str()))
-            .collect(),
-        None => defaults.to_vec(),
-    }
+pub fn entries(table: Option<&Bindings>) -> Vec<(&str, &str)> {
+    table
+        .into_iter()
+        .flatten()
+        .map(|(trigger, id)| (trigger.as_str(), id.as_str()))
+        .collect()
 }
 
-fn bind(what: &str, table: Option<&Bindings>, defaults: &[(&str, &str)]) -> Result<Vec<Bound>> {
-    entries(table, defaults)
+fn bind(what: &str, table: Option<&Bindings>) -> Result<Vec<Bound>> {
+    entries(table)
         .into_iter()
         .map(|(trigger, id)| match action(id) {
             Some(action) => Ok(Bound {
@@ -277,27 +275,29 @@ mod tests {
         bound.iter().map(|bound| bound.trigger.as_str()).collect()
     }
 
+    /// Nothing is bound until the config says so: a key is the scarcest thing
+    /// a terminal has, and scriv takes none of them on its own.
     #[test]
-    fn an_empty_configuration_is_the_defaults() {
+    fn an_empty_configuration_binds_nothing() {
         let resolved = resolve(&ShellConfig::default()).unwrap();
 
-        assert_eq!(
-            triggers(&resolved.bindings),
-            DEFAULT_BINDINGS
-                .iter()
-                .map(|(key, _)| *key)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(triggers(&resolved.aliases), vec!["fe", "kl", "i", "b"]);
+        assert!(resolved.bindings.is_empty(), "{resolved:?}");
+        assert!(resolved.aliases.is_empty(), "{resolved:?}");
+    }
+
+    /// The starter config offers them commented out, so a user who uncomments
+    /// the block has to get a shell rather than an error.
+    #[test]
+    fn every_example_names_an_action_that_exists() {
+        let config = ShellConfig {
+            bindings: Some(table(EXAMPLE_BINDINGS)),
+            aliases: Some(table(EXAMPLE_ALIASES)),
+        };
+        resolve(&config).expect("the examples do not resolve");
     }
 
     #[test]
-    fn every_default_names_an_action_that_exists() {
-        resolve(&ShellConfig::default()).expect("the defaults do not resolve");
-    }
-
-    #[test]
-    fn a_table_replaces_the_defaults_rather_than_adding_to_them() {
+    fn a_table_is_the_whole_of_what_is_bound() {
         let config = ShellConfig {
             bindings: Some(table(&[("f6", "repo-cd")])),
             aliases: Some(table(&[])),
@@ -305,10 +305,7 @@ mod tests {
         let resolved = resolve(&config).unwrap();
 
         assert_eq!(triggers(&resolved.bindings), vec!["f6"]);
-        assert!(
-            resolved.aliases.is_empty(),
-            "an empty table left the defaults in place"
-        );
+        assert!(resolved.aliases.is_empty(), "{resolved:?}");
     }
 
     #[test]

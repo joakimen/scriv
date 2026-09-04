@@ -376,11 +376,11 @@ struct RawToml {
 ///
 /// Neither table holds shell code: both name [actions](crate::binding::ACTIONS)
 /// scriv defines, so one configuration serves every shell it can write for.
-/// A table that is present replaces the defaults rather than adding to them,
-/// which is what makes leaving a key out the way to unbind it; a table that is
-/// absent is [`crate::binding::DEFAULT_BINDINGS`] and
-/// [`crate::binding::DEFAULT_ALIASES`], so a config written before this section
-/// existed keeps the keys it had.
+/// What a table holds is the whole of what is bound — scriv adds nothing of its
+/// own, and an absent table binds nothing.
+/// [`crate::binding::EXAMPLE_BINDINGS`] and
+/// [`crate::binding::EXAMPLE_ALIASES`] are what the starter config offers,
+/// commented out.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default)]
 pub struct ShellConfig {
