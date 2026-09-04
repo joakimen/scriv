@@ -481,7 +481,8 @@ enum NoteCmd {
     /// the names, `ctrl-r` searches inside every note as you type — the letters
     /// you typed, in order, so `errhand` finds "error handling" — and `ctrl-f`
     /// searches for the query exactly, for a phrase or a snippet of code. The
-    /// header says which is in force, and switching empties the query.
+    /// header says which is in force, and what you have typed is read again in
+    /// whichever mode you switch to.
     ///
     /// Searching the text needs `ripgrep`; without it only the names are
     /// offered. `ctrl-q` switches to filtering what came back.

@@ -21,8 +21,8 @@ raised, never by hand.
   and `ctrl-f` searches for the query exactly. Which of the two you want is
   rarely clear before the looking has started, and it no longer has to be:
   switching costs a keystroke rather than a second command. The mode in force is
-  named in the header, and switching empties the query, since a query means a
-  different thing in each of them.
+  named in the header, and what you have typed is read again in whichever mode
+  you switch to — a key is a second opinion on the same words.
 - Without `ripgrep`, `note open` offers the names and nothing else, where
   `note rg` used to refuse to open at all.
 - `scriv note open NAME` opens named notes without a selector, as `note edit`

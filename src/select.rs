@@ -628,9 +628,10 @@ pub type Search = Box<dyn FnMut(&str, usize) -> Searching + Send>;
 /// text. Deliberate keys also cost the same one keystroke and never leave a
 /// doubt about which mode is in force — which is the thing the header is for.
 ///
-/// Switching empties the query and the list with it. A query means a different
-/// thing in each mode, and rows left over from the one before it are answers to
-/// a question that is no longer being asked.
+/// The query survives the switch and is read again in the new mode. A mode key
+/// is a second opinion on what was already typed — the same words, looked for
+/// another way — so what the list holds changes and what is in the box does
+/// not.
 pub struct Mode {
     /// skim's spelling of the key — `ctrl-f`.
     pub key: &'static str,
@@ -1316,12 +1317,11 @@ fn binds(
     }
     // Each mode key searches again in its own mode and says so in the header,
     // which is the only place the current one can be read. The query goes with
-    // the old mode: `set-query` empties the box, and the empty reload it fires
-    // in turn is what leaves the list showing the new mode's answer to nothing
-    // rather than the old mode's answer to something.
+    // it: a mode key is a second opinion on what was already typed, and asking
+    // for one should not cost typing it again.
     for (index, mode) in modes.iter().enumerate() {
         binds.push(format!(
-            "{}:reload({MODE_MARKER}{index}{MODE_MARKER})+set-query()+set-header({})",
+            "{}:reload({MODE_MARKER}{index}{MODE_MARKER}{{q}})+set-header({})",
             mode.key,
             chosen_header(modes, index, header, " match"),
         ));
@@ -1570,20 +1570,19 @@ mod tests {
             );
         }
 
-        /// A query means a different thing in each mode, so the box is emptied
-        /// rather than re-read: the reload carries no `{q}`, and `set-query`
-        /// clears what the box still shows.
+        /// A mode key asks for a second opinion on what was already typed, so
+        /// the query is handed to the new mode rather than thrown away.
         #[test]
-        fn a_mode_key_leaves_the_query_and_the_list_empty() {
+        fn a_mode_key_carries_the_query_into_the_new_mode() {
             let modes = [Mode::new("ctrl-f", "fuzzy"), Mode::new("ctrl-x", "exact")];
             let binds = binds(&[], false, false, &modes, &Views::NONE, "");
             assert!(
-                binds.iter().all(|b| !b.contains("{q}")),
-                "a mode key carried the old query: {binds:?}"
+                binds.iter().all(|b| b.contains("{q}")),
+                "a mode key dropped the query: {binds:?}"
             );
             assert!(
-                binds.iter().all(|b| b.contains("set-query()")),
-                "a mode key left the old query on screen: {binds:?}"
+                binds.iter().all(|b| !b.contains("set-query")),
+                "a mode key rewrote the query box: {binds:?}"
             );
         }
 

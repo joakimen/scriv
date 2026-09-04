@@ -102,9 +102,10 @@ A note row is the day it was created and what it calls itself, tinted by the
 label its directory carries; everything else about it is in the preview pane.
 `note open` reads what you type three ways, each on a key: the names of the
 notes on `ctrl-e`, every line of every note on `ctrl-r`, and the same exactly on
-`ctrl-f` — for a phrase or a snippet of code. Switching empties the query, a
-search hit opens at its line, and several become a quickfix list. `note ls`
-prints absolute paths, one per line, for piping into whatever reads paths.
+`ctrl-f` — for a phrase or a snippet of code. A key rereads what you have
+already typed rather than clearing it, a search hit opens at its line, and
+several become a quickfix list. `note ls` prints absolute paths, one per line,
+for piping into whatever reads paths.
 
 Every preview pane shows the file as it is on disk, drawn by `bat` in
 `[selector] preview_theme` — Catppuccin Mocha unless you say otherwise.
