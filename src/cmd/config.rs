@@ -75,6 +75,13 @@ ignore = ["node_modules", "target"]
 # Written inline, on one line, for the reason `[repo] labels` is.
 # labels = { work = ["projects", "clients"], personal = ["journal"] }
 
+# Directories holding notes you keep but no longer read, as paths below the
+# root. They are left out of every listing, out of the selector and out of the
+# text search; `--all` puts them back, and naming a note outright opens it
+# either way. A list, because a vault that files notes by kind archives them
+# the same way.
+# archives = ["work/archive", "personal/archive"]
+
 # The one permanent note `note scratch` opens — somewhere to put a thought
 # without deciding first whether it is worth a note of its own. A path below
 # the root; its directory is created the first time.
@@ -385,6 +392,7 @@ fn report(cfg: &Config, env: &Env) -> Vec<Row> {
         "`scriv note` has nowhere to look",
     ));
     rows.extend(label_rows(&cfg.note.labels));
+    rows.push(Row::setting("archives", list(&cfg.note.archives), ""));
     rows.push(match cfg.note.scratch.as_deref() {
         Some(scratch) => Row::setting("scratch", Value::Set(scratch.to_string()), ""),
         None => Row::setting(
@@ -986,12 +994,45 @@ fn note_vault_check(ctx: &Ctx) -> Check {
     }
     match cmd::note::vault_summary(ctx) {
         Err(err) => Check::fail("note vault", format!("{err:#}")),
-        Ok((root, 0)) => Check::warn(
+        Ok(vault) if vault.listed + vault.archived == 0 => Check::warn(
             "note vault",
-            format!("{} holds no Markdown files", root.display()),
+            format!("{} holds no Markdown files", vault.root.display()),
         ),
-        Ok((_, count)) => Check::ok("note vault", plural(count, "note", "notes")),
+        Ok(vault) => Check::ok(
+            "note vault",
+            match vault.archived {
+                0 => plural(vault.listed, "note", "notes"),
+                archived => format!(
+                    "{}, {archived} archived",
+                    plural(vault.listed, "note", "notes")
+                ),
+            },
+        ),
     }
+}
+
+/// The archive directories, when there are any: whether each names a directory
+/// that is actually there.
+///
+/// A warning rather than a failure, since an entry that names nothing hides
+/// nothing — which is the point of reporting it. A path is relative to the
+/// vault, and one written as though it were absolute, or misspelled, is a
+/// setting that silently does nothing at all.
+fn note_archives_check(ctx: &Ctx) -> Option<Check> {
+    if ctx.config.note.archives.is_empty() {
+        return None;
+    }
+    Some(match cmd::note::missing_archives(ctx) {
+        Err(err) => Check::fail("note archives", format!("{err:#}")),
+        Ok(missing) if missing.is_empty() => Check::ok(
+            "note archives",
+            plural(ctx.config.note.archives.len(), "directory", "directories"),
+        ),
+        Ok(missing) => Check::warn(
+            "note archives",
+            format!("not below the vault: {}", missing.join(", ")),
+        ),
+    })
 }
 
 /// `[shell]`: whether every key and name resolves to an action that exists.
@@ -1145,7 +1186,8 @@ fn collect(ctx: &Ctx) -> Vec<Section> {
         "only `stats improve` needs it (https://claude.com/product/claude-code)",
     ));
 
-    let content = vec![history_check(ctx), files_check(ctx), note_vault_check(ctx)];
+    let mut content = vec![history_check(ctx), files_check(ctx), note_vault_check(ctx)];
+    content.extend(note_archives_check(ctx));
 
     vec![
         Section {

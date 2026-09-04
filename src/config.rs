@@ -211,6 +211,15 @@ pub struct NoteConfig {
     /// Written as an inline table — `labels = { work = ["projects"] }` — for
     /// the reason `[repo] labels` is.
     pub labels: Labels,
+    /// Directories below [`Self::root`] holding notes that are kept but no
+    /// longer read, as paths relative to the root — `["work/archive",
+    /// "personal/archive"]`. Left out of every listing unless `--all` asks for
+    /// them.
+    ///
+    /// A list rather than one directory, and paths rather than names, because
+    /// a vault that files notes by kind archives them the same way: an
+    /// `archive` beside each kind, not one at the root for all of them.
+    pub archives: Vec<String>,
     /// The one permanent note `note scratch` opens, as a path below
     /// [`Self::root`]. Unset, it is `scratch/scratch.md`.
     pub scratch: Option<String>,

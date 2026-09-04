@@ -112,6 +112,37 @@ pub fn top_dir(rel: &str) -> &str {
     }
 }
 
+/// Whether `rel` — a path below the vault root — is one of the `archives`
+/// directories or sits inside one.
+///
+/// A directory matches itself as well as everything below it, so a walk can
+/// prune on the same answer that hides a note. Segments are compared
+/// case-insensitively, as a path is on Darwin, and empty and `.` segments are
+/// dropped from both sides so `work/archive`, `work/archive/` and
+/// `./work/archive` name the same directory. An entry naming no directory at
+/// all matches nothing, rather than archiving the whole vault.
+pub fn is_archived(rel: &str, archives: &[String]) -> bool {
+    archives.iter().any(|archive| under(rel, archive))
+}
+
+/// Whether `rel` is `archive` or lies below it.
+fn under(rel: &str, archive: &str) -> bool {
+    let mut wanted = segments(archive).peekable();
+    if wanted.peek().is_none() {
+        return false;
+    }
+    let mut have = segments(rel);
+    wanted.all(|want| {
+        have.next()
+            .is_some_and(|seg| seg.eq_ignore_ascii_case(want))
+    })
+}
+
+/// The meaningful parts of a relative path.
+fn segments(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter(|seg| !seg.is_empty() && *seg != ".")
+}
+
 /// When a note was created: what its front matter says, else what the
 /// filesystem says.
 ///
@@ -696,6 +727,73 @@ mod tests {
     fn a_vault_writing_date_rather_than_created_is_read_the_same_way() {
         let parsed = front("---\ndate: 2024-03-01\n---\n");
         assert_eq!(date(parsed.created.unwrap(), utc()), "2024-03-01");
+    }
+
+    // --- archives ---
+
+    #[test]
+    fn an_archive_covers_itself_and_everything_below_it() {
+        let archives = vec!["work/archive".to_string()];
+        assert!(is_archived("work/archive", &archives));
+        assert!(is_archived("work/archive/old.md", &archives));
+        assert!(is_archived("work/archive/2023/old.md", &archives));
+    }
+
+    #[test]
+    fn a_note_outside_every_archive_stays_listed() {
+        let archives = vec!["work/archive".to_string(), "personal/archive".to_string()];
+        assert!(!is_archived("work/plan.md", &archives));
+        assert!(!is_archived("personal/idea.md", &archives));
+        assert!(!is_archived("inbox.md", &archives));
+        assert!(!is_archived("archive/old.md", &archives));
+    }
+
+    /// A directory whose name merely starts with the archive's is a different
+    /// directory, and a path is matched by segment rather than by prefix.
+    #[test]
+    fn an_archive_is_not_a_prefix_of_the_name_beside_it() {
+        let archives = vec!["work/archive".to_string()];
+        assert!(!is_archived("work/archived-plans.md", &archives));
+        assert!(!is_archived("work/archive-2023/old.md", &archives));
+    }
+
+    /// The config is written by hand, and a trailing slash or a leading `./`
+    /// names the same directory as the plain path does.
+    #[test]
+    fn an_archive_path_is_read_the_way_it_was_written() {
+        for written in [
+            "work/archive/",
+            "./work/archive",
+            "/work/archive",
+            "work//archive",
+        ] {
+            let archives = vec![written.to_string()];
+            assert!(is_archived("work/archive/old.md", &archives), "{written}");
+        }
+    }
+
+    /// Darwin does not tell `Archive` and `archive` apart, and neither does the
+    /// label a directory carries.
+    #[test]
+    fn an_archive_matches_a_directory_of_any_case() {
+        let archives = vec!["Work/Archive".to_string()];
+        assert!(is_archived("work/archive/old.md", &archives));
+    }
+
+    /// An entry naming no directory would otherwise archive the whole vault.
+    #[test]
+    fn an_empty_archive_entry_hides_nothing() {
+        for empty in ["", "/", ".", "./"] {
+            assert!(
+                !is_archived("work/plan.md", &[empty.to_string()]),
+                "{empty}"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_archived_when_nothing_is_configured() {
+        assert!(!is_archived("work/archive/old.md", &[]));
     }
 
     // --- what a note calls itself ---
