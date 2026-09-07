@@ -24,6 +24,12 @@ raised, never by hand.
 
 ### Changed
 
+- The note selector names each note's group in a column of its own, the way the
+  repository selector names a label. `[note] labels` was readable only as the
+  row's colour, which two labels of similar hue and `--color never` both take
+  away; the label is now written out, and a directory carrying none names
+  itself. The column is not searched, so typing `work` still looks for a
+  note rather than a directory.
 - scriv no longer binds a key or defines an alias unless you have asked it to.
   `[shell.bindings]` and `[shell.aliases]` were defaults that applied when the
   tables were absent; they are now suggestions the starter config writes out

@@ -3,8 +3,7 @@
 //!
 //! Everything here is pure. The walk, the file reads and the clock live in
 //! [`cmd::note`](crate::cmd::note); this module turns the bytes they hand back
-//! into a title, a set of tags, two dates, an aligned row and a rendered
-//! preview.
+//! into a title, a set of tags, two dates and an aligned row.
 //!
 //! A note says what it is in its YAML front matter, which is the only metadata
 //! this reads. Inline `#tags` in the body are deliberately not indexed: finding
@@ -433,25 +432,61 @@ impl Widths {
     }
 }
 
-/// The dim column ahead of a selector row: the day the note was created.
+/// The columns ahead of a selector row: the note's group, padded to `width`
+/// and tinted with its label's colour, then the day the note was created.
 ///
-/// A [`crate::select::SelectItem::prefix`] rather than part of the label, so it
-/// is drawn in its own colour and — the reason it is not simply a column —
-/// never matched: typed into the search box, `2024` would otherwise rank a
-/// year's worth of notes above the one being looked for.
-pub fn prefix(note: &Note, offset: time::UtcOffset) -> String {
-    format!("{}  ", date(note.created, offset))
+/// A [`crate::select::SelectItem::prefix`] rather than part of the label, so
+/// both are drawn in their own colours and — the reason they are not simply
+/// columns — never matched: typed into the search box, `2024` would otherwise
+/// rank a year's worth of notes above the one being looked for, and a group
+/// name would rank the whole directory.
+///
+/// `width` is measured over the entire vault by [`group_width`], not over
+/// whatever the query has left on screen, so the titles hold their column as
+/// the list narrows.
+pub fn prefix(
+    note: &Note,
+    cfg: &crate::config::NoteConfig,
+    width: usize,
+    offset: time::UtcOffset,
+) -> (String, Vec<Tint>) {
+    let mut group = String::new();
+    if width > 0 {
+        push_column(&mut group, note.group(cfg), width);
+        group.push_str(COLUMN_GAP);
+    }
+    let tints = row_color(note, cfg).map_or_else(Vec::new, |color| {
+        vec![Tint {
+            range: 0..group.chars().count(),
+            color,
+        }]
+    });
+    (
+        format!("{group}{}{COLUMN_GAP}", date(note.created, offset)),
+        tints,
+    )
+}
+
+/// The width of the group column, measured over every note the selector was
+/// opened on. Zero for a vault whose notes all sit at the root, which is a
+/// column of nothing.
+pub fn group_width(notes: &[Note], cfg: &crate::config::NoteConfig) -> usize {
+    notes
+        .iter()
+        .map(|note| note.group(cfg).chars().count())
+        .max()
+        .unwrap_or(0)
 }
 
 /// One selector row: what the note calls itself, and nothing else.
 ///
-/// Everything a note *is* — where it is filed, what it is tagged, how much of
-/// it is done — is in the preview pane, which has the width for it and is one
-/// keystroke away. A row is for telling one note from another at a glance, and
-/// six columns of attributes is a worse way to do that than a name and a date.
+/// What a note is tagged and how much of it is done are in the preview pane,
+/// which has the width for them and is one keystroke away. A row is for telling
+/// one note from another at a glance, and six columns of attributes is a worse
+/// way to do that than a name, a date and where it is filed.
 ///
 /// The row takes its group's colour where it has one, the way a repository row
-/// does, so a label is still read off the list without costing a column.
+/// does, and the group itself is named in [`prefix`].
 pub fn row(note: &Note) -> String {
     note.title().to_string()
 }
@@ -897,24 +932,63 @@ mod tests {
         assert_eq!(rows, vec!["standup", "idea", "inbox"]);
     }
 
-    /// The date is drawn in its own colour ahead of the name, and outside what
-    /// the query matches — typed, `2024` would otherwise rank a year of notes
-    /// above the one being looked for.
+    /// The group and the date are drawn in their own colours ahead of the name,
+    /// and outside what the query matches — typed, `2024` would otherwise rank
+    /// a year of notes above the one being looked for, and `work` the whole
+    /// directory.
     #[test]
-    fn the_created_date_leads_the_row_without_being_searched() {
-        let notes = vault();
-        assert_eq!(prefix(&notes[0], utc()), "1971-02-05  ");
+    fn the_group_and_the_created_date_lead_the_row_without_being_searched() {
+        let (cfg, notes) = (config(), vault());
+        let width = group_width(&notes, &cfg);
+        assert_eq!(
+            prefix(&notes[0], &cfg, width, utc()).0,
+            "work     1971-02-05  "
+        );
+        assert_eq!(
+            prefix(&notes[2], &cfg, width, utc()).0,
+            "         1970-01-01  "
+        );
+        assert!(!row(&notes[0]).contains("work"));
         assert!(!row(&notes[0]).contains("1971"));
     }
 
     /// Every prefix is the same width, so the names line up under each other.
     #[test]
-    fn every_date_column_is_the_same_width() {
-        let widths: Vec<usize> = vault()
+    fn every_prefix_is_the_same_width() {
+        let (cfg, notes) = (config(), vault());
+        let width = group_width(&notes, &cfg);
+        let widths: Vec<usize> = notes
             .iter()
-            .map(|n| prefix(n, utc()).chars().count())
+            .map(|n| prefix(n, &cfg, width, utc()).0.chars().count())
             .collect();
         assert!(widths.windows(2).all(|w| w[0] == w[1]), "{widths:?}");
+    }
+
+    /// The group takes its label's colour, and a directory carrying no label
+    /// takes none — the same rule the row itself is drawn by.
+    #[test]
+    fn the_group_column_is_tinted_only_where_the_directory_carries_a_label() {
+        let (cfg, notes) = (config(), vault());
+        let width = group_width(&notes, &cfg);
+        let tints = |note: &Note| prefix(note, &cfg, width, utc()).1;
+        assert_eq!(
+            tints(&notes[0]),
+            vec![Tint {
+                range: 0..width + COLUMN_GAP.len(),
+                color: cfg.color_of("work").unwrap(),
+            }]
+        );
+        assert!(tints(&notes[1]).is_empty());
+    }
+
+    /// A vault filed flat has nothing to say in a group column, and pays no
+    /// width for one.
+    #[test]
+    fn a_vault_with_every_note_at_the_root_gets_no_group_column() {
+        let (cfg, notes) = (config(), vec![note("inbox.md", Front::default())]);
+        let width = group_width(&notes, &cfg);
+        assert_eq!(width, 0);
+        assert_eq!(prefix(&notes[0], &cfg, width, utc()).0, "1970-01-01  ");
     }
 
     /// A label still reads off the list without costing a column, the way a
@@ -1125,7 +1199,7 @@ mod tests {
                 let _ = note.tag_column();
                 let _ = note.shown("/home/me");
                 let _ = row(&note);
-                let _ = prefix(&note, utc());
+                let _ = prefix(&note, &cfg, 8, utc());
                 let _ = junk(&note, "", scratch());
                 let _ = junk(&note, &"word ".repeat(20), scratch());
                 let widths = Widths::of(std::slice::from_ref(&note), &cfg, "/home/me");
