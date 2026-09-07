@@ -202,7 +202,11 @@ pub fn ls(ctx: &Ctx, status: bool, all: bool) -> Result<()> {
 pub fn sel(ctx: &Ctx, all: bool) -> Result<()> {
     let notes = load(ctx, all)?;
     let (cfg, offset) = (&ctx.config.note, ctx.utc_offset());
-    let rows = notes.iter().map(|note| item(note, cfg, offset)).collect();
+    let width = note::group_width(&notes, cfg);
+    let rows = notes
+        .iter()
+        .map(|note| item(note, cfg, width, offset))
+        .collect();
     let choice = select::select_one(rows, "Select a note", &ctx.config.selector)?;
     println!("{choice}");
     Ok(())
@@ -280,16 +284,25 @@ fn resolve(root: &Path, home: &Path, name: &str) -> String {
     root.join(path).to_string_lossy().into_owned()
 }
 
-/// One selector row: the day a note was created, dim and unsearchable, then
-/// what it calls itself — coloured by its label where its directory carries
-/// one.
+/// One selector row: where a note is filed and the day it was created, both
+/// unsearchable, then what it calls itself — coloured by its label where its
+/// directory carries one.
+///
+/// `width` is the group column's, over the whole vault rather than over the
+/// rows being built: name mode rebuilds these on every keystroke.
 ///
 /// The pane is built when the row is highlighted rather than now — see
 /// [`Preview::File`]. A vault read up front is one file read per note for panes
 /// the user scrolls past.
-fn item(note: &Note, cfg: &crate::config::NoteConfig, offset: time::UtcOffset) -> SelectItem {
+fn item(
+    note: &Note,
+    cfg: &crate::config::NoteConfig,
+    width: usize,
+    offset: time::UtcOffset,
+) -> SelectItem {
+    let (prefix, tints) = note::prefix(note, cfg, width, offset);
     let item = SelectItem::new(note::row(note), note.path.to_string_lossy().into_owned())
-        .prefix(note::prefix(note, offset), Vec::new())
+        .prefix(prefix, tints)
         .preview(Preview::File);
     match note::row_color(note, cfg) {
         Some(color) => item.color(color),
@@ -592,11 +605,14 @@ fn searcher(
     offset: time::UtcOffset,
     archives: Vec<String>,
 ) -> select::Search {
+    // Measured once, over the whole vault: a width recomputed from the rows
+    // that survived the query would shift the titles as the list narrows.
+    let width = note::group_width(&notes, &cfg);
     Box::new(move |query: &str, mode: usize| match Looking::of(mode) {
         Looking::Names => {
             let rows: Vec<SelectItem> = note::by_name(&notes, query)
                 .into_iter()
-                .map(|note| item(note, &cfg, offset))
+                .map(|note| item(note, &cfg, width, offset))
                 .collect();
             select::Searching {
                 rows: Box::new(rows.into_iter()),
@@ -1044,6 +1060,43 @@ mod tests {
         assert_eq!(with_extension("notes.v2.txt"), "notes.v2.txt");
         // The dot is in a directory, not in the name.
         assert_eq!(with_extension("v1.2/standup"), "v1.2/standup.md");
+    }
+
+    fn vault() -> Vec<Note> {
+        ["work/meetings/standup.md", "scratch/idea.md", "inbox.md"]
+            .iter()
+            .map(|rel| Note {
+                path: PathBuf::from("/vault").join(rel),
+                rel: (*rel).to_string(),
+                dir: note::top_dir(rel).to_string(),
+                modified: 0,
+                created: 0,
+                front: note::Front::default(),
+            })
+            .collect()
+    }
+
+    /// Name mode rebuilds its rows on every keystroke, and a group column
+    /// measured over the survivors would shift the titles left as the list
+    /// narrows.
+    #[test]
+    fn the_group_column_holds_its_width_as_a_query_narrows_the_list() {
+        let notes = vault();
+        let cfg = crate::config::NoteConfig::default();
+        let mut search = searcher(PathBuf::from("/vault"), notes, cfg, utc(), Vec::new());
+        let mut widths = |query: &str| -> Vec<usize> {
+            (search)(query, 0)
+                .rows
+                .map(|row| row.prefix.unwrap().chars().count())
+                .collect()
+        };
+
+        let whole = widths("");
+        let narrowed = widths("inbox");
+        assert_eq!(whole.len(), 3);
+        assert_eq!(narrowed.len(), 1);
+        assert!(whole.windows(2).all(|w| w[0] == w[1]), "{whole:?}");
+        assert_eq!(narrowed[0], whole[0]);
     }
 
     /// Only a vim has a quickfix list. Anything else is handed the files.
