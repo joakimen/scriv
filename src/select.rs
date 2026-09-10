@@ -86,6 +86,53 @@ pub fn quote(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
+/// What a preview pane says when it is showing only the first screen of what
+/// it was given.
+///
+/// skim draws a `line/total` indicator of its own, but only once the pane has
+/// been scrolled — a preview at rest looks the same whether it ends on screen
+/// or runs a thousand lines past it. `shift-↓` is skim's own binding for
+/// scrolling a pane, and nothing else in the selector names it.
+const OVERFLOW_HINT: &str = "⋯ more below · shift-↓ to scroll";
+
+/// [`OVERFLOW_HINT`] as the line that goes above the content.
+fn overflow_banner() -> String {
+    term::paint(OVERFLOW_HINT, term::SECONDARY, true)
+}
+
+/// `text` under an [`overflow_banner`] when it runs past a pane `height` rows
+/// tall. The banner takes a row itself, which is why it is measured against
+/// one less than the pane.
+fn with_overflow_banner(text: String, height: usize) -> String {
+    let fits = height.saturating_sub(1);
+    if fits == 0 || text.lines().count() <= fits {
+        return text;
+    }
+    format!("{}\n{text}", overflow_banner())
+}
+
+/// `cmd` with its output put under the same banner — for a pane whose content
+/// only the shell has seen. `ROWS` is the pane height skim exports to a
+/// preview command.
+///
+/// The filter holds back at most a pane's worth of lines and streams the rest,
+/// so it costs the same on a command that prints more than it was supposed to.
+/// stderr joins stdout because skim now sees the filter's exit status rather
+/// than the command's, and a preview that failed would otherwise draw nothing
+/// at all.
+fn with_overflow_filter(cmd: &str) -> String {
+    let banner = overflow_banner();
+    format!(
+        "{{ {cmd}; }} 2>&1 | awk -v rows=\"${{ROWS:-0}}\" '\
+         BEGIN {{ fits = rows - 1 }} \
+         fits < 1 {{ print; next }} \
+         NR <= fits {{ held[NR] = $0; next }} \
+         NR == fits + 1 {{ print \"{banner}\"; for (i = 1; i <= fits; i++) print held[i] }} \
+         {{ print }} \
+         END {{ if (NR <= fits) for (i = 1; i <= NR; i++) print held[i] }}'"
+    )
+}
+
 /// The preview for a file: its contents, via `bat` when installed and `head`
 /// otherwise, bounded to 200 lines.
 pub fn file_preview(path: &str) -> Preview {
@@ -381,13 +428,23 @@ impl SkimItem for SkItem {
         out
     }
 
-    fn preview(&self, _context: PreviewContext) -> ItemPreview {
+    fn preview(&self, context: PreviewContext) -> ItemPreview {
+        // Every pane is marked here rather than where its content is built, so
+        // a preview added later cannot forget to say that it runs long.
         match &self.item.preview {
-            Some(Preview::Text(text)) => ItemPreview::AnsiText(text.clone()),
-            Some(Preview::Command(cmd)) => ItemPreview::Command(cmd.clone()),
-            Some(Preview::File) => ItemPreview::Command(file_preview_cmd(self.item.value())),
-            Some(Preview::Dir) => ItemPreview::Command(dir_preview_cmd(self.item.value())),
-            Some(Preview::Deferred(build)) => ItemPreview::AnsiText(build()),
+            Some(Preview::Text(text)) => {
+                ItemPreview::AnsiText(with_overflow_banner(text.clone(), context.height))
+            }
+            Some(Preview::Command(cmd)) => ItemPreview::Command(with_overflow_filter(cmd)),
+            Some(Preview::File) => {
+                ItemPreview::Command(with_overflow_filter(&file_preview_cmd(self.item.value())))
+            }
+            Some(Preview::Dir) => {
+                ItemPreview::Command(with_overflow_filter(&dir_preview_cmd(self.item.value())))
+            }
+            Some(Preview::Deferred(build)) => {
+                ItemPreview::AnsiText(with_overflow_banner(build(), context.height))
+            }
             // Blank rather than `Global`, which would run the empty global
             // preview command.
             None => ItemPreview::Text(String::new()),
@@ -1808,10 +1865,81 @@ mod tests {
             panic!("a directory preview must run a command");
         };
         assert!(
-            cmd.starts_with("ls "),
+            cmd.contains("ls -Ap"),
             "a directory is listed, not read: {cmd}"
         );
         assert!(cmd.contains("'src/cmd'"), "{cmd}");
+    }
+
+    /// Text that ends on screen is drawn as it was written: a banner on every
+    /// pane is a row of the file nobody asked to lose.
+    #[test]
+    fn a_pane_that_holds_all_of_its_text_is_left_alone() {
+        let text = "one\ntwo\nthree".to_string();
+        assert_eq!(with_overflow_banner(text.clone(), 20), text);
+    }
+
+    /// The pane can hold one line fewer than its height once the banner is in
+    /// it, and text of exactly that length still fits.
+    #[test]
+    fn text_is_measured_against_the_row_the_banner_takes() {
+        let five = (1..=5)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(with_overflow_banner(five.clone(), 6), five);
+        assert!(with_overflow_banner(five, 5).starts_with(&overflow_banner()));
+    }
+
+    /// A pane whose height is not known yet — skim asks for a preview before it
+    /// has drawn one — says nothing rather than guessing.
+    #[test]
+    fn text_in_a_pane_of_unknown_height_is_left_alone() {
+        let text = "one\ntwo".to_string();
+        assert_eq!(with_overflow_banner(text.clone(), 0), text);
+    }
+
+    /// The shell filter is the banner for content only the shell has seen, so
+    /// it is checked by running it: what it means is awk's to say.
+    #[test]
+    fn a_long_command_preview_is_marked_and_kept_whole() {
+        let out = filtered("seq 100", "10");
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].contains(OVERFLOW_HINT), "{out}");
+        assert_eq!(lines.len(), 101, "the filter dropped lines: {out}");
+        assert_eq!(lines[1], "1");
+        assert_eq!(lines[100], "100");
+    }
+
+    #[test]
+    fn a_short_command_preview_is_passed_through_unmarked() {
+        assert_eq!(filtered("seq 3", "10"), "1\n2\n3\n");
+    }
+
+    /// `ROWS` unset is skim before its first draw, the same case as a height of
+    /// zero above.
+    #[test]
+    fn a_command_preview_in_a_pane_of_unknown_height_is_unmarked() {
+        assert_eq!(filtered("seq 3", ""), "1\n2\n3\n");
+    }
+
+    /// A command that fails has only stderr to explain itself, and the pane is
+    /// where that has to land.
+    #[test]
+    fn a_failing_command_preview_shows_what_it_said() {
+        let out = filtered("echo nope >&2; exit 1", "10");
+        assert_eq!(out, "nope\n");
+    }
+
+    /// Run a preview command through the filter the way skim would.
+    fn filtered(cmd: &str, rows: &str) -> String {
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(with_overflow_filter(cmd))
+            .env("ROWS", rows)
+            .output()
+            .expect("running a preview command");
+        String::from_utf8(out.stdout).expect("preview output is text")
     }
 
     #[test]
