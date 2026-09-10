@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.19.1
+
+*Released 2026-09-10*
+
 ### Changed
 
 - A preview pane that is showing only the first screen of something longer now
