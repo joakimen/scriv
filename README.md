@@ -87,9 +87,9 @@ does, and `scriv config check` says whether they all resolve — an action scriv
 does not define stops `scriv init` rather than emitting a shell where one key
 silently does nothing.
 
-Inside a selector, `ctrl-v` hides and shows the preview pane, `shift-↓` scrolls
-it, and `tab` takes several rows where several are allowed. Anything else is
-named in the selector's own header.
+Inside a selector, `ctrl-v` hides and shows the preview pane and `tab` takes
+several rows where several are allowed. Anything else is named in the
+selector's own header.
 
 ## Development
 
