@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.19.2
+
+*Released 2026-09-10*
+
 ### Changed
 
 - A preview pane showing only part of something longer now says so on its last
