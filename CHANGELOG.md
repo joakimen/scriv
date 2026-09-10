@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- A preview pane showing only part of something longer now says so on its last
+  row, where the text runs out and the eye is already looking. The mark sat on
+  the first line before — a note at the top of a page saying there is a second
+  one — and the pane went on past the bottom edge for anyone who knew which key
+  scrolled it. It ends at the mark now.
+
 ## v0.19.1
 
 *Released 2026-09-10*

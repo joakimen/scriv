@@ -86,50 +86,75 @@ pub fn quote(arg: &str) -> String {
     format!("'{}'", arg.replace('\'', r"'\''"))
 }
 
-/// What a preview pane says when it is showing only the first screen of what
-/// it was given.
+/// What a preview pane says on its last row when its content ran past it.
 ///
-/// skim draws a `line/total` indicator of its own, but only once the pane has
-/// been scrolled — a preview at rest looks the same whether it ends on screen
-/// or runs a thousand lines past it. `shift-↓` is skim's own binding for
-/// scrolling a pane, and nothing else in the selector names it.
-const OVERFLOW_HINT: &str = "⋯ more below · shift-↓ to scroll";
+/// Nothing else tells the reader: skim's own `line/total` indicator appears
+/// only once a pane has been scrolled, and a pane at rest looks the same
+/// whether it ends on screen or a thousand lines below.
+const OVERFLOW_HINT: &str = "⋯ more";
 
-/// [`OVERFLOW_HINT`] as the line that goes above the content.
-fn overflow_banner() -> String {
+/// [`OVERFLOW_HINT`] as the row that ends the pane.
+fn overflow_marker() -> String {
     term::paint(OVERFLOW_HINT, term::SECONDARY, true)
 }
 
-/// `text` under an [`overflow_banner`] when it runs past a pane `height` rows
-/// tall. The banner takes a row itself, which is why it is measured against
-/// one less than the pane.
-fn with_overflow_banner(text: String, height: usize) -> String {
-    let fits = height.saturating_sub(1);
-    if fits == 0 || text.lines().count() <= fits {
-        return text;
-    }
-    format!("{}\n{text}", overflow_banner())
+/// How many rows of a pane `height` tall a preview may draw on.
+///
+/// One short of what skim reports, which is the pane's outer height: a `down`
+/// or `up` preview window spends a row of that on a border where a `right` or
+/// `left` one does not. Overshooting would clip the bottom row, and the bottom
+/// row is the one that has to be on screen, so the row is given up in every
+/// layout.
+fn preview_rows(height: usize) -> usize {
+    height.saturating_sub(1)
 }
 
-/// `cmd` with its output put under the same banner — for a pane whose content
-/// only the shell has seen. `ROWS` is the pane height skim exports to a
-/// preview command.
+/// `text` cut to a pane `height` rows tall, ending in an [`overflow_marker`]
+/// when there was more of it than fitted.
 ///
-/// The filter holds back at most a pane's worth of lines and streams the rest,
-/// so it costs the same on a command that prints more than it was supposed to.
-/// stderr joins stdout because skim now sees the filter's exit status rather
+/// The content is cut rather than left long and scrollable: the marker is only
+/// truthful on the row the reader's eye stops at, and that is the bottom one.
+fn with_overflow_marker(text: String, height: usize) -> String {
+    let rows = preview_rows(height);
+    if rows == 0 || text.lines().count() <= rows {
+        return text;
+    }
+    let mut out: String = text
+        .lines()
+        .take(rows - 1)
+        .map(|l| format!("{l}\n"))
+        .collect();
+    out.push_str(&overflow_marker());
+    out
+}
+
+/// `cmd` cut and marked the same way — for a pane whose content only the shell
+/// has seen. `ROWS` is the pane height skim exports to a preview command.
+///
+/// The filter holds a pane's worth of lines and stops reading at the first line
+/// past it, so a command that prints a great deal is cut short rather than read
+/// out. stderr joins stdout because skim sees the filter's exit status rather
 /// than the command's, and a preview that failed would otherwise draw nothing
 /// at all.
+///
+/// `keep` is [`preview_rows`] worked out in awk, the pane height being
+/// something only the run knows.
+///
+/// Every brace pair in the awk program is closed before the next one opens:
+/// skim expands `{...}` in a preview command as one of its own field
+/// placeholders, and a `{` whose `}` arrives only after another `{` is dropped
+/// along with everything between them.
 fn with_overflow_filter(cmd: &str) -> String {
-    let banner = overflow_banner();
+    let marker = overflow_marker();
     format!(
         "{{ {cmd}; }} 2>&1 | awk -v rows=\"${{ROWS:-0}}\" '\
-         BEGIN {{ fits = rows - 1 }} \
-         fits < 1 {{ print; next }} \
-         NR <= fits {{ held[NR] = $0; next }} \
-         NR == fits + 1 {{ print \"{banner}\"; for (i = 1; i <= fits; i++) print held[i] }} \
-         {{ print }} \
-         END {{ if (NR <= fits) for (i = 1; i <= NR; i++) print held[i] }}'"
+         BEGIN {{ keep = rows - 1 }} \
+         keep < 1 {{ print; next }} \
+         NR <= keep {{ held[NR] = $0; next }} \
+         {{ over = 1; exit }} \
+         END {{ if (keep < 1) exit; if (over) keep = keep - 1; \
+         for (i = 1; i <= keep && i <= NR; i++) print held[i]; \
+         if (over) print \"{marker}\" }}'"
     )
 }
 
@@ -433,7 +458,7 @@ impl SkimItem for SkItem {
         // a preview added later cannot forget to say that it runs long.
         match &self.item.preview {
             Some(Preview::Text(text)) => {
-                ItemPreview::AnsiText(with_overflow_banner(text.clone(), context.height))
+                ItemPreview::AnsiText(with_overflow_marker(text.clone(), context.height))
             }
             Some(Preview::Command(cmd)) => ItemPreview::Command(with_overflow_filter(cmd)),
             Some(Preview::File) => {
@@ -443,7 +468,7 @@ impl SkimItem for SkItem {
                 ItemPreview::Command(with_overflow_filter(&dir_preview_cmd(self.item.value())))
             }
             Some(Preview::Deferred(build)) => {
-                ItemPreview::AnsiText(with_overflow_banner(build(), context.height))
+                ItemPreview::AnsiText(with_overflow_marker(build(), context.height))
             }
             // Blank rather than `Global`, which would run the empty global
             // preview command.
@@ -1871,24 +1896,33 @@ mod tests {
         assert!(cmd.contains("'src/cmd'"), "{cmd}");
     }
 
-    /// Text that ends on screen is drawn as it was written: a banner on every
+    /// Text that ends on screen is drawn as it was written: a marker on every
     /// pane is a row of the file nobody asked to lose.
     #[test]
     fn a_pane_that_holds_all_of_its_text_is_left_alone() {
         let text = "one\ntwo\nthree".to_string();
-        assert_eq!(with_overflow_banner(text.clone(), 20), text);
+        assert_eq!(with_overflow_marker(text.clone(), 20), text);
     }
 
-    /// The pane can hold one line fewer than its height once the banner is in
-    /// it, and text of exactly that length still fits.
+    /// The pane draws one row fewer than its height, and text of exactly that
+    /// length still fits.
     #[test]
-    fn text_is_measured_against_the_row_the_banner_takes() {
-        let five = (1..=5)
-            .map(|n| n.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert_eq!(with_overflow_banner(five.clone(), 6), five);
-        assert!(with_overflow_banner(five, 5).starts_with(&overflow_banner()));
+    fn text_is_measured_against_the_row_given_up_to_the_border() {
+        let five = numbered(5);
+        assert_eq!(with_overflow_marker(five.clone(), 6), five);
+        assert!(with_overflow_marker(five, 5).ends_with(&overflow_marker()));
+    }
+
+    /// What is cut is the end of the text, and the marker is what says so —
+    /// which only works from the row the eye stops at.
+    #[test]
+    fn text_that_runs_long_is_cut_and_ends_in_the_marker() {
+        let out = with_overflow_marker(numbered(100), 10);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 9, "the pane drew past its rows: {out}");
+        assert_eq!(lines[0], "1");
+        assert_eq!(lines[7], "8");
+        assert_eq!(lines[8], overflow_marker());
     }
 
     /// A pane whose height is not known yet — skim asks for a preview before it
@@ -1896,19 +1930,24 @@ mod tests {
     #[test]
     fn text_in_a_pane_of_unknown_height_is_left_alone() {
         let text = "one\ntwo".to_string();
-        assert_eq!(with_overflow_banner(text.clone(), 0), text);
+        assert_eq!(with_overflow_marker(text.clone(), 0), text);
     }
 
-    /// The shell filter is the banner for content only the shell has seen, so
+    /// The shell filter is the marker for content only the shell has seen, so
     /// it is checked by running it: what it means is awk's to say.
     #[test]
-    fn a_long_command_preview_is_marked_and_kept_whole() {
+    fn a_long_command_preview_is_cut_and_ends_in_the_marker() {
         let out = filtered("seq 100", "10");
         let lines: Vec<&str> = out.lines().collect();
-        assert!(lines[0].contains(OVERFLOW_HINT), "{out}");
-        assert_eq!(lines.len(), 101, "the filter dropped lines: {out}");
-        assert_eq!(lines[1], "1");
-        assert_eq!(lines[100], "100");
+        assert_eq!(lines.len(), 9, "the pane drew past its rows: {out}");
+        assert_eq!(lines[0], "1");
+        assert_eq!(lines[7], "8");
+        assert!(lines[8].contains(OVERFLOW_HINT), "{out}");
+    }
+
+    #[test]
+    fn a_command_preview_that_fills_the_pane_exactly_is_unmarked() {
+        assert_eq!(filtered("seq 9", "10"), "1\n2\n3\n4\n5\n6\n7\n8\n9\n");
     }
 
     #[test]
@@ -1929,6 +1968,44 @@ mod tests {
     fn a_failing_command_preview_shows_what_it_said() {
         let out = filtered("echo nope >&2; exit 1", "10");
         assert_eq!(out, "nope\n");
+    }
+
+    /// skim expands `{...}` in a preview command as one of its own field
+    /// placeholders, reading from a `{` to the next `}` — so a pair left open
+    /// across another one loses everything between them before the shell sees
+    /// the command at all.
+    #[test]
+    fn a_preview_command_closes_every_brace_before_opening_the_next() {
+        let Preview::Command(checkout) = checkout_preview("/tmp/repo") else {
+            panic!("a checkout preview must run a command");
+        };
+        for cmd in [
+            with_overflow_filter("seq 100"),
+            with_overflow_filter(&file_preview_cmd("src/main.rs")),
+            with_overflow_filter(&dir_preview_cmd("src")),
+            with_overflow_filter(&checkout),
+        ] {
+            let mut open = false;
+            for c in cmd.chars() {
+                match c {
+                    '{' => {
+                        assert!(!open, "a brace opens inside another: {cmd}");
+                        open = true;
+                    }
+                    '}' => open = false,
+                    _ => {}
+                }
+            }
+            assert!(!open, "a brace is left open: {cmd}");
+        }
+    }
+
+    /// `count` lines reading `1` to `count`.
+    fn numbered(count: u32) -> String {
+        (1..=count)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Run a preview command through the filter the way skim would.
