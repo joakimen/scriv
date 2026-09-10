@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- A preview pane that is showing only the first screen of something longer now
+  says so on its first line. The pane gave no sign that a file, a log or a pull
+  request description ran past its bottom edge — it looked the same whether it
+  ended there or a thousand lines below — and the key that scrolls it, `shift-↓`,
+  was named nowhere.
+
 ## v0.19.0
 
 *Released 2026-09-07*
