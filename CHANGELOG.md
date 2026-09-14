@@ -13,6 +13,14 @@ raised, never by hand.
 
 ## Unreleased
 
+### Fixed
+
+- Ctrl-L in a selector no longer hangs for two seconds and then kills the run
+  with "the cursor position could not be read". The key redrew the screen by
+  asking the terminal where the cursor was, down a channel that a selector's
+  answer is being read out of, so nothing ever replied. It does nothing at all
+  now.
+
 ## v0.19.2
 
 *Released 2026-09-10*

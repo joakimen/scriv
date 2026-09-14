@@ -518,6 +518,18 @@ pub fn select_one_queried(
 /// it.
 pub const REFRESH_KEY: &str = "ctrl-r";
 
+/// skim's `ctrl-l`, made to do nothing.
+///
+/// The default binding is `clear-screen`, which reaches
+/// `ratatui::Terminal::clear`, which asks the terminal where the cursor is by
+/// writing `ESC [ 6 n` to *stdout*. A selector is read through its stdout — a
+/// shell captures the path `repo sel` prints — so the query goes into a pipe,
+/// no terminal ever answers it, and the run dies two seconds later on
+/// crossterm's timeout. skim's `redraw` takes the same path, so there is
+/// nothing safe to put the key on. It goes first in the list handed to skim,
+/// which keeps the last binding written for a key.
+const CLEAR_SCREEN_KEY: &str = "ctrl-l:ignore";
+
 /// The key that hides and shows the preview pane. Offered wherever there is a
 /// pane to hide: a pane costs half the width, and a row worth reading in full
 /// is exactly when it is in the way.
@@ -1270,12 +1282,11 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     if !opening.is_empty() {
         builder.header(opening);
     }
-    let binds = binds(
+    let mut binds = binds(
         actions, reloadable, previewing, run.modes, &run.views, &header,
     );
-    if !binds.is_empty() {
-        builder.bind(binds);
-    }
+    binds.insert(0, CLEAR_SCREEN_KEY.to_string());
+    builder.bind(binds);
 
     let options = builder
         .build()
@@ -2149,6 +2160,22 @@ mod tests {
         assert!(
             binds.contains(&format!("{PREVIEW_KEY}:toggle-preview")),
             "{binds:?}",
+        );
+    }
+
+    /// The key is overridden because skim binds it to something that reads the
+    /// cursor position, which a selector whose stdout is a pipe never gets an
+    /// answer to. Nothing to override means nothing to work around.
+    #[test]
+    fn the_key_skim_clears_the_screen_with_is_one_skim_still_binds() {
+        let (key, action) = CLEAR_SCREEN_KEY
+            .split_once(':')
+            .expect("a bind with no action");
+        assert_eq!(action, "ignore");
+        let parsed = skim::binds::parse_key(key).expect("scriv names a key skim cannot parse");
+        assert!(
+            skim::binds::get_default_key_map().contains_key(&parsed),
+            "skim no longer binds {key}: the override can go",
         );
     }
 
