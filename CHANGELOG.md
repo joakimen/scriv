@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.19.3
+
+*Released 2026-09-14*
+
 ### Fixed
 
 - Ctrl-L in a selector no longer hangs for two seconds and then kills the run
