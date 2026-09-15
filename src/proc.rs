@@ -10,7 +10,7 @@ use anyhow::{Result, bail};
 
 use crate::term;
 
-/// The `ps` field list scriv reads, in the order [`parse`] expects. The
+/// The `ps` field list cid reads, in the order [`parse`] expects. The
 /// trailing `=` suppresses each header, so every line is a process; `args`
 /// comes last because it is the only field that can contain spaces.
 pub const PS_ARGS: [&str; 3] = ["-axo", "user=,pid=,ppid=,pcpu=,pmem=,etime=,args=", "-ww"];
@@ -93,9 +93,9 @@ pub fn ancestry(processes: &[Process], pid: i32) -> HashSet<i32> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
     /// `0` or negative. To `kill(2)` these are process *groups*, not
-    /// processes: `scriv ps kill -- -1` would end the login session.
+    /// processes: `cid ps kill -- -1` would end the login session.
     NotAProcess,
-    /// scriv itself, or something that spawned it — the chain that runs up
+    /// cid itself, or something that spawned it — the chain that runs up
     /// through the shell to the terminal emulator.
     OwnAncestry,
 }
@@ -108,7 +108,7 @@ impl Refusal {
                  number means a whole process group; use `kill` directly if that \
                  is what you meant"
             }
-            Self::OwnAncestry => "scriv itself or a process that spawned it",
+            Self::OwnAncestry => "cid itself or a process that spawned it",
         }
     }
 }
@@ -130,7 +130,7 @@ pub fn refuse(processes: &[Process], self_pid: i32, pids: &[i32]) -> Vec<(i32, R
         .collect()
 }
 
-/// The processes worth offering, busiest first. scriv's own process and
+/// The processes worth offering, busiest first. cid's own process and
 /// everything that spawned it are dropped: `-9` on any of that chain takes the
 /// session with it.
 pub fn selectable(processes: &[Process], self_pid: i32) -> Vec<Process> {
@@ -189,7 +189,7 @@ pub fn with_pids(procs: &[Process], pids: &[i32]) -> Vec<Process> {
 }
 
 /// A plain listing row: the pid and the command, one space apart, so
-/// `scriv ps ls | grep node | cut -d' ' -f1` reaches the pid.
+/// `cid ps ls | grep node | cut -d' ' -f1` reaches the pid.
 pub fn plain_row(p: &Process) -> String {
     format!("{} {}", p.pid, p.command)
 }
@@ -229,7 +229,7 @@ pub fn status_row(p: &Process, user_width: usize, color: bool) -> String {
     )
 }
 
-/// The columns before the command say what scriv knows about it rather than
+/// The columns before the command say what cid knows about it rather than
 /// what it is, so they take [`crate::term::SECONDARY`].
 const CONTEXT_COLOR: u8 = crate::term::SECONDARY;
 
@@ -250,12 +250,12 @@ pub fn preview(p: &Process) -> String {
     )
 }
 
-/// A signal `scriv ps kill` can send, named as `kill` names it. A closed set,
+/// A signal `cid ps kill` can send, named as `kill` names it. A closed set,
 /// so an unusable signal is rejected before the selector opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signal(&'static str);
 
-/// scriv builds for Apple Silicon and refuses anywhere else, and this table is
+/// cid builds for Apple Silicon and refuses anywhere else, and this table is
 /// why the refusal is a compile error rather than a line in the README. Only
 /// the first five signals below are numbered by POSIX. The rest are Darwin's,
 /// and Linux disagrees in the worst possible way: 19 is `CONT` here and `STOP`
@@ -263,7 +263,7 @@ pub struct Signal(&'static str);
 /// the process the user meant to suspend.
 #[cfg(not(target_vendor = "apple"))]
 compile_error!(
-    "scriv supports macOS on Apple Silicon only: its signal numbers are Darwin's, \
+    "cid supports macOS on Apple Silicon only: its signal numbers are Darwin's, \
      and elsewhere they name a different signal than the one asked for"
 );
 
@@ -483,7 +483,7 @@ joakim          70123 70100    0.0  0.4       01:20 -fish
     }
 
     #[test]
-    fn scriv_and_its_ancestors_are_not_offered() {
+    fn cid_and_its_ancestors_are_not_offered() {
         let procs = sample();
         let pids: Vec<i32> = selectable(&procs, 70123).iter().map(|p| p.pid).collect();
         assert!(!pids.contains(&70123), "offered its own process");

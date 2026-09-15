@@ -4,7 +4,7 @@
 # starts dist, and dist owns every step after it — see dist-workspace.toml.
 
 [workspace]
-# scriv is not on crates.io, so there is no registry to ask what version is
+# cid is not on crates.io, so there is no registry to ask what version is
 # current. This reads it from the `v*` tags instead, which is the only reason
 # release-plz can run against this repository at all.
 git_only = true
@@ -21,7 +21,7 @@ git_release_enable = false
 changelog_update = false
 
 # cargo-semver-checks compares a library's public API against the registry.
-# scriv has no lib target and no registry, so this only costs the job a download.
+# cid has no lib target and no registry, so this only costs the job a download.
 semver_check = false
 
 # Commit subjects here are prose, not conventional commits, so every bump would

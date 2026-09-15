@@ -43,14 +43,14 @@ const RUNNER_FILES: &[(&str, Runner)] = &[
     (".justfile", Runner::Just),
 ];
 
-/// What `scriv project build` will do in a directory.
+/// What `cid project build` will do in a directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Build {
     /// The commands to run, in order. Empty when nothing here builds.
     Steps(Vec<Step>),
     /// Two or more runners are committed, named by the file each was found as.
     /// Which of them builds the project is the repository's business, not
-    /// scriv's, so it says what it found and stops.
+    /// cid's, so it says what it found and stops.
     Ambiguous(Vec<String>),
 }
 

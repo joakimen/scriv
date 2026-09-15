@@ -1,4 +1,4 @@
-//! `scriv` — select repositories, files, notes, git branches and worktrees,
+//! `cid` — select repositories, files, notes, git branches and worktrees,
 //! GitHub pull requests and running processes from one fuzzy finder, and build
 //! and install the project you are standing in.
 //!
@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// What `scriv --version` reports.
+/// What `cid --version` reports.
 ///
 /// The crate version when this commit is a release — sitting exactly on a tag
 /// with nothing modified — and `<version>-dev.<sha>[.dirty]` otherwise.
@@ -61,7 +61,7 @@ fn write_recent(path: &Path, contents: &str) -> Result<()> {
 
 /// A subprocess that already explained its own failure on stderr. Propagated
 /// instead of a message so the command exits with the child's status without
-/// scriv restating what the user just read.
+/// cid restating what the user just read.
 #[derive(Debug)]
 pub struct Reported(pub i32);
 
@@ -89,15 +89,15 @@ pub struct Ctx {
     pub recent_path: PathBuf,
     /// The standalone `kf` tool's config, read once to migrate its list.
     pub legacy_kf_path: PathBuf,
-    /// fish's history file, which `scriv history` reads.
+    /// fish's history file, which `cid history` reads.
     pub history_path: PathBuf,
-    /// The log every run appends itself to, which `scriv stats` reads.
+    /// The log every run appends itself to, which `cid stats` reads.
     pub stats_path: PathBuf,
     /// This machine's offset from UTC, for dating history entries.
     utc_offset: time::UtcOffset,
-    /// The editor `scriv edit` launches, from the environment.
+    /// The editor `cid edit` launches, from the environment.
     editor: Option<String>,
-    /// The command `scriv note open` launches: `[note] editor`, else the one
+    /// The command `cid note open` launches: `[note] editor`, else the one
     /// above. Resolved here so no command looks the environment up itself.
     note_editor: Option<String>,
     /// `GH_REPO`, which names the repository `gh` acts on when the working
@@ -134,12 +134,12 @@ impl Ctx {
             },
         );
 
-        let scriv_env = std::env::var(config::CONFIG_ENV_VAR).ok();
+        let cid_env = std::env::var(config::CONFIG_ENV_VAR).ok();
         let xdg_env = std::env::var(config::XDG_ENV_VAR).ok();
 
         let config_path = config::resolve_config_path(
             config_flag,
-            scriv_env.as_deref(),
+            cid_env.as_deref(),
             xdg_env.as_deref(),
             &home,
             |p| p.exists(),
@@ -226,14 +226,14 @@ impl Ctx {
         Ok(parts)
     }
 
-    /// The command `scriv note open` launches, or `None` when neither
+    /// The command `cid note open` launches, or `None` when neither
     /// `[note] editor` nor the environment names one. For reporting;
     /// [`Ctx::note_editor`] is what launching goes through.
     pub fn note_editor_setting(&self) -> Option<&str> {
         self.note_editor.as_deref()
     }
 
-    /// The command `scriv note open` launches, split into program and
+    /// The command `cid note open` launches, split into program and
     /// arguments.
     pub fn note_editor(&self) -> Result<Vec<String>> {
         let command = self
@@ -248,7 +248,7 @@ impl Ctx {
     }
 
     /// The repository `GH_REPO` names, if it names one. `gh` reads the variable
-    /// itself; scriv reads it only to know whether a command that needs a
+    /// itself; cid reads it only to know whether a command that needs a
     /// repository already has one.
     pub fn gh_repo(&self) -> Option<&str> {
         self.gh_repo.as_deref()

@@ -41,7 +41,7 @@ pub fn expand_tilde(path: &str, home: &str) -> String {
 /// `$PWD` keeps the symlinks the user walked, which `getcwd` resolves away —
 /// but nothing keeps it current, and a stale one silently records a path for a
 /// directory the user was never in. It is taken only when `same_dir` says it
-/// names the directory scriv is genuinely in.
+/// names the directory cid is genuinely in.
 pub fn resolve_pwd(
     pwd_env: Option<&str>,
     cwd: PathBuf,
@@ -280,10 +280,10 @@ mod tests {
     fn relative_label_strips_the_root() {
         assert_eq!(
             relative_label(
-                Path::new("/Users/kevin/dev/github.com/kkc/scriv"),
+                Path::new("/Users/kevin/dev/github.com/kkc/cid"),
                 Path::new("/Users/kevin/dev/github.com")
             ),
-            "kkc/scriv"
+            "kkc/cid"
         );
     }
 

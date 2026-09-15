@@ -590,10 +590,10 @@ fn passthrough(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// [`passthrough`], with the child's stdout sent to scriv's stderr.
+/// [`passthrough`], with the child's stdout sent to cid's stderr.
 ///
 /// `git worktree add` narrates its checkout on stdout — `HEAD is now at …`, and
-/// the line saying an upstream was set — while stdout is also where scriv puts
+/// the line saying an upstream was set — while stdout is also where cid puts
 /// the path a shell reads to `cd` into the new tree. Both are worth keeping, so
 /// git keeps its voice and gives up the channel.
 fn passthrough_onto_stderr(args: &[&str]) -> Result<()> {
@@ -716,7 +716,7 @@ pub fn worktrees(here: &Path) -> Result<Vec<Worktree>> {
 
 /// Refresh remote-tracking refs, dropping ones deleted upstream.
 ///
-/// The one place scriv silences git on purpose: `git fetch --all` narrates
+/// The one place cid silences git on purpose: `git fetch --all` narrates
 /// itself onto the stdout `branch sel` writes a branch name to, and over the
 /// spinner on stderr. A failure still speaks, as [`capture`] returns git's
 /// stderr as the error.
@@ -767,7 +767,7 @@ fn is_ignored(path: &Path) -> bool {
 ///
 /// A directory of working trees inside the repository is untracked files as far
 /// as everything else is concerned: `git status` lists them, and every walker
-/// that honours `.gitignore` — `scriv edit`'s included — offers the whole tree a
+/// that honours `.gitignore` — `cid edit`'s included — offers the whole tree a
 /// second time under it. The rule belongs to this clone rather than to the
 /// project, so it goes in `info/exclude` and is never committed.
 ///
@@ -1315,24 +1315,24 @@ mod tests {
     /// linked one, a detached one, a locked one and a tree whose directory has
     /// been deleted.
     const WORKTREE_LIST: &str = "\
-worktree /home/u/dev/scriv
+worktree /home/u/dev/cid
 HEAD 950547ef3af47b2e60406bd23e530bdb1e226c6e
 branch refs/heads/main
 
-worktree /home/u/dev/scriv/.claude/worktrees/feat
+worktree /home/u/dev/cid/.claude/worktrees/feat
 HEAD 32bb788aa1c04d9ee4d1e5a8b0e0b8d1c2f3a4b5
 branch refs/heads/feat/x
 
-worktree /home/u/dev/scriv/.claude/worktrees/spike
+worktree /home/u/dev/cid/.claude/worktrees/spike
 HEAD cd7eff2bbb1c04d9ee4d1e5a8b0e0b8d1c2f3a4b
 detached
 
-worktree /home/u/dev/scriv/.claude/worktrees/held
+worktree /home/u/dev/cid/.claude/worktrees/held
 HEAD ec4b8dfccc1c04d9ee4d1e5a8b0e0b8d1c2f3a4b
 branch refs/heads/held
 locked waiting on review
 
-worktree /home/u/dev/scriv/.claude/worktrees/gone
+worktree /home/u/dev/cid/.claude/worktrees/gone
 HEAD 88a2dedddd1c04d9ee4d1e5a8b0e0b8d1c2f3a4b
 branch refs/heads/gone
 prunable gitdir file points to non-existent location
@@ -1342,7 +1342,7 @@ prunable gitdir file points to non-existent location
     fn parses_every_worktree_record() {
         let got = parse_worktrees(WORKTREE_LIST);
         assert_eq!(got.len(), 5);
-        assert_eq!(got[0].path, PathBuf::from("/home/u/dev/scriv"));
+        assert_eq!(got[0].path, PathBuf::from("/home/u/dev/cid"));
         assert_eq!(got[0].branch, "main", "the ref prefix survived");
         assert_eq!(got[1].branch, "feat/x", "a branch name may contain a slash");
         assert!(got[2].branch.is_empty(), "a detached HEAD has no branch");
@@ -1397,7 +1397,7 @@ prunable gitdir file points to non-existent location
 
     #[test]
     fn the_current_tree_is_the_one_the_shell_is_in() {
-        let here = Path::new("/home/u/dev/scriv/.claude/worktrees/feat");
+        let here = Path::new("/home/u/dev/cid/.claude/worktrees/feat");
         let got = mark_current(
             parse_worktrees(WORKTREE_LIST),
             Some(here),
@@ -1444,7 +1444,7 @@ prunable gitdir file points to non-existent location
     fn an_unusable_tree_is_greyed_even_when_it_is_the_current_one() {
         let got = mark_current(
             parse_worktrees(WORKTREE_LIST),
-            Some(Path::new("/home/u/dev/scriv/.claude/worktrees/gone")),
+            Some(Path::new("/home/u/dev/cid/.claude/worktrees/gone")),
             Path::to_path_buf,
         );
         assert_eq!(got[4].color(), Some(8));

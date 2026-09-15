@@ -17,7 +17,7 @@ use ignore::{WalkBuilder, WalkState};
 ///
 /// Every name here must be one that never holds source. `lib` was on this list
 /// and is not such a name — it is where Clojure, Elixir, Ruby and much of npm
-/// keep theirs, and skipping it left `scriv edit` silently unable to open half
+/// keep theirs, and skipping it left `cid edit` silently unable to open half
 /// the files in those repositories.
 const WALKER_SKIP: &[&str] = &[".git", "node_modules", ".clj-kondo", ".cpcache", ".venv"];
 

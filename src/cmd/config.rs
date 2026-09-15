@@ -1,10 +1,10 @@
-//! `scriv config` — generate, print and check the configuration file.
+//! `cid config` — generate, print and check the configuration file.
 //!
 //! `print` and `check` answer different questions and are kept apart on
 //! purpose. `print` is the configuration: every setting there is, what is in
-//! force for it, and whether that came from the file or from scriv. `check` is
+//! force for it, and whether that came from the file or from cid. `check` is
 //! a checklist: whether what the settings point at is actually there, and
-//! whether the programs scriv shells out to are installed. A row in `check`
+//! whether the programs cid shells out to are installed. A row in `check`
 //! repeats a value only where repeating it is the way out of a problem.
 
 use std::os::unix::fs::DirBuilderExt;
@@ -19,10 +19,10 @@ use crate::{Ctx, binding, cmd, files, gh, history, repo, stats, term};
 
 /// A commented starter config. Settings are grouped by the command that reads
 /// them; users edit it to taste.
-const TEMPLATE: &str = r#"# scriv configuration. Settings are grouped by the command that reads them,
+const TEMPLATE: &str = r#"# cid configuration. Settings are grouped by the command that reads them,
 # with `[selector]` — shared by every selector — at the end.
 
-# `scriv repo`: where your repositories are, and how they are labelled.
+# `cid repo`: where your repositories are, and how they are labelled.
 [repo]
 
 # Every repository lives under one root, laid out as <owner>/<repo> — the same
@@ -48,7 +48,7 @@ ignore = ["node_modules", "target"]
 # `[repo.labels]` header would swallow every `[repo]` key written after it.
 # labels = { personal = ["your-github-user"], work = ["acme", "acme-labs"] }
 
-# `scriv worktree`: where `worktree add` creates a tree.
+# `cid worktree`: where `worktree add` creates a tree.
 [worktree]
 
 # One directory per branch, with `/` written as `-`. A relative path is inside
@@ -58,13 +58,13 @@ ignore = ["node_modules", "target"]
 # name.
 # root = ".worktrees"
 
-# `scriv note`: where your notes are, and what opens one.
+# `cid note`: where your notes are, and what opens one.
 [note]
 
 # The directory holding them — an Obsidian vault, or any tree of Markdown
 # files. Notes below it are listed most recently modified first, and what each
 # one is called, which tags it carries and when it was created come from its
-# YAML front matter. Without this, `scriv note` has nowhere to look.
+# YAML front matter. Without this, `cid note` has nowhere to look.
 # root = "~/notes"
 
 # Labels for the directories directly below the root, one label to many
@@ -89,27 +89,27 @@ ignore = ["node_modules", "target"]
 
 # What `note open` launches, split on whitespace like $EDITOR. Its own setting
 # because a note is as often read as written — `glow` and `nvim` are both
-# answers. Unset, it is $VISUAL then $EDITOR, as `scriv edit` uses.
+# answers. Unset, it is $VISUAL then $EDITOR, as `cid edit` uses.
 # editor = "nvim"
 
-# `scriv history`: which shell history to search.
+# `cid history`: which shell history to search.
 [history]
 
 # fish's history file. The default is $XDG_DATA_HOME/fish/fish_history, falling
 # back to ~/.local/share/fish/fish_history. Set this only if you have named your
 # session — `set -U fish_history work` reads `work_history` instead — since fish
-# does not export that variable for scriv to find.
+# does not export that variable for cid to find.
 # file = "~/.local/share/fish/work_history"
 
-# `scriv init`: what the shell integration defines.
+# `cid init`: what the shell integration defines.
 #
-# Neither table holds shell code — each names an action scriv defines, so the
-# same configuration serves fish and any shell scriv later learns to write for.
-# Between them the two tables below name every action there is. `scriv config
-# print` lists the keys and names you have with what each one runs, and `scriv
+# Neither table holds shell code — each names an action cid defines, so the
+# same configuration serves fish and any shell cid later learns to write for.
+# Between them the two tables below name every action there is. `cid config
+# print` lists the keys and names you have with what each one runs, and `cid
 # config check` says whether they resolve.
 #
-# scriv binds nothing on its own. The two tables below are suggestions, and
+# cid binds nothing on its own. The two tables below are suggestions, and
 # stay suggestions until you uncomment one — a key is the scarcest thing a
 # terminal has, and which of yours a tool may take is yours to say.
 #
@@ -129,10 +129,10 @@ ignore = ["node_modules", "target"]
 
 # Names defined as shell functions, each passing its arguments through.
 # [shell.aliases]
-# fe = "edit"           # scriv edit
-# kl = "proc-kill"      # scriv ps kill --force
-# i  = "project-deps"   # scriv project deps
-# b  = "project-build"  # scriv project build
+# fe = "edit"           # cid edit
+# kl = "proc-kill"      # cid ps kill --force
+# i  = "project-deps"   # cid project deps
+# b  = "project-build"  # cid project build
 
 # The built-in fuzzy selector, shared by every command that opens one.
 [selector]
@@ -142,14 +142,14 @@ height = "50%"        # finder height, e.g. "50%" or "20"
 # preview_window = "right:50%" # preview layout: [up|down|left|right][:SIZE][:hidden]
 
 # The `bat` theme every file preview is drawn with. Passed as `--theme`, so it
-# wins over BAT_THEME and your own bat config — a preview pane is scriv's to
+# wins over BAT_THEME and your own bat config — a preview pane is cid's to
 # make legible, and a theme chosen for reading whole files in a pager is not
 # always one. A theme bat does not know is not an error: it draws in its own
 # default instead. Empty hands bat nothing and lets its config decide.
 # preview_theme = "Catppuccin Mocha"
 "#;
 
-/// `scriv config init` — write `config.toml` into the config directory,
+/// `cid config init` — write `config.toml` into the config directory,
 /// refusing to clobber an existing config (either format) unless `force`.
 pub fn init(ctx: &Ctx, force: bool) -> Result<()> {
     let dir = ctx
@@ -184,7 +184,7 @@ pub fn init(ctx: &Ctx, force: bool) -> Result<()> {
     std::fs::write(&target, TEMPLATE).with_context(|| format!("writing {}", target.display()))?;
 
     println!("Wrote starter configuration to {}", target.display());
-    println!("Edit it, then run `scriv config print` to verify.");
+    println!("Edit it, then run `cid config print` to verify.");
     Ok(())
 }
 
@@ -193,7 +193,7 @@ pub fn init(ctx: &Ctx, force: bool) -> Result<()> {
 /// Cyan, for the `[table]` a group of settings is written under.
 const HEADING: u8 = 6;
 
-/// Red, for a value scriv cannot act on.
+/// Red, for a value cid cannot act on.
 const BROKEN: u8 = 1;
 
 /// Shown where a setting has no value and nothing stands in for it.
@@ -202,7 +202,7 @@ const UNSET: &str = "(unset)";
 /// Shown where a list is empty.
 const EMPTY: &str = "(none)";
 
-/// What the last column says about a value scriv chose rather than the user.
+/// What the last column says about a value cid chose rather than the user.
 const DEFAULT: &str = "default";
 
 /// What is in force for one setting.
@@ -211,7 +211,7 @@ enum Value {
     Set(String),
     /// Nothing there, and the placeholder that says so.
     Missing(&'static str),
-    /// Set to something scriv cannot act on.
+    /// Set to something cid cannot act on.
     Broken(String),
 }
 
@@ -278,7 +278,7 @@ fn optional(key: &str, value: Option<&str>, without: &str) -> Row {
 }
 
 /// A setting that has a value whether the file gives it one or not, marked
-/// where that value is the one scriv ships.
+/// where that value is the one cid ships.
 fn defaulted(key: &str, value: Value, is_default: bool) -> Row {
     Row::setting(key, value, if is_default { DEFAULT } else { "" })
 }
@@ -304,7 +304,7 @@ fn label_rows(labels: &Labels) -> Vec<Row> {
         .collect()
 }
 
-/// What a `[shell]` table's heading says. scriv binds nothing on its own, so an
+/// What a `[shell]` table's heading says. cid binds nothing on its own, so an
 /// absent table is not a default in force — it is nothing bound, which the
 /// report has to say outright or a user reads an empty list as a bug.
 fn table_note(written: bool) -> &'static str {
@@ -389,7 +389,7 @@ fn report(cfg: &Config, env: &Env) -> Vec<Row> {
     rows.push(optional(
         "root",
         cfg.note.root.as_deref(),
-        "`scriv note` has nowhere to look",
+        "`cid note` has nowhere to look",
     ));
     rows.extend(label_rows(&cfg.note.labels));
     rows.push(Row::setting("archives", list(&cfg.note.archives), ""));
@@ -473,7 +473,7 @@ fn report(cfg: &Config, env: &Env) -> Vec<Row> {
     rows.push(Row::Blank);
     rows.push(Row::heading(
         "environment",
-        "read by scriv, not written in the file",
+        "read by cid, not written in the file",
     ));
     rows.push(match env.editor {
         Some(editor) => Row::setting(
@@ -484,7 +484,7 @@ fn report(cfg: &Config, env: &Env) -> Vec<Row> {
         None => Row::setting(
             "editor",
             Value::Missing(UNSET),
-            "`scriv edit` has nothing to open files with",
+            "`cid edit` has nothing to open files with",
         ),
     });
 
@@ -577,10 +577,10 @@ fn pad(text: &str, width: usize) -> String {
     padded
 }
 
-/// `scriv config print` — every setting there is, and what is in force for it.
+/// `cid config print` — every setting there is, and what is in force for it.
 ///
 /// The settings only: whether the paths they name exist, and whether the tools
-/// scriv shells out to are installed, is `scriv config check`.
+/// cid shells out to are installed, is `cid config check`.
 pub fn print(ctx: &Ctx) -> Result<()> {
     ctx.log.info(&format!(
         "printing configuration from {}",
@@ -604,7 +604,7 @@ pub fn print(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// `scriv config path` — print the resolved config file path.
+/// `cid config path` — print the resolved config file path.
 pub fn path(ctx: &Ctx) -> Result<()> {
     println!("{}", ctx.config_path.display());
     Ok(())
@@ -824,7 +824,7 @@ fn installed(program: &str) -> String {
         .to_string()
 }
 
-/// Whether a tool scriv shells out to is installed, and which version.
+/// Whether a tool cid shells out to is installed, and which version.
 fn tool_check(name: &'static str, program: &str, required: bool, note: &str) -> Check {
     match on_path(program) {
         Some(_) => Check::ok(name, installed(program)),
@@ -839,7 +839,7 @@ const GH_NOTE: &str = "only `pr` and `repo clone`/`open` need it (https://cli.gi
 /// What the `gh` row says once it is installed: which version, and whether it
 /// can act as anyone. An expired token fails `pr` exactly as completely as a
 /// missing binary does, which is why one row covers both — but neither stops
-/// the rest of scriv, so it is a warning.
+/// the rest of cid, so it is a warning.
 fn gh_state(version: &str, authenticated: bool) -> (Status, String) {
     if authenticated {
         (Status::Ok, format!("{version}, authenticated"))
@@ -872,7 +872,7 @@ fn config_check(ctx: &Ctx) -> Check {
         Check::warn(
             "config file",
             format!(
-                "{} not found — run `scriv config init`",
+                "{} not found — run `cid config init`",
                 ctx.config_path.display()
             ),
         )
@@ -948,7 +948,7 @@ fn discovery_check(ctx: &Ctx, paths_ok: bool) -> Option<Check> {
 }
 
 /// Whether an editor command is a program this machine has. Shared by the
-/// editor `scriv edit` launches and the one `[note] editor` names.
+/// editor `cid edit` launches and the one `[note] editor` names.
 fn editor_on_path(name: &'static str, setting: &str) -> Check {
     // The setting may carry arguments (`code -w`); only the program is looked
     // for, the same split the launch does.
@@ -959,13 +959,13 @@ fn editor_on_path(name: &'static str, setting: &str) -> Check {
     }
 }
 
-/// The editor `scriv edit` will launch, and whether it is actually there.
+/// The editor `cid edit` will launch, and whether it is actually there.
 fn editor_check(ctx: &Ctx) -> Check {
     match ctx.editor_setting() {
         Some(setting) => editor_on_path("editor", setting),
         None => Check::warn(
             "editor",
-            "no $VISUAL or $EDITOR — `scriv edit` has nothing to open files with",
+            "no $VISUAL or $EDITOR — `cid edit` has nothing to open files with",
         ),
     }
 }
@@ -989,7 +989,7 @@ fn note_vault_check(ctx: &Ctx) -> Check {
     if ctx.config.note.root.is_none() {
         return Check::warn(
             "note vault",
-            "`[note] root` not set — `scriv note` has nowhere to look",
+            "`[note] root` not set — `cid note` has nowhere to look",
         );
     }
     match cmd::note::vault_summary(ctx) {
@@ -1037,7 +1037,7 @@ fn note_archives_check(ctx: &Ctx) -> Option<Check> {
 
 /// `[shell]`: whether every key and name resolves to an action that exists.
 ///
-/// A failure here is `scriv init fish` refusing to emit anything, which takes
+/// A failure here is `cid init fish` refusing to emit anything, which takes
 /// the whole shell integration with it — so it is a failure rather than a
 /// warning, and this is where it should be found rather than at the next new
 /// shell. Which key runs what is `config print`; this counts them and says
@@ -1066,14 +1066,14 @@ fn shell_check(cfg: &Config) -> Check {
         Check::fail(
             "shell integration",
             format!(
-                "{} — no such action, and `scriv init` refuses until there is",
+                "{} — no such action, and `cid init` refuses until there is",
                 unknown.join(", ")
             ),
         )
     }
 }
 
-/// fish's history file: whether it is where scriv looked, and how much is in
+/// fish's history file: whether it is where cid looked, and how much is in
 /// it.
 fn history_check(ctx: &Ctx) -> Check {
     match std::fs::read(&ctx.history_path) {
@@ -1109,7 +1109,7 @@ fn files_check(ctx: &Ctx) -> Check {
         Err(err) => return Check::fail("tracked files", format!("{err:#}")),
     };
     if lines.is_empty() {
-        return Check::ok("tracked files", "none yet — add one with `scriv file add`");
+        return Check::ok("tracked files", "none yet — add one with `cid file add`");
     }
     let missing = lines
         .iter()
@@ -1122,7 +1122,7 @@ fn files_check(ctx: &Ctx) -> Check {
         Check::warn(
             "tracked files",
             format!(
-                "{} tracked, {missing} no longer on disk — see `scriv file ls --missing`",
+                "{} tracked, {missing} no longer on disk — see `cid file ls --missing`",
                 lines.len()
             ),
         )
@@ -1130,7 +1130,7 @@ fn files_check(ctx: &Ctx) -> Check {
 }
 
 /// Everything `config check` looks at, in the order it is reported: what the
-/// configuration points at, then the programs scriv shells out to, then the
+/// configuration points at, then the programs cid shells out to, then the
 /// files it keeps.
 fn collect(ctx: &Ctx) -> Vec<Section> {
     let mut settings = vec![config_check(ctx)];
@@ -1168,7 +1168,7 @@ fn collect(ctx: &Ctx) -> Vec<Section> {
         "ps",
         "ps",
         true,
-        "`scriv ps` reads the process table through it",
+        "`cid ps` reads the process table through it",
     ));
     // The one row `project` earns: everything else it runs is whatever the
     // project in front of it asks for, and a missing one of those is already
@@ -1205,12 +1205,12 @@ fn collect(ctx: &Ctx) -> Vec<Section> {
     ]
 }
 
-/// `scriv config check` — look at everything scriv depends on in one go and say
+/// `cid config check` — look at everything cid depends on in one go and say
 /// what is wrong with it. The exit status is non-zero only when something is
 /// genuinely broken, so it is worth putting in a setup script.
 ///
 /// A checklist, not a report of the configuration: what each setting is set to
-/// is `scriv config print`, and a row here repeats it only where repeating it
+/// is `cid config print`, and a row here repeats it only where repeating it
 /// is the way out of a problem.
 pub fn check(ctx: &Ctx) -> Result<()> {
     let sections = collect(ctx);
@@ -1287,7 +1287,7 @@ mod tests {
     /// The template writes the default bindings and aliases out so they can be
     /// uncommented and edited. Nothing but this notices when the two drift
     /// apart, and a stale copy is a user who uncomments it and silently loses
-    /// whatever scriv added since.
+    /// whatever cid added since.
     #[test]
     fn the_commented_shell_tables_are_the_defaults_written_out() {
         let start = TEMPLATE
@@ -1369,7 +1369,7 @@ mod tests {
 
     fn env() -> Env<'static> {
         Env {
-            config_path: "~/.config/scriv/config.toml".to_string(),
+            config_path: "~/.config/cid/config.toml".to_string(),
             config_exists: true,
             history_path: "~/.local/share/fish/fish_history".to_string(),
             editor: Some("nvim"),
@@ -1466,7 +1466,7 @@ mod tests {
         );
     }
 
-    /// A binding naming an action scriv does not define stops `scriv init`
+    /// A binding naming an action cid does not define stops `cid init`
     /// outright. The report still shows the line, since it is one the file
     /// really has, and says what is wrong with it.
     #[test]
@@ -1483,11 +1483,11 @@ mod tests {
         assert!(line.contains("no such action"), "{line}");
     }
 
-    /// Which values are scriv's own rather than the user's is most of what the
+    /// Which values are cid's own rather than the user's is most of what the
     /// report is for: a setting nobody chose reads differently from one
     /// somebody did.
     #[test]
-    fn a_value_scriv_chose_is_marked_and_one_the_user_chose_is_not() {
+    fn a_value_cid_chose_is_marked_and_one_the_user_chose_is_not() {
         let mut cfg = Config::default();
         cfg.selector.height = "20".to_string();
         let lines = render_report(&report(&cfg, &env()), false);
@@ -1610,7 +1610,7 @@ mod tests {
     }
 
     /// The row names the key that is wrong, since the report is where the
-    /// user finds out before `scriv init` does.
+    /// user finds out before `cid init` does.
     #[test]
     fn a_binding_that_names_nothing_fails_the_shell_row() {
         let mut broken_config = Config::default();

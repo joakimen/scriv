@@ -3,7 +3,7 @@
 //! library crate.
 //!
 //! Top-level commands: `repo`, `file`, `note`, `branch`, `worktree`, `pr`,
-//! `ps` and `history` work with the things scriv finds; `edit` opens a file
+//! `ps` and `history` work with the things cid finds; `edit` opens a file
 //! from the directory the user is in and `project` builds it; `config` manages
 //! its configuration; `init` prints shell integration.
 
@@ -22,9 +22,9 @@ use cid::{Ctx, Reported, cmd, shell, stats};
 /// Usage examples appended to the top-level help. Three lines, and it stays
 /// three — see CLAUDE.md.
 const EXAMPLES: &str = "\x1b[1;92mExamples:\x1b[0m
-  scriv pr checkout            Select a GitHub pull request and check it out
-  scriv branch switch          Select a branch and switch to it
-  scriv history sel            Search the commands you have already run";
+  cid pr checkout            Select a GitHub pull request and check it out
+  cid branch switch          Select a branch and switch to it
+  cid history sel            Search the commands you have already run";
 
 /// What `--help` opens with. The two keys every selector answers to live here
 /// rather than in each selector's header: a header is one line competing with
@@ -83,7 +83,7 @@ struct Cli {
     /// value overrides `CID_NO_COLOR`. The selector is unaffected — it only
     /// ever draws on a terminal.
     ///
-    /// The variable is scriv's own; the cross-tool `NO_COLOR` is not read.
+    /// The variable is cid's own; the cross-tool `NO_COLOR` is not read.
     #[arg(long, global = true, value_name = "WHEN", default_value = "auto")]
     color: ColorChoice,
 
@@ -192,7 +192,7 @@ enum Command {
     ///
     /// Rows come from a single `ps` call, busiest first, and carry the whole
     /// command line — arguments included — so a process is recognisable by what
-    /// it was started with rather than by its name alone. scriv's own process
+    /// it was started with rather than by its name alone. cid's own process
     /// and everything that spawned it are never listed: killing the shell or
     /// the terminal is not a thing to be one keystroke away from.
     ///
@@ -213,7 +213,7 @@ enum Command {
     /// The date is shown but never searched: it is digits at the front of every
     /// row, and matching it would rank timestamps above commands.
     ///
-    /// scriv's own `scriv-` shell functions are left out — pressing ctrl-o
+    /// cid's own `cid-` shell functions are left out — pressing ctrl-o
     /// records one, and a key press is not a command anyone typed.
     #[command(visible_alias = "h")]
     History {
@@ -222,7 +222,7 @@ enum Command {
     },
     /// Build the project you are in, and install what it needs
     ///
-    /// Both verbs read the directory rather than a set scriv keeps, so there is
+    /// Both verbs read the directory rather than a set cid keeps, so there is
     /// nothing here to list or select. What a project is comes from the files
     /// in its root — `Cargo.toml`, `package.json` and its lockfile, `go.mod`,
     /// `pom.xml`, `deps.edn`, a `mise.toml`, a `*.tf` — and a polyglot
@@ -260,11 +260,11 @@ enum Command {
     /// function itself, and completions; other shells emit completions only.
     ///
     /// Which keys and names those are comes from `[shell.bindings]` and
-    /// `[shell.aliases]`, which name actions rather than shell code. scriv
-    /// binds nothing on its own: `scriv config init` writes a suggested set out
-    /// commented, and until a table is written nothing is bound. `scriv config
+    /// `[shell.aliases]`, which name actions rather than shell code. cid
+    /// binds nothing on its own: `cid config init` writes a suggested set out
+    /// commented, and until a table is written nothing is bound. `cid config
     /// check` says whether yours resolve; a configuration that will not parse,
-    /// or that names an action scriv does not define, stops this command rather
+    /// or that names an action cid does not define, stops this command rather
     /// than emitting a shell where one key silently does nothing.
     Init {
         /// Shell to emit integration for
@@ -276,7 +276,7 @@ enum Command {
 enum EditCmd {
     /// Fuzzy-find a file and open it
     ///
-    /// What `scriv edit` does with no subcommand.
+    /// What `cid edit` does with no subcommand.
     #[command(visible_alias = "f")]
     File {
         /// Files to open; omit to select interactively
@@ -290,7 +290,7 @@ enum EditCmd {
     ///
     /// The preview pane is what is directly inside each one. What an editor
     /// does with a directory is its own business — a file browser, a project
-    /// root, a tree pane; scriv's part is finding it without a `cd` and a `ls`
+    /// root, a tree pane; cid's part is finding it without a `cd` and a `ls`
     /// per level.
     #[command(visible_alias = "d")]
     Dir {
@@ -338,7 +338,7 @@ enum RepoCmd {
     /// several and they clone concurrently. `owner/repo` skips both selectors.
     ///
     /// Everything lands at `<root>/<owner>/<repo>`, so a clone is in
-    /// `scriv repo sel` immediately afterwards. Each row carries the tags that
+    /// `cid repo sel` immediately afterwards. Each row carries the tags that
     /// make a repository unusual — `private` in yellow, `internal` in magenta —
     /// and the date it was last pushed to. Repositories you already have are
     /// marked with a green tick and skipped rather than re-cloned. Archived
@@ -378,7 +378,7 @@ enum FileCmd {
     /// Fuzzy-select a known file and print its absolute path
     ///
     /// Ordered like `repo sel`: what you have opened before comes first. The
-    /// same list, and the same order, as `scriv edit --tracked`.
+    /// same list, and the same order, as `cid edit --tracked`.
     Sel,
     /// Add a file; omit the path to select one from the current directory
     Add {
@@ -428,7 +428,7 @@ enum NoteCmd {
     /// List every note in the vault, most recently modified first
     ///
     /// Paths are absolute and one per line, so the listing pipes into whatever
-    /// reads paths — `scriv note ls | xargs grep -l TODO`.
+    /// reads paths — `cid note ls | xargs grep -l TODO`.
     #[command(visible_alias = "list")]
     Ls {
         /// Also show each note's label, its tags, and both dates
@@ -587,7 +587,7 @@ enum WorktreeCmd {
     /// Where the tree goes is `[worktree] root` — `.worktrees` inside the
     /// repository by default, one directory per branch with `/` written as `-`.
     /// An absolute root holds the trees of every repository, under the
-    /// repository's own name. The path is printed, so `cd (scriv worktree add
+    /// repository's own name. The path is printed, so `cd (cid worktree add
     /// feat/x)` lands in it.
     Add {
         /// Branch the tree checks out; omit to select or type one
@@ -597,7 +597,7 @@ enum WorktreeCmd {
     ///
     /// `tab` selects several. Neither the main tree nor the one you are
     /// standing in is offered — git will not remove either. The branches they
-    /// had checked out are left alone; that is `scriv branch rm`.
+    /// had checked out are left alone; that is `cid branch rm`.
     Rm {
         /// Worktrees to remove, by path; omit to select interactively
         #[arg(value_name = "PATH")]
@@ -850,8 +850,8 @@ enum ConfigCmd {
     /// Print every setting and what is in force for it
     ///
     /// Every table the config file can hold, whether the file writes that table
-    /// or not: the value in force, and — where that value is scriv's rather
-    /// than yours — that it is a default. The keys `scriv init` binds and the
+    /// or not: the value in force, and — where that value is cid's rather
+    /// than yours — that it is a default. The keys `cid init` binds and the
     /// names it defines are settings like any other, listed with the action
     /// each one runs and what that action does; there are none until the file
     /// names some.
@@ -860,14 +860,14 @@ enum ConfigCmd {
     Print,
     /// Print the configuration file path
     Path,
-    /// Check everything scriv depends on and report what is wrong
+    /// Check everything cid depends on and report what is wrong
     ///
     /// A checklist: the config file, the paths it names, the repositories
     /// discovery actually finds, your editor, `git`, `gh` and whether it is
     /// still logged in, fish's history file, the tracked-file list and the
     /// notes vault — each a line, with what to do about the ones that are
     /// wrong. Exits non-zero only when something is genuinely broken, so it is
-    /// worth putting in a setup script; a warning still leaves scriv working.
+    /// worth putting in a setup script; a warning still leaves cid working.
     ///
     /// What each setting is set to is `config print`; a row here repeats a
     /// value only where repeating it is the way out of a problem.
@@ -898,7 +898,7 @@ enum StatsCmd {
     ///
     /// Runs `claude` in the directory you are standing in, on a prompt built
     /// from the commands worth the most — total time spent, which has both how
-    /// often a command runs and what each run costs in it. Run it from a scriv
+    /// often a command runs and what each run costs in it. Run it from a cid
     /// checkout, since that is what it will be asked to change.
     Improve {
         /// Print the prompt instead of running anything

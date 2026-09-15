@@ -1,4 +1,4 @@
-//! `scriv note` — list, select and open the notes in your vault.
+//! `cid note` — list, select and open the notes in your vault.
 //!
 //! A registry like `repo` and `file`: the set is every Markdown file under
 //! `[note] root`, and the verbs act on what is selected from it. The imperative
@@ -29,7 +29,7 @@ const HEAD_BYTES: u64 = 8 * 1024;
 fn vault(ctx: &Ctx) -> Result<PathBuf> {
     let root = ctx.config.note.root.as_deref().ok_or_else(|| {
         anyhow::anyhow!(
-            "`[note] root` is not set in {} — `scriv note` has nowhere to look",
+            "`[note] root` is not set in {} — `cid note` has nowhere to look",
             ctx.config_path.display()
         )
     })?;
@@ -91,8 +91,8 @@ fn load(ctx: &Ctx, all: bool) -> Result<Vec<Note>> {
         .info(&format!("{} note(s) under {}", notes.len(), root.display()));
     if notes.is_empty() {
         bail!(
-            "no notes under {}{} — `scriv note` reads Markdown files, and \
-             `scriv note new` writes one",
+            "no notes under {}{} — `cid note` reads Markdown files, and \
+             `cid note new` writes one",
             root.display(),
             if all {
                 ""
@@ -171,7 +171,7 @@ fn unix(time: SystemTime) -> Option<i64> {
     }
 }
 
-/// `scriv note ls` — print the notes, most recently modified first.
+/// `cid note ls` — print the notes, most recently modified first.
 ///
 /// Plain, one path below the vault per line, which is the name `note open`
 /// takes. `--status` adds the tags and both dates; `--all` adds the notes
@@ -198,7 +198,7 @@ pub fn ls(ctx: &Ctx, status: bool, all: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv note sel` — fuzzy-select a note and print its absolute path.
+/// `cid note sel` — fuzzy-select a note and print its absolute path.
 pub fn sel(ctx: &Ctx, all: bool) -> Result<()> {
     let notes = load(ctx, all)?;
     let (cfg, offset) = (&ctx.config.note, ctx.utc_offset());
@@ -212,7 +212,7 @@ pub fn sel(ctx: &Ctx, all: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv note open [NAME]...` — open notes in `[note] editor`, selecting them
+/// `cid note open [NAME]...` — open notes in `[note] editor`, selecting them
 /// when none are named.
 ///
 /// The selector is one list read three ways, each on a key: the names of the
@@ -272,7 +272,7 @@ pub fn open(ctx: &Ctx, names: &[String], all: bool) -> Result<()> {
 }
 
 /// A note named on the command line, as a path. A name is relative to the
-/// vault, so `scriv note open` takes back exactly what `scriv note ls` printed;
+/// vault, so `cid note open` takes back exactly what `cid note ls` printed;
 /// an absolute path, or one that begins with `~`, is left where it points.
 ///
 /// `[note] archives` does not apply: naming a note is asking for that note.
@@ -310,7 +310,7 @@ fn item(
     }
 }
 
-/// `scriv note new [NAME]` — start a note and open it.
+/// `cid note new [NAME]` — start a note and open it.
 ///
 /// No question is asked first. Being asked to name a note is being asked what
 /// it is about before writing it, and a note that has to be named before it can
@@ -357,7 +357,7 @@ fn with_extension(name: &str) -> String {
     }
 }
 
-/// `scriv note scratch` — open the one note that is filed nowhere.
+/// `cid note scratch` — open the one note that is filed nowhere.
 ///
 /// A single permanent file rather than a new one each time, which is the whole
 /// point: somewhere to put a thought without deciding first whether it is worth
@@ -390,7 +390,7 @@ fn scratch_path(ctx: &Ctx, root: &Path) -> PathBuf {
 
 // --- cleanup ----------------------------------------------------------------
 
-/// `scriv note cleanup` — look through the notes that were never really
+/// `cid note cleanup` — look through the notes that were never really
 /// written, and delete the ones you agree about.
 ///
 /// Nothing is deleted without being listed and then agreed to, and the listing
@@ -877,14 +877,14 @@ fn open_matches(ctx: &Ctx, editor: &[String], matches: &[note::Match]) -> Result
 }
 
 /// The quickfix list on disk, removed when it goes out of scope — vim reads it
-/// at startup and never looks again, so it is scriv's to clean up.
+/// at startup and never looks again, so it is cid's to clean up.
 struct QuickfixFile {
     path: PathBuf,
 }
 
 impl QuickfixFile {
     fn write(matches: &[note::Match]) -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("scriv-quickfix-{}.txt", std::process::id()));
+        let path = std::env::temp_dir().join(format!("cid-quickfix-{}.txt", std::process::id()));
         let body: String = matches
             .iter()
             .map(|found| format!("{}\n", note::quickfix_line(found)))

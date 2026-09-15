@@ -1,4 +1,4 @@
-//! `scriv stats` — what has been run, how often, and how long it took.
+//! `cid stats` — what has been run, how often, and how long it took.
 //!
 //! The log is opened on a thread of its own while the command runs, so nothing
 //! about recording a run is in front of the user: by the time there is a record
@@ -92,7 +92,7 @@ fn rows(ctx: &Ctx, command: &clap::Command) -> Result<Vec<stats::TreeRow>> {
     Ok(stats::rows(&stats::tree(command), &totals))
 }
 
-/// `scriv stats show` — every command there is, with how often it has been run
+/// `cid stats show` — every command there is, with how often it has been run
 /// and what one run costs.
 pub fn show(ctx: &Ctx, command: &clap::Command) -> Result<()> {
     let rows = rows(ctx, command)?;
@@ -107,7 +107,7 @@ pub fn show(ctx: &Ctx, command: &clap::Command) -> Result<()> {
     Ok(())
 }
 
-/// `scriv stats reset` — forget every run recorded so far.
+/// `cid stats reset` — forget every run recorded so far.
 pub fn reset(ctx: &Ctx, yes: bool) -> Result<()> {
     let records = read(ctx)?;
     if records.is_empty() {
@@ -148,10 +148,10 @@ pub fn reset(ctx: &Ctx, yes: bool) -> Result<()> {
 /// The program `improve` hands the prompt to.
 const CLAUDE: &str = "claude";
 
-/// `scriv stats improve` — hand the statistics to Claude Code, in the directory
+/// `cid stats improve` — hand the statistics to Claude Code, in the directory
 /// the user is standing in, and let it work on the commands worth the most.
 ///
-/// Nothing is captured: Claude Code takes the terminal, as `scriv edit`'s
+/// Nothing is captured: Claude Code takes the terminal, as `cid edit`'s
 /// editor does.
 pub fn improve(ctx: &Ctx, command: &clap::Command, dry_run: bool) -> Result<()> {
     let rows = rows(ctx, command)?;
@@ -171,7 +171,7 @@ pub fn improve(ctx: &Ctx, command: &clap::Command, dry_run: bool) -> Result<()> 
     ctx.log
         .info(&format!("handing {} rows to {CLAUDE}", rows.len()));
     // Claude Code takes the terminal and the user works in it, so the session
-    // is their time rather than a subprocess scriv is held up by.
+    // is their time rather than a subprocess cid is held up by.
     let _waiting = stats::interacting();
     let status = std::process::Command::new(CLAUDE)
         .arg(&prompt)

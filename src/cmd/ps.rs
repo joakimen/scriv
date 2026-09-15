@@ -1,4 +1,4 @@
-//! `scriv ps` — list, select and signal running processes.
+//! `cid ps` — list, select and signal running processes.
 
 use std::io::ErrorKind;
 use std::process::{Command, Stdio};
@@ -38,7 +38,7 @@ fn self_pid() -> i32 {
     std::process::id() as i32
 }
 
-/// The process table, minus what must never be offered: scriv itself and
+/// The process table, minus what must never be offered: cid itself and
 /// everything above it in the parent chain. With a `port`, narrowed to what is
 /// listening on it.
 fn processes(port: Option<u16>) -> Result<Vec<Process>> {
@@ -49,7 +49,7 @@ fn processes(port: Option<u16>) -> Result<Vec<Process>> {
     let pids = listeners(port)?;
     let procs = proc::with_pids(&procs, &pids);
     if procs.is_empty() {
-        bail!("nothing scriv may signal is listening on port {port}");
+        bail!("nothing cid may signal is listening on port {port}");
     }
     Ok(procs)
 }
@@ -82,7 +82,7 @@ fn spawn_error(err: std::io::Error) -> anyhow::Error {
     }
 }
 
-/// `scriv ps ls` — print the running processes, busiest first.
+/// `cid ps ls` — print the running processes, busiest first.
 pub fn ls(ctx: &Ctx, status: bool, port: Option<u16>) -> Result<()> {
     let procs = processes(port)?;
     let width = proc::user_width(&procs);
@@ -101,7 +101,7 @@ pub fn ls(ctx: &Ctx, status: bool, port: Option<u16>) -> Result<()> {
     Ok(())
 }
 
-/// `scriv ps sel` — fuzzy-select a process and print its pid.
+/// `cid ps sel` — fuzzy-select a process and print its pid.
 pub fn sel(ctx: &Ctx, port: Option<u16>) -> Result<()> {
     let procs = processes(port)?;
     if procs.is_empty() {
@@ -112,7 +112,7 @@ pub fn sel(ctx: &Ctx, port: Option<u16>) -> Result<()> {
     Ok(())
 }
 
-/// `scriv ps kill` — signal processes, by pid or interactively.
+/// `cid ps kill` — signal processes, by pid or interactively.
 ///
 /// Several pids are signalled one at a time, so a refusal is reported against
 /// the row it belongs to and does not hide the ones that worked.

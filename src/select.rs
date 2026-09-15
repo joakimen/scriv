@@ -57,7 +57,7 @@ pub enum Preview {
     /// counterpart, and deferred for the same reason — the directory walk is
     /// streamed too.
     Dir,
-    /// Text scriv builds itself, the moment the row is highlighted.
+    /// Text cid builds itself, the moment the row is highlighted.
     ///
     /// [`Preview::Text`] for a pane too expensive to hold one of per row: a
     /// vault of two thousand notes read and rendered up front is two thousand
@@ -1319,8 +1319,8 @@ fn run_selector(feed: Feed, run: Run, cfg: &SelectorConfig) -> Result<Outcome> {
     };
 
     let _room = room_for(&cfg.height);
-    // Everything from here until skim returns is the user's time, not scriv's,
-    // and `scriv stats` says so.
+    // Everything from here until skim returns is the user's time, not cid's,
+    // and `cid stats` says so.
     let output = {
         let _waiting = crate::stats::interacting();
         Skim::run_with(options, source).map_err(|e| anyhow!("running selector: {e}"))?
@@ -1363,7 +1363,7 @@ fn acted(output: &SkimOutput, actions: &'static [Action]) -> Option<&'static str
 /// [`PREVIEW_KEY`] is deliberately absent. It does the same thing in every
 /// selector that has a pane, and a header is one line competing with a preview
 /// pane for the width — four hints already ran off the end of a narrow one. It
-/// is in `scriv --help` instead, where something true everywhere belongs.
+/// is in `cid --help` instead, where something true everywhere belongs.
 ///
 /// Nothing at all when there is nothing to say, so a plain list of paths keeps
 /// the row for a path.
@@ -2155,7 +2155,7 @@ mod tests {
 
         for hint in header.split(HINT_SEPARATOR) {
             let key = hint.split(' ').next().expect("a hint with no key");
-            // `tab` is skim's own, and needs no binding from scriv.
+            // `tab` is skim's own, and needs no binding from cid.
             if key == "tab" {
                 continue;
             }
@@ -2188,7 +2188,7 @@ mod tests {
             .split_once(':')
             .expect("a bind with no action");
         assert_eq!(action, "ignore");
-        let parsed = skim::binds::parse_key(key).expect("scriv names a key skim cannot parse");
+        let parsed = skim::binds::parse_key(key).expect("cid names a key skim cannot parse");
         assert!(
             skim::binds::get_default_key_map().contains_key(&parsed),
             "skim no longer binds {key}: the override can go",
@@ -2203,7 +2203,7 @@ mod tests {
     #[test]
     fn the_action_keys_are_ones_skim_leaves_alone() {
         for key in ["f1", "f2", "f7", PREVIEW_KEY] {
-            let parsed = skim::binds::parse_key(key).expect("scriv names a key skim cannot parse");
+            let parsed = skim::binds::parse_key(key).expect("cid names a key skim cannot parse");
             assert!(
                 !skim::binds::get_default_key_map().contains_key(&parsed),
                 "{key} already means something in skim",

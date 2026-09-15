@@ -1,4 +1,4 @@
-//! Decide what `scriv --version` reports: the crate version when this commit
+//! Decide what `cid --version` reports: the crate version when this commit
 //! is a release — on a tag, nothing modified — and a development build naming
 //! its commit otherwise. Git is not required.
 

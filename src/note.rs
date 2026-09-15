@@ -559,7 +559,7 @@ pub fn newest_first(notes: &mut [Note]) {
 /// A searching selector hands what is typed to the search rather than to the
 /// fuzzy matcher, so a list of names already in memory has to be matched here.
 /// It goes through the selector's own scorer, which is what keeps this list
-/// ranked the way every other list in scriv is.
+/// ranked the way every other list in cid is.
 ///
 /// An empty query is every note, in the order [`newest_first`] left them: the
 /// whole vault is a useful answer to nothing typed yet, where an empty search
@@ -1454,7 +1454,7 @@ pub fn match_width(matches: &[Match]) -> usize {
 ///
 /// The location leads for the reason a note's name does — it is what the eye
 /// runs down — and is the only part coloured, since the matched text is the
-/// note's own words and colouring those would be scriv talking over them.
+/// note's own words and colouring those would be cid talking over them.
 pub fn match_row(found: &Match, width: usize) -> (String, Vec<Tint>) {
     let location = format!("{}:{}", found.rel, found.line);
     let mut row = String::new();

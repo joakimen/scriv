@@ -43,9 +43,9 @@ impl ColorChoice {
     }
 }
 
-/// The variable that turns scriv's colour off: set and non-empty means no
-/// colour. Deliberately scriv's own rather than the cross-tool `NO_COLOR`
-/// (<https://no-color.org>), which scriv does not read.
+/// The variable that turns cid's colour off: set and non-empty means no
+/// colour. Deliberately cid's own rather than the cross-tool `NO_COLOR`
+/// (<https://no-color.org>), which cid does not read.
 pub fn no_color() -> bool {
     std::env::var_os(NO_COLOR_ENV_VAR).is_some_and(|v| !v.is_empty())
 }
@@ -54,7 +54,7 @@ pub fn no_color() -> bool {
 pub const NO_COLOR_ENV_VAR: &str = "CID_NO_COLOR";
 
 /// Stdout for a listing, which ends quietly when the reader stops reading.
-/// `println!` panics on a closed pipe, so `scriv history ls | head` would end
+/// `println!` panics on a closed pipe, so `cid history ls | head` would end
 /// in a stack trace where every other command-line tool simply stops.
 ///
 /// Rows are buffered rather than handed straight to the OS: `std::io::Stdout`
@@ -174,7 +174,7 @@ impl Confirm {
     }
 }
 
-/// The status scriv exits with when its terminal disappears underneath it:
+/// The status cid exits with when its terminal disappears underneath it:
 /// 128 + SIGHUP, what the shell would have reported.
 pub const EXIT_HANGUP: u8 = 129;
 
@@ -206,7 +206,7 @@ fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
 ///
 /// skim's input loop does not stop when its event stream ends: on a pty whose
 /// other end has closed it spins at 100% CPU indefinitely. `SIGHUP` normally
-/// ends scriv first; this is for when it does not, such as an orphaned process
+/// ends cid first; this is for when it does not, such as an orphaned process
 /// group. Remove it once skim's loop terminates on its own.
 #[must_use]
 pub struct HangupWatch {
@@ -273,11 +273,11 @@ pub const NEWLINE_GLYPH: &str = "⏎";
 /// every selector reload. A test holds it to the glyph above.
 const NEWLINE_JOINER: &str = " ⏎ ";
 
-/// Text from outside scriv, made safe to draw on one row of a terminal.
+/// Text from outside cid, made safe to draw on one row of a terminal.
 ///
 /// Control characters are dropped: a terminal *acts on* what it is sent, so a
 /// pull request title carrying `\x1b[32m` could otherwise make a listing say
-/// the opposite of what scriv found. scriv's own colour is applied after this,
+/// the opposite of what cid found. cid's own colour is applied after this,
 /// never before. Newlines fold to [`NEWLINE_GLYPH`] so one entry stays one row,
 /// and tabs become a space so columns stay aligned.
 pub fn one_row(text: &str) -> String {
@@ -741,7 +741,7 @@ mod tests {
     /// an environment variable, so the name `no_color` reads is invisible to
     /// every other check.
     #[test]
-    fn the_variable_is_scrivs_own_and_not_the_shared_convention() {
+    fn the_variable_is_cids_own_and_not_the_shared_convention() {
         assert_eq!(NO_COLOR_ENV_VAR, "CID_NO_COLOR");
     }
 

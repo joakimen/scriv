@@ -20,7 +20,7 @@ use tempfile::TempDir;
 /// The binary under test, as cargo built it for this run.
 const BIN: &str = env!("CARGO_BIN_EXE_cid");
 
-/// A sealed-off scriv installation: its own home, config file and known-files
+/// A sealed-off cid installation: its own home, config file and known-files
 /// list, none of which outlive the test.
 struct Sandbox {
     home: TempDir,
@@ -94,7 +94,7 @@ impl Sandbox {
         path
     }
 
-    /// Run `scriv` with `args`, from `cwd`. `env_clear` is the whole point: an
+    /// Run `cid` with `args`, from `cwd`. `env_clear` is the whole point: an
     /// inherited `CID_CONFIG` or `HOME` would change what is being tested.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Run {
         self.run_full(cwd, args, &[])
@@ -104,13 +104,13 @@ impl Sandbox {
         self.run_full(self.home(), args, &[])
     }
 
-    /// [`Sandbox::run`] with `env` set on top — for the variables scriv is
+    /// [`Sandbox::run`] with `env` set on top — for the variables cid is
     /// meant to react to, such as `CID_NO_COLOR`.
     fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
         self.run_full(self.home(), args, env)
     }
 
-    /// [`Sandbox::run`] with `HOME` taken away — the one variable scriv cannot
+    /// [`Sandbox::run`] with `HOME` taken away — the one variable cid cannot
     /// resolve a configuration path without.
     fn run_without_home(&self, args: &[&str]) -> Run {
         let mut cmd = self.command(self.home(), args);
@@ -142,7 +142,7 @@ impl Sandbox {
 }
 
 fn finish(mut cmd: Command) -> Run {
-    let out = cmd.output().expect("running scriv");
+    let out = cmd.output().expect("running cid");
     Run {
         code: out.status.code(),
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -491,7 +491,7 @@ fn config_path_prints_one_bare_path() {
     assert_eq!(run.lines(), vec![sandbox.config_path().to_str().unwrap()]);
 }
 
-/// Every path scriv resolves hangs off the home directory, and `$HOME` is the
+/// Every path cid resolves hangs off the home directory, and `$HOME` is the
 /// only place it is read from. Without it the run has to stop and say so,
 /// rather than carry on against a guess from the passwd file.
 #[test]
@@ -625,11 +625,7 @@ fn a_missing_root_is_answered_by_where_the_user_actually_is() {
 
     let fresh = sandbox.run(&["repo", "ls"]);
     fresh.code(1);
-    assert!(
-        fresh.stderr.contains("scriv config init"),
-        "{}",
-        fresh.stderr
-    );
+    assert!(fresh.stderr.contains("cid config init"), "{}", fresh.stderr);
 
     let path = sandbox.write_config("[repo]\nignore = [\"target\"]\n");
     let written = sandbox.run(&["repo", "ls"]);
@@ -717,7 +713,7 @@ fn repo_ls_reports_a_missing_root() {
 
 // --- worktrees --------------------------------------------------------------
 
-/// A real repository with one linked worktree, since `scriv worktree` reads
+/// A real repository with one linked worktree, since `cid worktree` reads
 /// git rather than the filesystem.
 ///
 /// `git worktree add` needs a commit to point the new tree at, and the sandbox
@@ -725,7 +721,7 @@ fn repo_ls_reports_a_missing_root() {
 /// the environment, and the two `GIT_CONFIG_*` variables that keep the machine
 /// running the test out of the result.
 fn mk_worktree_repo(root: &Path) -> (PathBuf, PathBuf) {
-    let main = root.join("scriv");
+    let main = root.join("cid");
     std::fs::create_dir_all(&main).unwrap();
 
     for args in [
@@ -739,7 +735,7 @@ fn mk_worktree_repo(root: &Path) -> (PathBuf, PathBuf) {
     (main, root.join("feat"))
 }
 
-/// Run git in `dir`, sealed off the way [`Sandbox`] seals scriv off.
+/// Run git in `dir`, sealed off the way [`Sandbox`] seals cid off.
 ///
 /// The sandbox has no git identity to commit with — hence the author and
 /// committer in the environment, and the two `GIT_CONFIG_*` variables that keep
@@ -753,9 +749,9 @@ fn git_in(dir: &Path, home: &Path, args: &[&str]) -> String {
         .env("HOME", home)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env("GIT_AUTHOR_NAME", "scriv tests")
+        .env("GIT_AUTHOR_NAME", "cid tests")
         .env("GIT_AUTHOR_EMAIL", "tests@example.invalid")
-        .env("GIT_COMMITTER_NAME", "scriv tests")
+        .env("GIT_COMMITTER_NAME", "cid tests")
         .env("GIT_COMMITTER_EMAIL", "tests@example.invalid")
         .output()
         .expect("running git");
@@ -818,7 +814,7 @@ fn worktree_ls_collapses_home_unless_asked_for_absolute_paths() {
 
     let collapsed = sandbox.run_full(&main, &["worktree", "ls"], &env);
     collapsed.ok();
-    assert_eq!(collapsed.lines(), vec!["~/scriv", "~/feat"]);
+    assert_eq!(collapsed.lines(), vec!["~/cid", "~/feat"]);
 
     let absolute = sandbox.run_full(&main, &["worktree", "ls", "-A"], &env);
     absolute.ok();
@@ -852,7 +848,7 @@ fn worktree_add_creates_the_tree_beside_the_checkout_and_prints_its_path() {
         path.display(),
         run.stderr
     );
-    // The path is stdout and git's narration is not, so `cd (scriv worktree
+    // The path is stdout and git's narration is not, so `cd (cid worktree
     // add …)` lands in the tree rather than in a sentence about it.
     assert_eq!(run.lines(), vec![real(&path)]);
     assert_eq!(
@@ -900,7 +896,7 @@ fn an_absolute_worktree_root_keeps_each_repository_apart() {
     let run = sandbox.run_in(&main, &["worktree", "add", "work/x"]);
     run.ok();
 
-    let path = sandbox.home().join("trees/scriv/work-x");
+    let path = sandbox.home().join("trees/cid/work-x");
     assert!(
         path.is_dir(),
         "no tree at {}: {}",
@@ -1242,7 +1238,7 @@ fn color_always_colours_a_pipe_and_never_does_not() {
 }
 
 #[test]
-fn scriv_no_color_turns_colour_off() {
+fn cid_no_color_turns_colour_off() {
     let sandbox = Sandbox::new();
     coloured_listing(&sandbox);
 
@@ -1303,7 +1299,7 @@ fn ps_ls_leads_every_row_with_a_pid() {
 }
 
 #[test]
-fn ps_ls_offers_neither_scriv_nor_the_process_that_ran_it() {
+fn ps_ls_offers_neither_cid_nor_the_process_that_ran_it() {
     let sandbox = Sandbox::new();
     let run = sandbox.run(&["ps", "ls"]);
     run.ok();
@@ -1403,7 +1399,7 @@ fn ps_kill_refuses_a_pid_that_is_really_a_process_group() {
 #[test]
 fn ps_kill_still_accepts_an_ordinary_pid() {
     let sandbox = Sandbox::new();
-    // What matters is that scriv got as far as asking `kill`.
+    // What matters is that cid got as far as asking `kill`.
     let run = sandbox.run(&["ps", "kill", "--signal", "CONT", "2147483646"]);
     assert!(
         !run.stderr.contains("refusing to signal"),
@@ -1479,7 +1475,7 @@ fn ps_kill_passes_a_failure_through() {
 
 // --- fish history -----------------------------------------------------------
 
-/// Write a fish history file where scriv looks for one by default.
+/// Write a fish history file where cid looks for one by default.
 fn write_history(sandbox: &Sandbox, body: &str) {
     let path = sandbox.home().join(".local/share/fish/fish_history");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1615,7 +1611,7 @@ fn a_listing_ends_quietly_when_the_reader_stops_reading() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawning scriv");
+        .expect("spawning cid");
 
     // Read a little, then close the pipe — this is what `head` does.
     let mut stdout = child.stdout.take().expect("piped stdout");
@@ -1623,7 +1619,7 @@ fn a_listing_ends_quietly_when_the_reader_stops_reading() {
     stdout.read_exact(&mut buf).expect("no rows at all");
     drop(stdout);
 
-    let out = child.wait_with_output().expect("waiting for scriv");
+    let out = child.wait_with_output().expect("waiting for cid");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !stderr.contains("panicked"),
@@ -1655,7 +1651,7 @@ fn init_fish_emits_functions_bindings_and_completions() {
     }
 }
 
-/// scriv takes no key of its own: a config that binds nothing gets a shell
+/// cid takes no key of its own: a config that binds nothing gets a shell
 /// with the completions and an empty binding function, and no more.
 #[test]
 fn init_fish_binds_nothing_until_the_config_says_so() {
@@ -2023,7 +2019,7 @@ fn note_open_takes_several_names_at_once() {
 }
 
 /// The key exists so a note can be opened by something other than the editor
-/// the rest of scriv uses; with none set, it is that editor.
+/// the rest of cid uses; with none set, it is that editor.
 #[test]
 fn note_open_falls_back_to_the_environment_editor() {
     let sandbox = Sandbox::new();
@@ -2043,7 +2039,7 @@ fn note_open_falls_back_to_the_environment_editor() {
 }
 
 /// `config check` is what a setup script runs, so a configured vault has to
-/// report as found rather than as a thing scriv knows nothing about.
+/// report as found rather than as a thing cid knows nothing about.
 #[test]
 fn config_check_counts_the_notes_in_the_vault() {
     let sandbox = Sandbox::new();
@@ -2574,7 +2570,7 @@ fn a_configured_alias_takes_the_name_it_was_given() {
 /// A shell where one key works and another silently does not is worse than one
 /// that says why at the moment it is sourced.
 #[test]
-fn an_action_scriv_does_not_define_stops_init_rather_than_thinning_it() {
+fn an_action_cid_does_not_define_stops_init_rather_than_thinning_it() {
     let sandbox = Sandbox::new();
     sandbox.write_config("[shell.bindings]\nctrl-o = \"repo-jump\"\n");
 
