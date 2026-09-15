@@ -13,6 +13,15 @@ raised, never by hand.
 
 ## Unreleased
 
+### Changed
+
+- Opening a pull request in the browser is about half a second quicker. scriv
+  asked GitHub for the pull request before handing the browser a URL it had
+  already worked out, and waited for the answer; it now builds the URL from the
+  checkout's git remotes, as it already did for `scriv repo open`. `scriv pr
+  open`, f2 from the prompt, and f2 inside the pull request selector are all
+  affected.
+
 ## v0.19.3
 
 *Released 2026-09-14*

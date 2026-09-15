@@ -486,10 +486,17 @@ pub fn checkout(number: u64) -> Result<()> {
     run(&["pr", "checkout", &number.to_string()])
 }
 
-/// Open a pull request in the browser. `gh pr view --web` already knows the
-/// host, so GitHub Enterprise works, and defers to `$BROWSER`.
+/// Open a pull request in the browser. `gh` already knows the host, so GitHub
+/// Enterprise works, and defers to `$BROWSER`.
+///
+/// `gh browse <number>` and not `gh pr view --web <number>`, which reaches the
+/// same page: the latter asks GraphQL for the pull request before handing the
+/// browser a URL it had already worked out, and waits for the answer. `browse`
+/// builds the URL from the git remotes alone. It spells the number as an issue,
+/// which GitHub redirects to the pull request — the redirect every `#123`
+/// reference on the site relies on.
 pub fn view_web(number: u64) -> Result<()> {
-    run(&["pr", "view", "--web", &number.to_string()])
+    run(&["browse", &number.to_string()])
 }
 
 /// Open the repository's pull request list in the browser.
