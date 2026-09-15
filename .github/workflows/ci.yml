@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+# A push to a pull request makes the run already going on it redundant, and a
+# redundant run here is two macOS jobs, billed at ten times a Linux minute.
+# `main` is excluded rather than left to the ref key: its runs are what the
+# ruleset reads, and each commit landing there is one somebody may look back at.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # `macos-latest` is Apple Silicon, which is the only thing scriv builds for:
   # `src/proc.rs` refuses to compile anywhere else. A cheaper Linux runner is

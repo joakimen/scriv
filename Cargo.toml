@@ -19,7 +19,7 @@ ignore = "0.4.31"
 indexmap = { version = "2.14.0", features = ["serde"] }
 # A type dependency, not a TUI: `SkimItem::display` returns a
 # `ratatui::text::Line`, so this must match the version skim was built against.
-ratatui ={ version = "0.30", default-features = false }
+ratatui = { version = "0.30", default-features = false }
 rustix = { version = "1", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
