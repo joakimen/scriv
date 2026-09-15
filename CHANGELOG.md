@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.19.4
+
+*Released 2026-09-15*
+
 ### Changed
 
 - Opening a pull request in the browser is about half a second quicker. scriv
