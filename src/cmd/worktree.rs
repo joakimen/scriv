@@ -1,4 +1,4 @@
-//! `scriv worktree` — list and select the working trees of the repository the
+//! `cid worktree` — list and select the working trees of the repository the
 //! shell is standing in.
 //!
 //! Switching to one is a `cd`, which a child process cannot do to its parent,
@@ -77,7 +77,7 @@ impl Columns {
     }
 }
 
-/// `scriv worktree ls` — print the path of each working tree, one per line,
+/// `cid worktree ls` — print the path of each working tree, one per line,
 /// home-collapsed unless `absolute`.
 ///
 /// `--status` adds the current-tree marker, what it has checked out, and any
@@ -127,7 +127,7 @@ fn items(worktrees: &[Worktree], home: &str) -> Vec<SelectItem> {
         .collect()
 }
 
-/// `scriv worktree sel` — fuzzy-select a working tree and print its absolute
+/// `cid worktree sel` — fuzzy-select a working tree and print its absolute
 /// path, which is what a shell needs to `cd` there.
 pub fn sel(ctx: &Ctx) -> Result<()> {
     let worktrees = load(ctx)?;
@@ -197,11 +197,11 @@ fn items_for_branches(branches: &[git::Branch]) -> Vec<SelectItem> {
         .collect()
 }
 
-/// `scriv worktree add [BRANCH]` — create a working tree, selecting or naming
+/// `cid worktree add [BRANCH]` — create a working tree, selecting or naming
 /// the branch it checks out.
 ///
-/// The path is scriv's to decide (see [`tree_path`]) and is printed on stdout,
-/// so the tree can be entered with `cd (scriv worktree add feat/x)`. git's own
+/// The path is cid's to decide (see [`tree_path`]) and is printed on stdout,
+/// so the tree can be entered with `cd (cid worktree add feat/x)`. git's own
 /// narration goes to stderr, where it does not get in the way of that.
 pub fn add(ctx: &Ctx, branch: Option<&str>) -> Result<()> {
     let repo_root = git::require_repo_root()?;
@@ -218,7 +218,7 @@ pub fn add(ctx: &Ctx, branch: Option<&str>) -> Result<()> {
     let path = tree_path(&repo_root, &root, source.branch());
     if path.exists() {
         bail!(
-            "{} already exists — `scriv worktree sel` will take you there",
+            "{} already exists — `cid worktree sel` will take you there",
             path.display()
         );
     }
@@ -256,12 +256,12 @@ fn removable(worktrees: &[Worktree]) -> Vec<&Worktree> {
         .collect()
 }
 
-/// `scriv worktree rm [PATH]...` — remove working trees, selecting them when
+/// `cid worktree rm [PATH]...` — remove working trees, selecting them when
 /// none are named.
 ///
 /// What will go is printed before the question is put, as `file prune` does:
 /// "remove 2 trees?" is answerable only by someone who has seen the two. The
-/// branches they had checked out are left alone — that is `scriv branch rm`.
+/// branches they had checked out are left alone — that is `cid branch rm`.
 pub fn remove(ctx: &Ctx, paths: &[String], force: bool, yes: bool) -> Result<()> {
     let worktrees = load(ctx)?;
 
@@ -295,7 +295,7 @@ pub fn remove(ctx: &Ctx, paths: &[String], force: bool, yes: bool) -> Result<()>
         match git::remove_worktree(Path::new(path), force) {
             Ok(()) => println!("Removed {}", display_path(path, ctx.home_str(), false)),
             // git says why on the terminal it was handed; a second sentence
-            // from scriv over the top of it would only be vaguer.
+            // from cid over the top of it would only be vaguer.
             Err(_) => failed += 1,
         }
     }
@@ -350,15 +350,15 @@ mod tests {
     fn worktrees() -> Vec<Worktree> {
         git::mark_current(
             git::parse_worktrees(
-                "worktree /home/u/dev/scriv\n\
+                "worktree /home/u/dev/cid\n\
                  HEAD 950547ef3af47b2e60406bd23e530bdb1e226c6e\n\
                  branch refs/heads/main\n\
                  \n\
-                 worktree /home/u/dev/scriv/.claude/worktrees/feat\n\
+                 worktree /home/u/dev/cid/.claude/worktrees/feat\n\
                  HEAD 32bb788aa1c04d9ee4d1e5a8b0e0b8d1c2f3a4b5\n\
                  branch refs/heads/feat/x\n",
             ),
-            Some(std::path::Path::new("/home/u/dev/scriv")),
+            Some(std::path::Path::new("/home/u/dev/cid")),
             std::path::Path::to_path_buf,
         )
     }
@@ -368,7 +368,7 @@ mod tests {
         let items = items(&worktrees(), "/home/u");
         assert!(items[0].label.starts_with("* main"), "{}", items[0].label);
         assert!(items[1].label.starts_with("  feat/x"), "{}", items[1].label);
-        assert_eq!(items[0].value(), "/home/u/dev/scriv");
+        assert_eq!(items[0].value(), "/home/u/dev/cid");
         assert_eq!(items[0].color, Some(2), "the current tree is green");
         assert_eq!(items[1].color, None);
     }
@@ -377,20 +377,16 @@ mod tests {
     #[test]
     fn rows_show_a_collapsed_path_and_return_an_absolute_one() {
         let items = items(&worktrees(), "/home/u");
-        assert!(
-            items[0].label.ends_with("~/dev/scriv"),
-            "{}",
-            items[0].label
-        );
-        assert_eq!(items[0].value(), "/home/u/dev/scriv");
+        assert!(items[0].label.ends_with("~/dev/cid"), "{}", items[0].label);
+        assert_eq!(items[0].value(), "/home/u/dev/cid");
     }
 
     #[test]
     fn columns_align() {
         let items = items(&worktrees(), "/home/u");
         assert_eq!(
-            items[0].label.find("~/dev/scriv"),
-            items[1].label.find("~/dev/scriv"),
+            items[0].label.find("~/dev/cid"),
+            items[1].label.find("~/dev/cid"),
             "the path column is ragged: {:?}",
             items.iter().map(|i| &i.label).collect::<Vec<_>>(),
         );
@@ -437,13 +433,13 @@ mod tests {
     #[test]
     fn a_relative_root_puts_the_tree_beside_the_checkout() {
         let path = tree_path(
-            Path::new("/home/u/dev/github.com/me/scriv"),
+            Path::new("/home/u/dev/github.com/me/cid"),
             Path::new(".worktrees"),
             "feat/x",
         );
         assert_eq!(
             path,
-            PathBuf::from("/home/u/dev/github.com/me/scriv/.worktrees/feat-x")
+            PathBuf::from("/home/u/dev/github.com/me/cid/.worktrees/feat-x")
         );
     }
 
@@ -452,11 +448,11 @@ mod tests {
     #[test]
     fn an_absolute_root_keeps_each_repository_apart() {
         let path = tree_path(
-            Path::new("/home/u/dev/github.com/me/scriv"),
+            Path::new("/home/u/dev/github.com/me/cid"),
             Path::new("/home/u/dev/worktrees"),
             "main",
         );
-        assert_eq!(path, PathBuf::from("/home/u/dev/worktrees/scriv/main"));
+        assert_eq!(path, PathBuf::from("/home/u/dev/worktrees/cid/main"));
     }
 
     #[test]
@@ -482,7 +478,7 @@ mod tests {
         let Some(Preview::Command(cmd)) = &items[0].preview else {
             panic!("expected a command preview");
         };
-        assert!(cmd.contains("-C '/home/u/dev/scriv'"), "{cmd}");
+        assert!(cmd.contains("-C '/home/u/dev/cid'"), "{cmd}");
         assert!(cmd.contains("--no-optional-locks"), "{cmd}");
         assert!(cmd.contains("--max-count=20"), "unbounded log: {cmd}");
     }

@@ -30,11 +30,11 @@ dispatch-releases = false
 unix-archive = ".tar.gz"
 # Build provenance, as the hand-written workflow attested before it.
 github-attestations = true
-# build.rs decides `scriv --version` by asking git whether HEAD is tagged, which
+# build.rs decides `cid --version` by asking git whether HEAD is tagged, which
 # a shallow dist checkout cannot answer. This tells it what it cannot observe.
 # Relative to `.github/workflows/`, and deliberately above it: a bare step list
 # sitting among the workflows is a workflow GitHub cannot parse.
 github-build-setup = "../build-setup.yml"
-# No self-updater. `scriv update` would be a second way to install the binary,
+# No self-updater. `cid update` would be a second way to install the binary,
 # and the install script already replaces one in place.
 install-updater = false

@@ -1,6 +1,6 @@
-//! `scriv pr` — list, select, check out, open, and merge GitHub pull requests.
+//! `cid pr` — list, select, check out, open, and merge GitHub pull requests.
 //!
-//! Everything here goes through the `gh` CLI (see [`crate::gh`]), so scriv
+//! Everything here goes through the `gh` CLI (see [`crate::gh`]), so cid
 //! inherits whatever authentication `gh auth login` set up — including SSO and
 //! GitHub Enterprise hosts — and stores no credentials of its own.
 
@@ -109,7 +109,7 @@ impl StatusColumns {
     }
 }
 
-/// `scriv pr ls` — print one pull request per line. The check and conflict
+/// `cid pr ls` — print one pull request per line. The check and conflict
 /// glyphs are in the plain listing; `--status` adds the state tag, the source
 /// branch and the last-updated date.
 ///
@@ -343,8 +343,8 @@ fn acted_on(number: u64, action: Option<&'static str>) -> Result<bool> {
     }
 }
 
-/// `scriv pr sel` — fuzzy-select a pull request and print its number, so it
-/// composes with `gh`: `gh pr view (scriv pr sel)`.
+/// `cid pr sel` — fuzzy-select a pull request and print its number, so it
+/// composes with `gh`: `gh pr view (cid pr sel)`.
 pub fn sel(ctx: &Ctx, state: &str, limit: usize) -> Result<()> {
     ensure_target(ctx)?;
     let (number, action) = select(
@@ -383,7 +383,7 @@ fn resolve(
     }
 }
 
-/// `scriv pr checkout [number]` — check out a pull request's branch, selecting
+/// `cid pr checkout [number]` — check out a pull request's branch, selecting
 /// one when no number is given. The checkout itself is `gh pr checkout`, which
 /// handles fork PRs and sets the upstream.
 pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Result<()> {
@@ -404,7 +404,7 @@ pub fn checkout(ctx: &Ctx, number: Option<u64>, state: &str, limit: usize) -> Re
     gh::checkout(number)
 }
 
-/// `scriv pr open [number]` — open a pull request in the browser, selecting one
+/// `cid pr open [number]` — open a pull request in the browser, selecting one
 /// when no number is given.
 pub fn open(
     ctx: &Ctx,
@@ -432,7 +432,7 @@ pub fn open(
     gh::view_web(number)
 }
 
-/// `scriv pr open --current` — open the pull request for the checked-out
+/// `cid pr open --current` — open the pull request for the checked-out
 /// branch, falling back to the repository's pull request list when it has none.
 ///
 /// The fallback is the point of the flag: a branch either has a pull request or
@@ -471,7 +471,7 @@ fn open_current(ctx: &Ctx) -> Result<()> {
     }
 }
 
-/// `scriv pr merge [number]` — merge a pull request, selecting one when no
+/// `cid pr merge [number]` — merge a pull request, selecting one when no
 /// number is given.
 ///
 /// The one selector tinted by [`Tint::Readiness`] rather than by state, since a

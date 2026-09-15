@@ -1,11 +1,11 @@
 //! What a shell can be told to do on a key or under a name.
 //!
-//! `scriv init` writes shell code, and which code it writes is configuration:
+//! `cid init` writes shell code, and which code it writes is configuration:
 //! `[shell.bindings]` maps a key to an action and `[shell.aliases]` maps a
-//! name to one. Neither holds shell code — an action is a scriv command plus
+//! name to one. Neither holds shell code — an action is a cid command plus
 //! what the shell does with what it prints, and each shell's emitter knows how
 //! to say that in its own language. That is what keeps one table serving every
-//! shell scriv learns to write for.
+//! shell cid learns to write for.
 //!
 //! I/O-free: [`resolve`] turns the configuration into the list an emitter
 //! walks, and refuses a name no action answers to.
@@ -39,7 +39,7 @@ pub struct Action {
     /// What the shell tells the user this is, where it has somewhere to say so
     /// — fish's `--description`.
     pub description: &'static str,
-    /// The arguments handed to `scriv`.
+    /// The arguments handed to `cid`.
     pub args: &'static [&'static str],
     pub kind: Kind,
 }
@@ -213,10 +213,10 @@ pub fn action(id: &str) -> Option<&'static Action> {
     ACTIONS.iter().find(|action| action.id == id)
 }
 
-/// Resolve the configuration into what `scriv init` will emit.
+/// Resolve the configuration into what `cid init` will emit.
 ///
 /// The tables are the whole of it: an absent one binds nothing, and a key left
-/// out of a present one is a key scriv does not touch. An action nobody defines
+/// out of a present one is a key cid does not touch. An action nobody defines
 /// is an error rather than a line quietly left out — a shell where one key works
 /// and another silently does not is worse than one that says why at the moment
 /// it is sourced.
@@ -230,8 +230,8 @@ pub fn resolve(config: &ShellConfig) -> Result<Integration> {
 /// What a table names, in the order it was written.
 ///
 /// Unlike [`resolve`], an action nobody defines is kept rather than refused:
-/// `scriv config print` reports a line the file really has, and leaves calling
-/// it broken to `scriv config check`.
+/// `cid config print` reports a line the file really has, and leaves calling
+/// it broken to `cid config check`.
 pub fn entries(table: Option<&Bindings>) -> Vec<(&str, &str)> {
     table
         .into_iter()
@@ -276,7 +276,7 @@ mod tests {
     }
 
     /// Nothing is bound until the config says so: a key is the scarcest thing
-    /// a terminal has, and scriv takes none of them on its own.
+    /// a terminal has, and cid takes none of them on its own.
     #[test]
     fn an_empty_configuration_binds_nothing() {
         let resolved = resolve(&ShellConfig::default()).unwrap();

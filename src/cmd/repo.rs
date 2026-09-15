@@ -1,4 +1,4 @@
-//! `scriv repo` — list and select the Git repositories found under the
+//! `cid repo` — list and select the Git repositories found under the
 //! configured search paths.
 
 use std::collections::BTreeSet;
@@ -28,7 +28,7 @@ fn no_root_message(config_path: &Path, config_exists: bool) -> String {
         )
     } else {
         format!(
-            "no configuration at {} — run `scriv config init` to write a starter one",
+            "no configuration at {} — run `cid config init` to write a starter one",
             config_path.display()
         )
     }
@@ -57,7 +57,7 @@ fn discover(ctx: &Ctx) -> Result<Vec<FoundRepo>> {
     Ok(repos)
 }
 
-/// `scriv repo ls` — print every discovered repository, one per line,
+/// `cid repo ls` — print every discovered repository, one per line,
 /// home-collapsed unless `absolute`.
 pub fn ls(ctx: &Ctx, absolute: bool) -> Result<()> {
     let repos = discover(ctx)?;
@@ -125,7 +125,7 @@ fn repo_rows(ctx: &Ctx, repos: &[FoundRepo]) -> Vec<SelectItem> {
 /// the answer to "which one" can be given once whichever question was asked.
 const OPEN: select::Action = select::Action::new("f1", "on GitHub");
 
-/// `scriv repo sel` — fuzzy-select one repository and print its absolute path.
+/// `cid repo sel` — fuzzy-select one repository and print its absolute path.
 ///
 /// The path is printed absolute so a shell shim can `cd` to it directly.
 ///
@@ -164,9 +164,9 @@ fn target(root: Option<PathBuf>, force_select: bool) -> Target {
     }
 }
 
-/// `scriv repo open` — open a repository's GitHub page in the browser. Inside a
+/// `cid repo open` — open a repository's GitHub page in the browser. Inside a
 /// repository that is this one; anywhere else, or with `--select`, it selects
-/// from every repository scriv found.
+/// from every repository cid found.
 pub fn open(ctx: &Ctx, force_select: bool) -> Result<()> {
     if let Target::Here(root) = target(git::repo_root(), force_select) {
         ctx.log
@@ -428,7 +428,7 @@ impl CloneView {
 /// The lists the clone selector steps through, and the key that steps.
 ///
 /// One key rather than one each: the keys a terminal has are spoken for by
-/// whatever the user has bound around scriv, and this asks for the fewest it
+/// whatever the user has bound around cid, and this asks for the fewest it
 /// can. `ctrl-t` displaces nothing skim binds.
 const CLONE_VIEWS: select::Views = select::Views::new("ctrl-t", &["all", "uncloned"]);
 
@@ -504,7 +504,7 @@ fn clone_all(ctx: &Ctx, root: &Path, repos: &[String]) -> Result<usize> {
     Ok(failures)
 }
 
-/// `scriv repo clone [owner | owner/repo]` — clone repositories from GitHub
+/// `cid repo clone [owner | owner/repo]` — clone repositories from GitHub
 /// into the configured root.
 ///
 /// With no argument, select an owner (from the config, the root, and `gh`, with
@@ -690,8 +690,8 @@ mod tests {
     #[test]
     fn destination_matches_the_discovery_layout() {
         let root = Path::new("/home/u/dev/github.com");
-        let dest = destination(root, "joakimen", "scriv");
-        assert_eq!(dest, PathBuf::from("/home/u/dev/github.com/joakimen/scriv"));
+        let dest = destination(root, "joakimen", "cid");
+        assert_eq!(dest, PathBuf::from("/home/u/dev/github.com/joakimen/cid"));
         // The inverse holds: discovery reads that owner back off the path.
         assert_eq!(
             repo::owner_of(root, &dest).as_deref(),
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn the_advice_for_a_missing_root_depends_on_there_being_a_config() {
-        let path = Path::new("/home/u/.config/scriv/config.toml");
+        let path = Path::new("/home/u/.config/cid/config.toml");
 
         let written = no_root_message(path, true);
         assert!(written.contains("[repo] root"), "{written}");
@@ -854,7 +854,7 @@ mod tests {
         );
 
         let absent = no_root_message(path, false);
-        assert!(absent.contains("scriv config init"), "{absent}");
+        assert!(absent.contains("cid config init"), "{absent}");
     }
 
     #[test]

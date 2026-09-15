@@ -1,7 +1,7 @@
-//! `scriv history` — search the commands you have already run.
+//! `cid history` — search the commands you have already run.
 //!
 //! The list is fish's own history file, newest first with repeats dropped and
-//! scriv's own key bindings left out. Selecting a command prints it rather than
+//! cid's own key bindings left out. Selecting a command prints it rather than
 //! running it; the fish integration puts it back on the command line to be read
 //! before enter.
 
@@ -71,7 +71,7 @@ fn items(entries: &[Entry], offset: time::UtcOffset) -> Vec<SelectItem> {
         .collect()
 }
 
-/// `scriv history ls` — print past commands, newest first, one per line.
+/// `cid history ls` — print past commands, newest first, one per line.
 ///
 /// A multi-line command is folded onto one line, so the output stays one entry
 /// per line. `--status` prefixes the local date and time each was last run, in
@@ -96,7 +96,7 @@ pub fn ls(ctx: &Ctx, status: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv history sel` — fuzzy-select a past command and print it.
+/// `cid history sel` — fuzzy-select a past command and print it.
 ///
 /// `query` seeds the search box. `print0` terminates the result with a NUL
 /// rather than a newline, since a command may itself contain newlines.

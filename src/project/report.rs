@@ -43,7 +43,7 @@ impl Outcome {
 
 /// Colours cycled in plan order, so one step is told from another at a glance.
 /// Red is left to failures, and these are the terminal's own palette, as the
-/// rest of scriv's colouring is.
+/// rest of cid's colouring is.
 const STEP_COLORS: &[u8] = &[6, 5, 2, 3, 4];
 
 /// The colour of the step at `index` in the plan.

@@ -1,4 +1,4 @@
-# Working on scriv
+# Working on cid
 
 ## The loop
 
@@ -34,7 +34,7 @@ parallel pull requests one at a time, largest first: arm, wait on `gh pr view
 `--force-with-lease`, arm the next. Two independently green commits have never
 been compiled together, which is what that sequencing buys.
 
-Cutting a release is part of that authorisation, not a step past it. scriv is
+Cutting a release is part of that authorisation, not a step past it. cid is
 the maintainer's own daily tool, so a feature sitting on `main` behind an
 unmerged release pull request is a feature nobody can use — merging the feature
 is not where delivering it ends. Once something in `src/` a user would feel — a
@@ -100,15 +100,15 @@ publishes the crate.
    change to `src/` — not only when adding a command — and change every sentence
    the edit has made untrue. They are what most people read instead of the
    binary, and they go stale silently. The README's command table must name
-   every group `scriv --help` lists, one line each, and the prose under each
+   every group `cid --help` lists, one line each, and the prose under each
    heading must say what the code now does; the starter config must describe
-   every setting that exists and none that does not. A test holds `scriv config
+   every setting that exists and none that does not. A test holds `cid config
    print` to that config, so a setting written in one and not the other fails
    the build; a setting in neither still slips through, which is what reading
    both on every change is for.
 
    The README is a page, not a manual, and keeping it one is the work. It says
-   what scriv is, how to install it, what the groups are and how the shell
+   what cid is, how to install it, what the groups are and how the shell
    integration is configured — verbs live in `--help`, settings in the starter
    config, and release mechanics here. Reading it is what is required on every
    change; adding to it needs a reason. A new flag does not belong there, and a
@@ -125,7 +125,7 @@ publishes the crate.
 
 ## One platform
 
-scriv builds for `aarch64-apple-darwin` and nothing else, and `src/proc.rs`
+cid builds for `aarch64-apple-darwin` and nothing else, and `src/proc.rs`
 fails the build anywhere else rather than letting it through. That guard is not
 tidiness: signal numbers past the POSIX five differ between Darwin and Linux,
 19 being `CONT` on one and `STOP` on the other, so a binary for the wrong
@@ -142,7 +142,7 @@ is an audit of everything that assumed Darwin, the signal table first.
 
 Rationale for code that does is a doc comment at the site — `ScratchRow`,
 `watch_for_hangup`, `select::quote`, `path::resolve_pwd`, `ColorChoice` and
-`scriv_key_bindings` all carry theirs.
+`cid_key_bindings` all carry theirs.
 
 - **Functional core, imperative shell**, as each module's `//!` header states.
   Decisions belong in pure functions with tests; only `cmd/` and the process
@@ -157,7 +157,7 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   rather than `gh pr view`. A `Preview::Command` must be local, bounded, built
   through `select::quote`, and `--no-optional-locks` if it is git.
 - **A new dependency on the outside world gets a `config check` row** in
-  `cmd/config.rs`. `Fail` only when scriv is genuinely broken without it, and
+  `cmd/config.rs`. `Fail` only when cid is genuinely broken without it, and
   skip a check that repeats an earlier one.
 - **A new setting gets a `config print` row**, under the table it is written
   in. That report is the whole configuration — every table, whether the file
@@ -169,7 +169,7 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   a setting is and where the value came from, `check` says whether what it
   points at is actually there, and a `check` row repeats a value only where
   repeating it is the way out of a problem.
-- **Spawned children explain themselves.** Return `Reported(code)` so scriv
+- **Spawned children explain themselves.** Return `Reported(code)` so cid
   exits with the child's status rather than printing a vaguer line over git's.
 - **Colour is the low sixteen indices, and never 0, 7, 8 or 15.** Those four are
   the background in a large share of themes, and a terminal resolves the rest
@@ -182,7 +182,7 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   [`term::SECONDARY`], one constant for the whole tree, so the tool reads as one
   thing rather than as the colour each command was written in.
 - **`NO_COLOR` is deliberately not read** — one switch for every tool, where
-  `SCRIV_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
+  `CID_NO_COLOR` is one for this. Printing reads `ctx.color()`, never the tty.
 - **`repo`/`file`/`branch`/`worktree`/`pr`/`ps`/`history` are registries; `edit`
   and `project` are not.** A registry is a set, with `ls`/`sel` and verbs over it.
   `edit file`/`edit dir` name what is looked for below `$PWD` and `project`
@@ -195,28 +195,28 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   is spoken for: `pj`, as `p` meets `pr`. `pr` and `ps` are spelled in two to
   begin with and take no alias of their own.
 - **Anything that waits for a person binds [`stats::interacting`], and
-  everything else scriv waits on binds [`stats::in_child`].** Every run records
+  everything else cid waits on binds [`stats::in_child`].** Every run records
   what it cost, and a selector left open over lunch would otherwise be recorded
   as a command that takes an hour. The first counter covers the selector, the
   yes/no question, and the children that take the terminal and give it back
   when the user is done — the editor, `stats improve`'s Claude Code session.
-  The second covers the work scriv delegates and is held up by: `git`, `gh`,
-  a build tool. A wait bound in neither is charged to scriv, and one bound in
+  The second covers the work cid delegates and is held up by: `git`, `gh`,
+  a build tool. A wait bound in neither is charged to cid, and one bound in
   both is charged twice. A new place to bind either is a new place to bind it,
   not a reason to thread a clock through the call graph.
 - **The stats log is appended to, never rewritten.** One line per run, so two
-  scriv processes finishing at once cannot lose each other's row and a run that
+  cid processes finishing at once cannot lose each other's row and a run that
   is killed loses only itself. The totals are worked out when they are read.
   Nothing but the command's name goes in it: no arguments, no paths, no what
   was picked.
-- **Key bindings and aliases are configuration, not code.** What `scriv init`
+- **Key bindings and aliases are configuration, not code.** What `cid init`
   emits comes from `[shell.bindings]` and `[shell.aliases]`, which name
   [`binding::ACTIONS`] rather than holding shell code — that is what lets one
   table serve a shell nobody has written an emitter for yet. Adding a name for
   an existing action is a config edit; only a *new* action is a code change,
   and it goes in that catalogue with an id that never changes afterwards, since
   renaming one breaks every config that named it.
-- **scriv binds no key of its own.** `EXAMPLE_BINDINGS` and `EXAMPLE_ALIASES`
+- **cid binds no key of its own.** `EXAMPLE_BINDINGS` and `EXAMPLE_ALIASES`
   are what the starter config writes out *commented*, and an absent table binds
   nothing — a key is the scarcest thing a terminal has, and which of the user's
   a tool may take is the user's to say. A test parses that commented block and
@@ -228,14 +228,14 @@ Rationale for code that does is a doc comment at the site — `ScratchRow`,
   a user binds is their business.
 - **Only `cd` and the command line need a shell**, since a child can write to
   neither of its parent's — hence `repo sel` printing a path and `history sel`
-  printing a command. `scriv edit` spawns its editor directly. Everything else
+  printing a command. `cid edit` spawns its editor directly. Everything else
   a shell wrapper does is a name for a command that could have been typed,
   which is what an alias is for.
 
 ## The demo
 
 `demo/fixture.sh` builds a throwaway sandbox, `demo/demo.tape` records it with
-VHS, `make demo-fixture` rebuilds it to poke at by hand. Nothing in scriv knows
+VHS, `make demo-fixture` rebuilds it to poke at by hand. Nothing in cid knows
 it is being demoed and it must stay that way: the sandbox arrives from outside
 through `HOME`, `XDG_CONFIG_HOME` and a stub `gh` earlier on `PATH`. Never add a
 demo mode to the binary, and never let real repositories, branches or pull

@@ -1,10 +1,10 @@
 [package]
-name = "scriv"
+name = "cid"
 version = "0.19.4"
 edition = "2024"
 description = "Provides fuzzy-completion for various local and remote resources."
 license = "MIT"
-repository = "https://github.com/joakimen/scriv"
+repository = "https://github.com/joakimen/cid"
 exclude = ["docs/", "demo/", ".github/", ".claude/", "prek.toml", "mise.toml"]
 
 # The version above is written by release-plz, in the pull request it opens —

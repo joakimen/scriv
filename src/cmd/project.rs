@@ -1,7 +1,7 @@
-//! `scriv project` — build the directory you are standing in, and install what
+//! `cid project` — build the directory you are standing in, and install what
 //! it needs, without knowing beforehand what it is written in.
 //!
-//! The whole group is ambient: it acts on `$PWD` rather than on a set scriv
+//! The whole group is ambient: it acts on `$PWD` rather than on a set cid
 //! keeps, so there is nothing to list or select. What it finds there comes from
 //! [`crate::project`], which decides everything; this module reads the
 //! directory, runs the commands, and prints what happened.
@@ -19,10 +19,10 @@ use crate::project::report::{Outcome, Status};
 use crate::project::{Scan, Step, Toolchain, build, deps as manifests, detect, install, report};
 use crate::{Ctx, Reported, stats, term};
 
-/// For what scriv says about a command rather than what the command said.
+/// For what cid says about a command rather than what the command said.
 const DIM: u8 = term::SECONDARY;
 
-/// `scriv project deps` — install every detected toolchain's dependencies.
+/// `cid project deps` — install every detected toolchain's dependencies.
 ///
 /// `dump` reads the manifests instead of running anything, and `dry_run` names
 /// the commands the run would have been.
@@ -50,7 +50,7 @@ pub fn deps(ctx: &Ctx, dry_run: bool, dump: bool) -> Result<()> {
     run(ctx, plan, dir)
 }
 
-/// `scriv project build` — run whatever building this project means.
+/// `cid project build` — run whatever building this project means.
 pub fn build(ctx: &Ctx, dry_run: bool) -> Result<()> {
     let dir = Path::new(ctx.pwd_str());
     let scan = scan(dir)?;

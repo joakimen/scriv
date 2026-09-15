@@ -52,7 +52,7 @@ demo-check:
 .PHONY: demo-fixture
 demo-fixture:
 	cargo build --release
-	SCRIV_BIN_DIR=$(CURDIR)/target/release sh demo/fixture.sh target/demo-fixture
+	CID_BIN_DIR=$(CURDIR)/target/release sh demo/fixture.sh target/demo-fixture
 	@echo
 	@echo "Enter the sandbox with:"
 	@echo "  source target/demo-fixture/env.sh"

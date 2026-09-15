@@ -1,4 +1,4 @@
-//! What a project's manifests declare, as `scriv project deps --dump` lists it.
+//! What a project's manifests declare, as `cid project deps --dump` lists it.
 //!
 //! A best-effort read rather than a resolver: it reports what is written in the
 //! files a project commits, not what a package manager would work out from

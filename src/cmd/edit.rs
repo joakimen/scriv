@@ -1,6 +1,6 @@
-//! `scriv edit` — fuzzy-find a file or a directory and open it in your editor.
+//! `cid edit` — fuzzy-find a file or a directory and open it in your editor.
 //!
-//! Unlike the other groups, this one is not a registry over a set scriv
+//! Unlike the other groups, this one is not a registry over a set cid
 //! maintains: `file` and `dir` name what is being *looked for* in the tree the
 //! user is standing in, so neither has an `ls`. `--tracked` is the one
 //! exception, pointing `file` at the known-files list instead.
@@ -18,7 +18,7 @@ use crate::path::{display_path, expand_tilde};
 use crate::select::{Preview, SelectItem, file_preview};
 use crate::{Ctx, Reported, files, select, stats, walk};
 
-/// `scriv edit file [FILE]...` — open `paths`, or select interactively when
+/// `cid edit file [FILE]...` — open `paths`, or select interactively when
 /// empty.
 ///
 /// With `tracked`, selection comes from the known-files list; otherwise from
@@ -33,10 +33,10 @@ pub fn file(ctx: &Ctx, paths: &[String], tracked: bool) -> Result<()> {
     })
 }
 
-/// `scriv edit dir [DIR]...` — open `paths`, or select interactively when
+/// `cid edit dir [DIR]...` — open `paths`, or select interactively when
 /// empty.
 ///
-/// What opening a directory means is the editor's business; scriv's part is
+/// What opening a directory means is the editor's business; cid's part is
 /// finding it without a `cd` and a `ls` per level.
 pub fn dir(ctx: &Ctx, paths: &[String]) -> Result<()> {
     open_or_select(ctx, paths, || select_dirs(ctx))
@@ -98,7 +98,7 @@ fn select_tracked(ctx: &Ctx) -> Result<Option<Vec<String>>> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
     if lines.is_empty() {
-        bail!("no known files yet — add one with `scriv file add <path>`");
+        bail!("no known files yet — add one with `cid file add <path>`");
     }
 
     // A `~`-collapsed label, but the editor gets the absolute path.

@@ -4,7 +4,7 @@
 //! clock here is the one measuring a run, and the counter the selectors add
 //! their waiting to.
 //!
-//! Every run appends one line rather than rewriting a total, so two scriv
+//! Every run appends one line rather than rewriting a total, so two cid
 //! processes finishing at the same moment cannot lose each other's row, and a
 //! run that is killed loses only itself.
 
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use crate::project::report::format_duration;
 use crate::term;
 
-/// The log every run appends to: `$XDG_DATA_HOME/scriv/stats`, falling back to
+/// The log every run appends to: `$XDG_DATA_HOME/cid/stats`, falling back to
 /// `~/.local/share`, as the spec puts machine-written data.
 pub fn path(data_home: Option<&str>, home: &Path) -> PathBuf {
     let base = data_home
@@ -24,7 +24,7 @@ pub fn path(data_home: Option<&str>, home: &Path) -> PathBuf {
         .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".local/share"));
-    base.join("scriv").join("stats")
+    base.join("cid").join("stats")
 }
 
 /// One run: when it finished, how long it took with the time spent waiting for
@@ -101,7 +101,7 @@ impl Totals {
         (self.calls > 0).then(|| Duration::from_millis(self.millis / self.calls))
     }
 
-    /// Time in scriv's own code over every run, with the subprocesses it waited
+    /// Time in cid's own code over every run, with the subprocesses it waited
     /// on taken out. What [`crate::stats::by_value`] ranks on.
     ///
     /// Carries the same lower-bound caveat as [`Self::own_average`].
@@ -109,7 +109,7 @@ impl Totals {
         self.millis.saturating_sub(self.child_millis)
     }
 
-    /// What one run costs in scriv's own code, with the subprocesses it waited
+    /// What one run costs in cid's own code, with the subprocesses it waited
     /// on taken out.
     ///
     /// A lower bound rather than an exact figure: two children waited on at
@@ -151,7 +151,7 @@ pub struct Node {
 /// The command tree, as clap knows it.
 ///
 /// Hidden commands are left out, and so is clap's own `help`: it is not one of
-/// scriv's commands, and the mirror of every other command it carries would
+/// cid's commands, and the mirror of every other command it carries would
 /// draw the whole tree twice.
 pub fn tree(command: &clap::Command) -> Node {
     Node {
@@ -194,7 +194,7 @@ pub fn rows(node: &Node, totals: &BTreeMap<String, Totals>) -> Vec<TreeRow> {
 /// summing each subtree into its parent on the way back out.
 ///
 /// `command` is what the log spells this row, which is empty at the root: a run
-/// is recorded as `repo sel`, not as `scriv repo sel`.
+/// is recorded as `repo sel`, not as `cid repo sel`.
 fn walk(
     node: &Node,
     branch: &str,
@@ -240,7 +240,7 @@ fn walk(
 }
 
 /// The columns, as `stats show` prints them: the tree, how often each command
-/// has been run, what one run of it costs, and how much of that is scriv's own
+/// has been run, what one run of it costs, and how much of that is cid's own
 /// work rather than a subprocess it waited on.
 pub fn render(rows: &[TreeRow], color: bool) -> Vec<String> {
     let duration = |value: Option<Duration>| {
@@ -333,12 +333,12 @@ fn right(text: &str, width: usize) -> String {
 const IMPROVE_ROWS: usize = 10;
 
 /// The commands worth improving, in the order they are worth it: time spent in
-/// scriv's own code, which has both how often a command is run and what each
+/// cid's own code, which has both how often a command is run and what each
 /// run costs in it, and none of what a subprocess or the user spent.
 ///
 /// Wall time put the build tool and the editor at the top, where there is
-/// nothing for scriv to do about either. What a subprocess costs is still
-/// worth reading — which one gets called is scriv's choice — so the total
+/// nothing for cid to do about either. What a subprocess costs is still
+/// worth reading — which one gets called is cid's choice — so the total
 /// stays a column rather than the sort key.
 pub fn by_value(rows: &[TreeRow]) -> Vec<&TreeRow> {
     let mut leaves: Vec<&TreeRow> = rows
@@ -360,9 +360,9 @@ pub fn by_value(rows: &[TreeRow]) -> Vec<&TreeRow> {
 /// it against.
 pub fn improve_prompt(rows: &[TreeRow]) -> String {
     let mut prompt = String::from(
-        "These are scriv's own usage statistics, gathered by `scriv stats`. \
+        "These are cid's own usage statistics, gathered by `cid stats`. \
          Each row is a command, how many times it has been run, what one run \
-         costs on average, how much of that average is scriv's own work, and \
+         costs on average, how much of that average is cid's own work, and \
          what the command has cost in total.\n\n\
          | command | runs | average | own | total |\n\
          | --- | --- | --- | --- | --- |\n",
@@ -371,7 +371,7 @@ pub fn improve_prompt(rows: &[TreeRow]) -> String {
         let duration =
             |value: Option<Duration>| value.map(format_duration).unwrap_or_else(|| "-".into());
         prompt.push_str(&format!(
-            "| `scriv {}` | {} | {} | {} | {} |\n",
+            "| `cid {}` | {} | {} | {} | {} |\n",
             row.command,
             row.totals.calls,
             duration(row.totals.average()),
@@ -383,14 +383,14 @@ pub fn improve_prompt(rows: &[TreeRow]) -> String {
         "\nTime you spent deciding — in a selector, at a yes/no question, in \
          the editor a command opened — is already out of every number here. \
          `own` takes out the subprocesses a run waited on as well, so it is \
-         what is left for scriv's own code to answer for, and `total` is what \
+         what is left for cid's own code to answer for, and `total` is what \
          the command cost including them.\n\n\
-         The rows are ordered by `own` × runs, which is where making scriv \
+         The rows are ordered by `own` × runs, which is where making cid \
          faster is worth the most: ordering by total put a build tool and an \
-         editor at the top, and neither is scriv's to speed up.\n\n\
+         editor at the top, and neither is cid's to speed up.\n\n\
          Read the `total` column anyway. A row whose `own` is a sliver of it \
-         spends its time in something scriv shells out to, and which \
-         subprocess gets called, with which arguments, is still scriv's \
+         spends its time in something cid shells out to, and which \
+         subprocess gets called, with which arguments, is still cid's \
          choice — a cheaper one that reaches the same answer is often there, \
          and the ordering will have buried that row. Beware the average as \
          well: a handful of slow runs among many fast ones raises it without \
@@ -430,13 +430,13 @@ static WAITED: AtomicU64 = AtomicU64::new(0);
 /// dropped. Bind it — `let _waiting = stats::interacting()`.
 ///
 /// A child the user works in — an editor, a Claude Code session — is bound here
-/// rather than as a [`Child`]: scriv hands over the terminal and waits, which
-/// makes the wait the user's however long they stay. A child scriv is merely
+/// rather than as a [`Child`]: cid hands over the terminal and waits, which
+/// makes the wait the user's however long they stay. A child cid is merely
 /// held up by is the other one.
 #[must_use]
 pub struct Interaction(Instant);
 
-/// Start counting time that belongs to the user rather than to scriv.
+/// Start counting time that belongs to the user rather than to cid.
 pub fn interacting() -> Interaction {
     Interaction(Instant::now())
 }
@@ -459,19 +459,19 @@ static IN_CHILD: AtomicU64 = AtomicU64::new(0);
 /// Time spent waiting for a spawned process, counted from when this is bound
 /// until it is dropped. Bind it — `let _child = stats::in_child()`.
 ///
-/// Bound around the wait, not around the spawn, so a child that scriv starts
-/// and reads from while it runs is counted for as long as scriv is held up by
+/// Bound around the wait, not around the spawn, so a child that cid starts
+/// and reads from while it runs is counted for as long as cid is held up by
 /// it. A counter rather than a value threaded through the call graph, for the
 /// reason [`Interaction`] is one, and independent of it: a child spawned while
 /// a selector is open is counted by both.
 ///
-/// Work scriv delegated, not a terminal it handed over — an editor is an
+/// Work cid delegated, not a terminal it handed over — an editor is an
 /// [`Interaction`], and counting it here as well would charge the user's
 /// afternoon in vim to `git`.
 #[must_use]
 pub struct Child(Instant);
 
-/// Start counting time that belongs to a subprocess rather than to scriv.
+/// Start counting time that belongs to a subprocess rather than to cid.
 pub fn in_child() -> Child {
     Child(Instant::now())
 }
@@ -617,19 +617,19 @@ mod tests {
     fn the_log_is_under_the_data_directory_the_environment_names() {
         assert_eq!(
             path(Some("/data"), Path::new("/home/me")),
-            PathBuf::from("/data/scriv/stats")
+            PathBuf::from("/data/cid/stats")
         );
         // Unset, and empty, fall back to where the spec puts it.
         for unset in [None, Some(""), Some("  ")] {
             assert_eq!(
                 path(unset, Path::new("/home/me")),
-                PathBuf::from("/home/me/.local/share/scriv/stats")
+                PathBuf::from("/home/me/.local/share/cid/stats")
             );
         }
     }
 
     fn cli() -> clap::Command {
-        clap::Command::new("scriv")
+        clap::Command::new("cid")
             .subcommand(
                 clap::Command::new("repo")
                     .subcommand(clap::Command::new("ls"))
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn the_tree_is_claps_own_without_what_it_hides() {
         let tree = tree(&cli());
-        assert_eq!(tree.name, "scriv");
+        assert_eq!(tree.name, "cid");
         assert_eq!(
             tree.children
                 .iter()
@@ -668,7 +668,7 @@ mod tests {
             .collect();
         assert_eq!(
             drawn,
-            ["scriv", "├─ repo", "│  ├─ ls", "│  └─ sel", "└─ edit"]
+            ["cid", "├─ repo", "│  ├─ ls", "│  └─ sel", "└─ edit"]
         );
     }
 
@@ -728,7 +728,7 @@ mod tests {
 
         let prompt = improve_prompt(&rows);
         assert!(
-            prompt.contains("`scriv repo ls` | 1 | 9.0s | 20ms | 9.0s"),
+            prompt.contains("`cid repo ls` | 1 | 9.0s | 20ms | 9.0s"),
             "{prompt}"
         );
     }
@@ -794,26 +794,26 @@ mod tests {
             record("repo sel", 200),
             record("repo sel", 200),
             record("repo sel", 200),
-            // Slow, and none of it scriv's: the editor held the terminal.
+            // Slow, and none of it cid's: the editor held the terminal.
             child_record("edit", 3_000, 2_990),
         ]);
         let rows = rows(&tree(&cli()), &totals);
 
         let ranked: Vec<&str> = by_value(&rows).iter().map(|r| r.command.as_str()).collect();
         // `edit` cost the most wall clock and is last: 2.99 of its 3 seconds
-        // were the editor's, and scriv cannot make those go faster.
+        // were the editor's, and cid cannot make those go faster.
         assert_eq!(ranked, ["repo sel", "repo ls", "edit"]);
         // Groups are not rows to improve: `repo` is not a command anyone runs.
         assert!(!ranked.contains(&"repo"), "{ranked:?}");
 
         let prompt = improve_prompt(&rows);
         assert!(
-            prompt.contains("`scriv repo sel` | 5 | 200ms | 200ms | 1.0s"),
+            prompt.contains("`cid repo sel` | 5 | 200ms | 200ms | 1.0s"),
             "{prompt}"
         );
         // The row that only looks expensive says so in the column beside it.
         assert!(
-            prompt.contains("`scriv edit` | 1 | 3.0s | 10ms |"),
+            prompt.contains("`cid edit` | 1 | 3.0s | 10ms |"),
             "{prompt}"
         );
         assert!(prompt.contains("CLAUDE.md"), "{prompt}");

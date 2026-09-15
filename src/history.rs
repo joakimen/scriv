@@ -93,17 +93,17 @@ fn unescape(text: &str) -> String {
     out
 }
 
-/// Whether `cmd` is a call to one of the `scriv-` functions `scriv init fish`
+/// Whether `cmd` is a call to one of the `cid-` functions `cid init fish`
 /// emits.
 ///
-/// Pressing ctrl-o hands `scriv-repo-cd` to fish to run, so fish records it —
+/// Pressing ctrl-o hands `cid-repo-cd` to fish to run, so fish records it —
 /// see [`shell`](crate::shell). A key press is not something that was typed,
 /// and offering it back puts a row nobody can use at the top of the very
 /// selector the key opened. `fe` and `kl` are deliberately not among them:
 /// those are typed, and worth recalling.
 fn is_key_binding(cmd: &str) -> bool {
     let cmd = cmd.trim();
-    cmd.starts_with("scriv-") && !cmd.contains(char::is_whitespace)
+    cmd.starts_with("cid-") && !cmd.contains(char::is_whitespace)
 }
 
 /// Drop the entries that are [`is_key_binding`] calls.
@@ -317,10 +317,10 @@ mod tests {
     }
 
     #[test]
-    fn the_key_bindings_scriv_emits_are_not_offered_back() {
+    fn the_key_bindings_cid_emits_are_not_offered_back() {
         let entries = parse(
-            "- cmd: scriv-repo-cd\n  when: 3\n\
-             - cmd: scriv-history-select\n  when: 2\n\
+            "- cmd: cid-repo-cd\n  when: 3\n\
+             - cmd: cid-history-select\n  when: 2\n\
              - cmd: git status\n  when: 1\n",
         );
         let kept = typed_only(entries);
@@ -330,13 +330,13 @@ mod tests {
         );
     }
 
-    /// The rule is "a bare call to a `scriv-` function", not "mentions scriv":
+    /// The rule is "a bare call to a `cid-` function", not "mentions cid":
     /// what the user typed at the prompt is theirs, however it starts.
     #[test]
     fn a_typed_command_survives_however_it_begins() {
         let entries = parse(
-            "- cmd: scriv repo sel\n- cmd: fe -t\n- cmd: kl\n\
-             - cmd: scriv-repo-cd --help\n- cmd: scriv_key_bindings\n",
+            "- cmd: cid repo sel\n- cmd: fe -t\n- cmd: kl\n\
+             - cmd: cid-repo-cd --help\n- cmd: cid_key_bindings\n",
         );
         assert_eq!(typed_only(entries).len(), 5);
     }

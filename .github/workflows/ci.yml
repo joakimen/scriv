@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # `macos-latest` is Apple Silicon, which is the only thing scriv builds for:
+  # `macos-latest` is Apple Silicon, which is the only thing cid builds for:
   # `src/proc.rs` refuses to compile anywhere else. A cheaper Linux runner is
   # not an option here, it is a build failure.
   build:

@@ -1,4 +1,4 @@
-//! `scriv branch` — list, select, and check out git branches.
+//! `cid branch` — list, select, and check out git branches.
 //!
 //! Local and remote branches are shown in one list, coloured by where they
 //! live. Selecting a remote-only branch creates the local branch and sets its
@@ -68,7 +68,7 @@ fn date_width(branches: &[Branch]) -> usize {
         .unwrap_or(0)
 }
 
-/// `scriv branch ls` — print branch names, one per line.
+/// `cid branch ls` — print branch names, one per line.
 ///
 /// Bare names by default so the output pipes cleanly; `--status` adds the
 /// current-branch marker, the local/both/remote tag, and the last commit.
@@ -191,7 +191,7 @@ struct Selection {
     branches: Vec<Branch>,
 }
 
-/// `scriv branch sel` — fuzzy-select a branch and print its name.
+/// `cid branch sel` — fuzzy-select a branch and print its name.
 pub fn sel(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
     let branches = load(ctx, fetch)?;
     let chosen = select(ctx, branches, filter, "Select a branch")?;
@@ -199,7 +199,7 @@ pub fn sel(ctx: &Ctx, filter: Filter, fetch: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv branch checkout [name]` — switch to a branch, selecting one when no
+/// `cid branch checkout [name]` — switch to a branch, selecting one when no
 /// name is given.
 ///
 /// A remote-only branch is checked out as a new local branch tracking it.
@@ -269,7 +269,7 @@ fn rm_items(branches: &[Branch], merged: &HashSet<String>) -> Vec<SelectItem> {
         .collect()
 }
 
-/// `scriv branch rm [NAME]...` — delete local branches, selecting them when
+/// `cid branch rm [NAME]...` — delete local branches, selecting them when
 /// none are named.
 ///
 /// What will go is printed with its merge state before the question is put, as

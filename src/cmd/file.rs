@@ -1,4 +1,4 @@
-//! `scriv file` — manage the list of files you visit regularly (formerly `kf`).
+//! `cid file` — manage the list of files you visit regularly (formerly `kf`).
 
 use std::path::Path;
 
@@ -9,7 +9,7 @@ use crate::select::{Preview, SelectItem, file_preview};
 use crate::term;
 use crate::{Ctx, files, select, walk};
 
-/// `scriv file ls` — print known files, optionally with existence status.
+/// `cid file ls` — print known files, optionally with existence status.
 pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
@@ -60,7 +60,7 @@ fn status_row(path: &str, present: bool, color: bool) -> String {
     term::paint(&format!("{glyph} {path}"), tint, color)
 }
 
-/// `scriv file prune` — drop the tracked files that are no longer there. What
+/// `cid file prune` — drop the tracked files that are no longer there. What
 /// will go is printed before the question is asked, since "remove 4 entries?"
 /// is answerable only by someone who already knows which four.
 pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
@@ -115,7 +115,7 @@ pub fn prune(ctx: &Ctx, yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// `scriv file add [path]` — record a file, canonicalising the path first.
+/// `cid file add [path]` — record a file, canonicalising the path first.
 ///
 /// With no `file`, a file is chosen interactively from the current directory
 /// tree via the configured selector.
@@ -161,7 +161,7 @@ pub fn add(ctx: &Ctx, file: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// `scriv file rm [path]` — remove a file, by argument or interactively.
+/// `cid file rm [path]` — remove a file, by argument or interactively.
 pub fn remove(ctx: &Ctx, file: Option<&str>) -> Result<()> {
     ctx.ensure_files_migrated()?;
     match file {
@@ -221,14 +221,14 @@ fn remove_interactive(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-/// `scriv file sel` — fuzzy-select a known file and print its absolute path.
+/// `cid file sel` — fuzzy-select a known file and print its absolute path.
 ///
 /// The selector shows `~`-collapsed paths; the printed path is absolute.
 pub fn sel(ctx: &Ctx) -> Result<()> {
     ctx.ensure_files_migrated()?;
     let lines = files::read_lines(&ctx.files_path)?;
     if lines.is_empty() {
-        bail!("no known files yet — add one with `scriv file add <path>`");
+        bail!("no known files yet — add one with `cid file add <path>`");
     }
 
     let items: Vec<SelectItem> = lines

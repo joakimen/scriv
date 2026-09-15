@@ -1,6 +1,6 @@
 //! GitHub pull requests, via the `gh` CLI.
 //!
-//! scriv does no GitHub authentication of its own: it shells out to `gh`, which
+//! cid does no GitHub authentication of its own: it shells out to `gh`, which
 //! already holds the user's token and knows which repository the working
 //! directory belongs to.
 //!
@@ -719,7 +719,7 @@ pub fn parse_repos(data: &str) -> Result<Vec<Repo>> {
     Ok(repos)
 }
 
-/// Whether `slug` is a GitHub `owner` or `owner/repo` scriv will act on. It is
+/// Whether `slug` is a GitHub `owner` or `owner/repo` cid will act on. It is
 /// a positional argument to `gh` and a component of the clone path: a leading
 /// `-` reads as a flag, and `..` or an extra `/` escapes the root.
 pub fn valid_slug(slug: &str) -> bool {
@@ -807,7 +807,7 @@ fn last_page(headers: &str) -> usize {
 
 /// Split what `gh api --include` prints into its headers and its body. A
 /// response with no blank line in it is all body, which is what an error page
-/// scriv should try to parse anyway looks like.
+/// cid should try to parse anyway looks like.
 fn split_response(raw: &str) -> (&str, &str) {
     raw.split_once("\r\n\r\n")
         .or_else(|| raw.split_once("\n\n"))
@@ -837,7 +837,7 @@ const SPECULATIVE_PAGES: usize = 4;
 /// An org is tried first: it is the common case, and the request doubles as the
 /// first page. Only when GitHub says there is no such org does this ask who the
 /// token belongs to, which is what tells a person from the person running
-/// scriv.
+/// cid.
 fn person_or_me(owner: &str) -> Source {
     if login().is_ok_and(|login| login.eq_ignore_ascii_case(owner)) {
         Source::Me
@@ -1030,7 +1030,7 @@ pub fn authenticated() -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Run `gh` with the terminal attached, in the working directory scriv was
+/// Run `gh` with the terminal attached, in the working directory cid was
 /// invoked from. `gh` writes its own diagnostics, so a failure is [`Reported`].
 fn run(args: &[&str]) -> Result<()> {
     run_at(None, args)

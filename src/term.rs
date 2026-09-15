@@ -17,7 +17,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
 pub enum ColorChoice {
-    /// Colour when stdout is a terminal and `SCRIV_NO_COLOR` is unset.
+    /// Colour when stdout is a terminal and `CID_NO_COLOR` is unset.
     #[default]
     Auto,
     /// Always colour, terminal or not — for a pager (`less -R`) or a recording.
@@ -28,7 +28,7 @@ pub enum ColorChoice {
 
 impl ColorChoice {
     /// Whether printed output should carry ANSI colour. An explicit
-    /// `always`/`never` outranks `SCRIV_NO_COLOR`, which applies under `auto`.
+    /// `always`/`never` outranks `CID_NO_COLOR`, which applies under `auto`.
     pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
         match self {
             Self::Always => true,
@@ -43,18 +43,18 @@ impl ColorChoice {
     }
 }
 
-/// The variable that turns scriv's colour off: set and non-empty means no
-/// colour. Deliberately scriv's own rather than the cross-tool `NO_COLOR`
-/// (<https://no-color.org>), which scriv does not read.
+/// The variable that turns cid's colour off: set and non-empty means no
+/// colour. Deliberately cid's own rather than the cross-tool `NO_COLOR`
+/// (<https://no-color.org>), which cid does not read.
 pub fn no_color() -> bool {
     std::env::var_os(NO_COLOR_ENV_VAR).is_some_and(|v| !v.is_empty())
 }
 
 /// The environment variable [`no_color`] reads.
-pub const NO_COLOR_ENV_VAR: &str = "SCRIV_NO_COLOR";
+pub const NO_COLOR_ENV_VAR: &str = "CID_NO_COLOR";
 
 /// Stdout for a listing, which ends quietly when the reader stops reading.
-/// `println!` panics on a closed pipe, so `scriv history ls | head` would end
+/// `println!` panics on a closed pipe, so `cid history ls | head` would end
 /// in a stack trace where every other command-line tool simply stops.
 ///
 /// Rows are buffered rather than handed straight to the OS: `std::io::Stdout`
@@ -174,7 +174,7 @@ impl Confirm {
     }
 }
 
-/// The status scriv exits with when its terminal disappears underneath it:
+/// The status cid exits with when its terminal disappears underneath it:
 /// 128 + SIGHUP, what the shell would have reported.
 pub const EXIT_HANGUP: u8 = 129;
 
@@ -206,7 +206,7 @@ fn still_attached(fd: rustix::fd::BorrowedFd<'_>) -> bool {
 ///
 /// skim's input loop does not stop when its event stream ends: on a pty whose
 /// other end has closed it spins at 100% CPU indefinitely. `SIGHUP` normally
-/// ends scriv first; this is for when it does not, such as an orphaned process
+/// ends cid first; this is for when it does not, such as an orphaned process
 /// group. Remove it once skim's loop terminates on its own.
 #[must_use]
 pub struct HangupWatch {
@@ -273,11 +273,11 @@ pub const NEWLINE_GLYPH: &str = "⏎";
 /// every selector reload. A test holds it to the glyph above.
 const NEWLINE_JOINER: &str = " ⏎ ";
 
-/// Text from outside scriv, made safe to draw on one row of a terminal.
+/// Text from outside cid, made safe to draw on one row of a terminal.
 ///
 /// Control characters are dropped: a terminal *acts on* what it is sent, so a
 /// pull request title carrying `\x1b[32m` could otherwise make a listing say
-/// the opposite of what scriv found. scriv's own colour is applied after this,
+/// the opposite of what cid found. cid's own colour is applied after this,
 /// never before. Newlines fold to [`NEWLINE_GLYPH`] so one entry stays one row,
 /// and tabs become a space so columns stay aligned.
 pub fn one_row(text: &str) -> String {
@@ -698,7 +698,7 @@ mod tests {
         assert!(!ColorChoice::Auto.resolve(false, false), "coloured a pipe");
         assert!(
             !ColorChoice::Auto.resolve(true, true),
-            "ignored SCRIV_NO_COLOR"
+            "ignored CID_NO_COLOR"
         );
     }
 
@@ -741,15 +741,15 @@ mod tests {
     /// an environment variable, so the name `no_color` reads is invisible to
     /// every other check.
     #[test]
-    fn the_variable_is_scrivs_own_and_not_the_shared_convention() {
-        assert_eq!(NO_COLOR_ENV_VAR, "SCRIV_NO_COLOR");
+    fn the_variable_is_cids_own_and_not_the_shared_convention() {
+        assert_eq!(NO_COLOR_ENV_VAR, "CID_NO_COLOR");
     }
 
     #[test]
     fn an_explicit_choice_outranks_no_color() {
         assert!(
             ColorChoice::Always.resolve(true, true),
-            "SCRIV_NO_COLOR beat --color always"
+            "CID_NO_COLOR beat --color always"
         );
         assert!(!ColorChoice::Never.resolve(true, false));
     }
