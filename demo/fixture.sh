@@ -218,15 +218,15 @@ if [ "$1" = "pr" ] && [ "$2" = "checkout" ]; then
 fi
 
 # `open` and `merge` reach the network, so the stub only says what it would do.
-if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
-    echo "demo stub: would open https://github.com/acme/billing-api/pull/$4"
-    exit 0
-fi
-
-# `gh repo view --web` opens whatever repository it is run *in*, so the stub
-# reports the directory it was called from.
-if [ "$1" = "repo" ] && [ "$2" = "view" ] && [ "$3" = "--web" ]; then
-    echo "demo stub: would open https://github.com/$(basename "$(dirname "$PWD")")/$(basename "$PWD")"
+# `gh browse` names the repository it is run *in*, so the stub reports the
+# directory it was called from, and a pull request by number alone.
+if [ "$1" = "browse" ]; then
+    repo="$(basename "$(dirname "$PWD")")/$(basename "$PWD")"
+    if [ -n "$2" ]; then
+        echo "demo stub: would open https://github.com/$repo/pull/$2"
+    else
+        echo "demo stub: would open https://github.com/$repo"
+    fi
     exit 0
 fi
 
