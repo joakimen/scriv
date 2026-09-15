@@ -18,9 +18,9 @@ fn main() {
     for path in [".git/HEAD", ".git/index", ".git/refs"] {
         println!("cargo:rerun-if-changed={path}");
     }
-    println!("cargo:rerun-if-env-changed=SCRIV_RELEASE");
+    println!("cargo:rerun-if-env-changed=CID_RELEASE");
 
-    println!("cargo:rustc-env=SCRIV_VERSION={}", version());
+    println!("cargo:rustc-env=CID_VERSION={}", version());
 }
 
 fn version() -> String {
@@ -29,7 +29,7 @@ fn version() -> String {
     // Set by the release workflow. The tag test below cannot stand in for it
     // there: dist builds from a shallow checkout, where `git describe` has no
     // history to reach a tag through.
-    if std::env::var_os("SCRIV_RELEASE").is_some() {
+    if std::env::var_os("CID_RELEASE").is_some() {
         return crate_version;
     }
 

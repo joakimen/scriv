@@ -36,7 +36,7 @@ use anyhow::{Context, Result};
 /// The crate version when this commit is a release — sitting exactly on a tag
 /// with nothing modified — and `<version>-dev.<sha>[.dirty]` otherwise.
 /// Computed at compile time by `build.rs`.
-pub const VERSION: &str = env!("SCRIV_VERSION");
+pub const VERSION: &str = env!("CID_VERSION");
 
 use config::Config;
 use logger::Logger;
@@ -104,7 +104,7 @@ pub struct Ctx {
     /// directory is not one.
     gh_repo: Option<String>,
     /// Whether printed output carries colour, resolved once from `--color`,
-    /// `SCRIV_NO_COLOR` and whether stdout is a terminal.
+    /// `CID_NO_COLOR` and whether stdout is a terminal.
     color: bool,
     pub config: Config,
     pub log: Logger,

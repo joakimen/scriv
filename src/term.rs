@@ -17,7 +17,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 #[clap(rename_all = "lower")]
 pub enum ColorChoice {
-    /// Colour when stdout is a terminal and `SCRIV_NO_COLOR` is unset.
+    /// Colour when stdout is a terminal and `CID_NO_COLOR` is unset.
     #[default]
     Auto,
     /// Always colour, terminal or not — for a pager (`less -R`) or a recording.
@@ -28,7 +28,7 @@ pub enum ColorChoice {
 
 impl ColorChoice {
     /// Whether printed output should carry ANSI colour. An explicit
-    /// `always`/`never` outranks `SCRIV_NO_COLOR`, which applies under `auto`.
+    /// `always`/`never` outranks `CID_NO_COLOR`, which applies under `auto`.
     pub fn resolve(self, is_tty: bool, no_color: bool) -> bool {
         match self {
             Self::Always => true,
@@ -51,7 +51,7 @@ pub fn no_color() -> bool {
 }
 
 /// The environment variable [`no_color`] reads.
-pub const NO_COLOR_ENV_VAR: &str = "SCRIV_NO_COLOR";
+pub const NO_COLOR_ENV_VAR: &str = "CID_NO_COLOR";
 
 /// Stdout for a listing, which ends quietly when the reader stops reading.
 /// `println!` panics on a closed pipe, so `scriv history ls | head` would end
@@ -698,7 +698,7 @@ mod tests {
         assert!(!ColorChoice::Auto.resolve(false, false), "coloured a pipe");
         assert!(
             !ColorChoice::Auto.resolve(true, true),
-            "ignored SCRIV_NO_COLOR"
+            "ignored CID_NO_COLOR"
         );
     }
 
@@ -742,14 +742,14 @@ mod tests {
     /// every other check.
     #[test]
     fn the_variable_is_scrivs_own_and_not_the_shared_convention() {
-        assert_eq!(NO_COLOR_ENV_VAR, "SCRIV_NO_COLOR");
+        assert_eq!(NO_COLOR_ENV_VAR, "CID_NO_COLOR");
     }
 
     #[test]
     fn an_explicit_choice_outranks_no_color() {
         assert!(
             ColorChoice::Always.resolve(true, true),
-            "SCRIV_NO_COLOR beat --color always"
+            "CID_NO_COLOR beat --color always"
         );
         assert!(!ColorChoice::Never.resolve(true, false));
     }

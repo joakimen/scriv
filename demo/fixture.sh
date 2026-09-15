@@ -21,7 +21,7 @@ case $FIX in
     *) echo "fixture: refusing to wipe '$FIX' — too close to the root" >&2; exit 1 ;;
 esac
 
-SCRIV_BIN_DIR=${SCRIV_BIN_DIR:-$PWD/target/release}
+CID_BIN_DIR=${CID_BIN_DIR:-$PWD/target/release}
 
 rm -rf "$FIX"
 # `remotes` lives outside dev/ so discovery never walks the bare repositories.
@@ -245,7 +245,7 @@ chmod +x "$FIX/bin/gh"
 cat > "$FIX/env.sh" <<EOF
 export HOME='$FIX'
 export XDG_CONFIG_HOME='$FIX/.config'
-export PATH='$FIX/bin':'$SCRIV_BIN_DIR':"\$PATH"
+export PATH='$FIX/bin':'$CID_BIN_DIR':"\$PATH"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 # cat rather than a real editor: a recording cannot drive one deterministically.
 export EDITOR=cat

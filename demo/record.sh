@@ -20,8 +20,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 cargo build --release
-SCRIV_BIN_DIR=$ROOT/target/release
-export SCRIV_BIN_DIR
+CID_BIN_DIR=$ROOT/target/release
+export CID_BIN_DIR
 
 sh demo/fixture.sh target/demo-fixture
 

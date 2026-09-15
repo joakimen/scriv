@@ -95,7 +95,7 @@ impl Sandbox {
     }
 
     /// Run `scriv` with `args`, from `cwd`. `env_clear` is the whole point: an
-    /// inherited `SCRIV_CONFIG` or `HOME` would change what is being tested.
+    /// inherited `CID_CONFIG` or `HOME` would change what is being tested.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Run {
         self.run_full(cwd, args, &[])
     }
@@ -105,7 +105,7 @@ impl Sandbox {
     }
 
     /// [`Sandbox::run`] with `env` set on top — for the variables scriv is
-    /// meant to react to, such as `SCRIV_NO_COLOR`.
+    /// meant to react to, such as `CID_NO_COLOR`.
     fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
         self.run_full(self.home(), args, env)
     }
@@ -1248,7 +1248,7 @@ fn scriv_no_color_turns_colour_off() {
 
     let run = sandbox.run_with_env(
         &["--color", "auto", "file", "ls", "--status"],
-        &[("SCRIV_NO_COLOR", "1")],
+        &[("CID_NO_COLOR", "1")],
     );
     run.ok();
     assert!(!run.stdout.contains('\x1b'), "{:?}", run.stdout);
@@ -1256,7 +1256,7 @@ fn scriv_no_color_turns_colour_off() {
     // Set but empty is not set, as every variable of this shape works.
     let empty = sandbox.run_with_env(
         &["--color", "always", "file", "ls", "--status"],
-        &[("SCRIV_NO_COLOR", "")],
+        &[("CID_NO_COLOR", "")],
     );
     empty.ok();
     assert!(empty.stdout.contains('\x1b'), "{:?}", empty.stdout);
@@ -1269,12 +1269,12 @@ fn an_explicit_color_choice_outranks_no_color() {
 
     let forced = sandbox.run_with_env(
         &["--color", "always", "file", "ls", "--status"],
-        &[("SCRIV_NO_COLOR", "1")],
+        &[("CID_NO_COLOR", "1")],
     );
     forced.ok();
     assert!(
         forced.stdout.contains('\x1b'),
-        "SCRIV_NO_COLOR beat `--color always`: {:?}",
+        "CID_NO_COLOR beat `--color always`: {:?}",
         forced.stdout
     );
 }

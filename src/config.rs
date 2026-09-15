@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use crate::path::expand_home_dir;
 
 /// Overrides the resolved config file path when set.
-pub const CONFIG_ENV_VAR: &str = "SCRIV_CONFIG";
+pub const CONFIG_ENV_VAR: &str = "CID_CONFIG";
 /// Base directory for the default config location, per the XDG spec.
 pub const XDG_ENV_VAR: &str = "XDG_CONFIG_HOME";
 
@@ -717,7 +717,7 @@ fn config_dir(xdg_env: Option<&str>, home: &Path) -> PathBuf {
 }
 
 /// Resolve the config file path by precedence:
-/// explicit `flag` > `SCRIV_CONFIG` > `config.toml` > legacy `config.json`.
+/// explicit `flag` > `CID_CONFIG` > `config.toml` > legacy `config.json`.
 /// With neither default present, the TOML path is returned, so errors name the
 /// file the user is expected to create.
 pub fn resolve_config_path(
