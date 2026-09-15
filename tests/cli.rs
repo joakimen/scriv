@@ -74,17 +74,17 @@ impl Sandbox {
     }
 
     fn config_path(&self) -> PathBuf {
-        self.home().join(".config/scriv/config.toml")
+        self.home().join(".config/cid/config.toml")
     }
 
     /// The log every run appends itself to.
     fn stats_path(&self) -> PathBuf {
-        self.home().join(".local/share/scriv/stats")
+        self.home().join(".local/share/cid/stats")
     }
 
     /// The known-files list, which lives beside the config file.
     fn files_path(&self) -> PathBuf {
-        self.home().join(".config/scriv/files")
+        self.home().join(".config/cid/files")
     }
 
     fn write_config(&self, toml: &str) -> PathBuf {
@@ -2777,6 +2777,6 @@ fn improve_prints_the_prompt_it_would_hand_over() {
 
     let run = sandbox.run(&["stats", "improve", "--dry-run"]);
     run.ok();
-    assert!(run.stdout.contains("`scriv config path`"), "{}", run.stdout);
+    assert!(run.stdout.contains("`cid config path`"), "{}", run.stdout);
     assert!(run.stdout.contains("| command | runs |"), "{}", run.stdout);
 }

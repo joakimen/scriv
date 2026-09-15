@@ -24,7 +24,7 @@ pub struct Use {
 /// The store, beside the config file and the known-files list.
 ///
 /// A third file in that directory rather than a key in `config.toml`: this one
-/// is written by scriv on every selection, and machine writes have no business
+/// is written by cid on every selection, and machine writes have no business
 /// in a file somebody hand-edits.
 pub fn path(config_path: &Path) -> PathBuf {
     config_path
@@ -186,10 +186,7 @@ mod tests {
 
     #[test]
     fn a_store_round_trips() {
-        let uses = vec![
-            used("/home/u/dev/scriv", 3, HOUR),
-            used("/home/u/a b", 1, 0),
-        ];
+        let uses = vec![used("/home/u/dev/cid", 3, HOUR), used("/home/u/a b", 1, 0)];
         assert_eq!(parse(&render(&uses)), uses);
     }
 
@@ -300,8 +297,8 @@ mod tests {
     #[test]
     fn the_store_lives_beside_the_config_it_belongs_to() {
         assert_eq!(
-            path(Path::new("/home/u/.config/scriv/config.toml")),
-            PathBuf::from("/home/u/.config/scriv/recent")
+            path(Path::new("/home/u/.config/cid/config.toml")),
+            PathBuf::from("/home/u/.config/cid/recent")
         );
     }
 }

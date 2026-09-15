@@ -79,7 +79,7 @@ pub fn write_lines(path: &Path, lines: &[String]) -> Result<()> {
 fn temp_name() -> String {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(".scriv-files-{}-{}.tmp", std::process::id(), seq)
+    format!(".cid-files-{}-{}.tmp", std::process::id(), seq)
 }
 
 /// Normalise list entries for persistence: trim each line, drop blanks, remove

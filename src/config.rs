@@ -7,11 +7,11 @@
 //! - `config.toml` — hand-edited settings, grouped by the command that reads
 //!   them: `[repo]` for discovery and labelling, `[worktree]` for where a new
 //!   tree goes, `[note]` for the vault and what opens a note, `[history]` for
-//!   the shell history to search, `[shell]` for what `scriv init` emits, and
+//!   the shell history to search, `[shell]` for what `cid init` emits, and
 //!   `[selector]` for the finder every command shares. A legacy `config.json`
 //!   is still read when no TOML file is present.
 //! - `files` — the known-files list, rewritten programmatically by
-//!   `scriv file add`/`rm`/`prune`. Kept separate so machine writes never
+//!   `cid file add`/`rm`/`prune`. Kept separate so machine writes never
 //!   clobber hand-written settings or comments.
 //! - `recent` — what has been selected before, rewritten on every selection.
 //!   See [`crate::recent`]; kept separate for the same reason.
@@ -168,7 +168,7 @@ pub fn label_colors(labels: &Labels) -> std::collections::HashMap<&str, u8> {
         .collect()
 }
 
-/// `[worktree]` — where `scriv worktree add` puts a new working tree.
+/// `[worktree]` — where `cid worktree add` puts a new working tree.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct WorktreeConfig {
@@ -198,7 +198,7 @@ const DEFAULT_WORKTREE_ROOT: &str = ".worktrees";
 #[serde(default)]
 pub struct NoteConfig {
     /// The directory the notes live in — an Obsidian vault, or any tree of
-    /// Markdown files. Unset, `scriv note` has nowhere to look.
+    /// Markdown files. Unset, `cid note` has nowhere to look.
     pub root: Option<String>,
     /// Labels for the directories directly below [`Self::root`], one label to
     /// many directories, so a vault split across five of them can be read as
@@ -227,7 +227,7 @@ pub struct NoteConfig {
     /// is `$VISUAL` then `$EDITOR`.
     ///
     /// A key of its own because a note is not source: the thing that opens one
-    /// is as often a Markdown reader as it is the editor the rest of scriv
+    /// is as often a Markdown reader as it is the editor the rest of cid
     /// hands a file to.
     pub editor: Option<String>,
 }
@@ -249,7 +249,7 @@ impl NoteConfig {
     }
 }
 
-/// `[history]` — which shell history `scriv history` searches.
+/// `[history]` — which shell history `cid history` searches.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default)]
 pub struct HistoryConfig {
@@ -259,7 +259,7 @@ pub struct HistoryConfig {
     pub file: Option<String>,
 }
 
-/// Select the editor `scriv edit` launches: `$VISUAL`, then `$EDITOR`. There is
+/// Select the editor `cid edit` launches: `$VISUAL`, then `$EDITOR`. There is
 /// deliberately no config key on top. Blank and whitespace-only values count as
 /// unset.
 pub fn resolve_editor(visual: Option<&str>, editor: Option<&str>) -> Option<String> {
@@ -304,7 +304,7 @@ pub struct SelectorConfig {
     /// show a file's contents.
     ///
     /// Passed to `bat` as `--theme`, so it overrides `BAT_THEME` and the user's
-    /// own `bat` config — a preview pane is scriv's to make legible, and a
+    /// own `bat` config — a preview pane is cid's to make legible, and a
     /// theme picked for reading whole files in a pager is not always one.
     /// Empty hands `bat` nothing and lets its own configuration decide.
     pub preview_theme: String,
@@ -381,11 +381,11 @@ struct RawToml {
     picker: Option<RawSelector>,
 }
 
-/// `[shell]` — what `scriv init` writes for a shell.
+/// `[shell]` — what `cid init` writes for a shell.
 ///
 /// Neither table holds shell code: both name [actions](crate::binding::ACTIONS)
-/// scriv defines, so one configuration serves every shell it can write for.
-/// What a table holds is the whole of what is bound — scriv adds nothing of its
+/// cid defines, so one configuration serves every shell it can write for.
+/// What a table holds is the whole of what is bound — cid adds nothing of its
 /// own, and an absent table binds nothing.
 /// [`crate::binding::EXAMPLE_BINDINGS`] and
 /// [`crate::binding::EXAMPLE_ALIASES`] are what the starter config offers,
@@ -558,7 +558,7 @@ pub fn migration_hint(paths: &LegacyPaths) -> String {
 /// The error raised for a config still written in the old `paths` format.
 fn legacy_paths_error(paths: &LegacyPaths) -> anyhow::Error {
     anyhow::anyhow!(
-        "this config uses the old `paths` format, which scriv no longer reads.\n\n\
+        "this config uses the old `paths` format, which cid no longer reads.\n\n\
          Repositories now live under one root as `<owner>/<repo>`, and labels name \
          owners rather than paths. Rewrite the `paths` section as:\n\n{}\n\n\
          `extra` is for repositories outside the root; drop the key if there are none.",
@@ -587,13 +587,13 @@ fn legacy_flat_error(flat: &FlatLayout) -> anyhow::Error {
     let mut note = String::new();
     if flat.editor {
         note.push_str(
-            "\n\n`editor` is gone: scriv uses $VISUAL, then $EDITOR, like every \
+            "\n\n`editor` is gone: cid uses $VISUAL, then $EDITOR, like every \
              other terminal tool.",
         );
     }
 
     anyhow::anyhow!(
-        "this config uses the old flat layout, which scriv no longer reads.\n\n\
+        "this config uses the old flat layout, which cid no longer reads.\n\n\
          Settings are now grouped by the command that reads them: repository \
          discovery under `[repo]`, and `owners` renamed to `labels`. Rewrite as:\n\n{}\n\n\
          `[selector]` keeps `height`, `preview` and `preview_window`.{}",
@@ -631,8 +631,8 @@ fn renamed_picker_error(picker: &RawSelector) -> anyhow::Error {
     };
 
     anyhow::anyhow!(
-        "this config has a `[picker]` table, which scriv no longer reads.\n\n\
-         The finder is the selector now — `scriv <group> sel` — and its settings \
+        "this config has a `[picker]` table, which cid no longer reads.\n\n\
+         The finder is the selector now — `cid <group> sel` — and its settings \
          are spelled the same way. Rewrite as:\n\n{}{}",
         indent(&table),
         note
@@ -711,9 +711,9 @@ pub fn load_config(path: &Path) -> Result<Config> {
 }
 
 /// The directory holding `config.toml` and `files`:
-/// `$XDG_CONFIG_HOME/scriv`, falling back to `~/.config/scriv`.
+/// `$XDG_CONFIG_HOME/cid`, falling back to `~/.config/cid`.
 fn config_dir(xdg_env: Option<&str>, home: &Path) -> PathBuf {
-    xdg_base(xdg_env, home).join("scriv")
+    xdg_base(xdg_env, home).join("cid")
 }
 
 /// Resolve the config file path by precedence:
@@ -722,7 +722,7 @@ fn config_dir(xdg_env: Option<&str>, home: &Path) -> PathBuf {
 /// file the user is expected to create.
 pub fn resolve_config_path(
     flag: Option<&str>,
-    scriv_env: Option<&str>,
+    cid_env: Option<&str>,
     xdg_env: Option<&str>,
     home: &Path,
     exists: impl Fn(&Path) -> bool,
@@ -730,7 +730,7 @@ pub fn resolve_config_path(
     if let Some(flag) = flag.filter(|s| !s.is_empty()) {
         return expand_home_dir(flag, home);
     }
-    if let Some(env) = scriv_env.filter(|s| !s.is_empty()) {
+    if let Some(env) = cid_env.filter(|s| !s.is_empty()) {
         return expand_home_dir(env, home);
     }
 
@@ -1210,27 +1210,27 @@ preview = false
     fn xdg_beats_home() {
         let home = Path::new("/home/user");
         let got = resolve_config_path(None, None, Some("/xdg"), home, never);
-        assert_eq!(got, PathBuf::from("/xdg/scriv/config.toml"));
+        assert_eq!(got, PathBuf::from("/xdg/cid/config.toml"));
     }
 
     #[test]
     fn falls_back_to_home_config() {
         let home = Path::new("/home/user");
         let got = resolve_config_path(None, None, None, home, never);
-        assert_eq!(got, home.join(".config/scriv/config.toml"));
+        assert_eq!(got, home.join(".config/cid/config.toml"));
     }
 
     #[test]
     fn prefers_toml_over_legacy_json() {
         let home = Path::new("/home/user");
         let got = resolve_config_path(None, None, None, home, |_| true);
-        assert_eq!(got, home.join(".config/scriv/config.toml"));
+        assert_eq!(got, home.join(".config/cid/config.toml"));
     }
 
     #[test]
     fn uses_legacy_json_when_only_it_exists() {
         let home = Path::new("/home/user");
-        let json = home.join(".config/scriv/config.json");
+        let json = home.join(".config/cid/config.json");
         let got = resolve_config_path(None, None, None, home, |p| p == json);
         assert_eq!(got, json);
     }
@@ -1239,14 +1239,14 @@ preview = false
     fn ignores_empty_env_values() {
         let home = Path::new("/home/user");
         let got = resolve_config_path(Some(""), Some(""), Some(""), home, never);
-        assert_eq!(got, home.join(".config/scriv/config.toml"));
+        assert_eq!(got, home.join(".config/cid/config.toml"));
     }
 
     #[test]
     fn files_list_sits_beside_the_config() {
         assert_eq!(
-            files_path(Path::new("/home/user/.config/scriv/config.toml")),
-            PathBuf::from("/home/user/.config/scriv/files")
+            files_path(Path::new("/home/user/.config/cid/config.toml")),
+            PathBuf::from("/home/user/.config/cid/files")
         );
     }
 
