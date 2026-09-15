@@ -25,7 +25,7 @@ CID_BIN_DIR=${CID_BIN_DIR:-$PWD/target/release}
 
 rm -rf "$FIX"
 # `remotes` lives outside dev/ so discovery never walks the bare repositories.
-mkdir -p "$FIX/bin" "$FIX/.config/scriv" "$FIX/remotes" \
+mkdir -p "$FIX/bin" "$FIX/.config/cid" "$FIX/remotes" \
     "$FIX/dev/github.com/acme" "$FIX/dev/github.com/personal" "$FIX/notes"
 
 # Keep the user's real git identity, aliases and hooks out of the fixture.
@@ -134,7 +134,7 @@ for repo in dotfiles kingkiller-notes; do
 done
 
 # --- configuration -----------------------------------------------------------
-cat > "$FIX/.config/scriv/config.toml" <<EOF
+cat > "$FIX/.config/cid/config.toml" <<EOF
 [repo]
 root = "~/dev/github.com"
 ignore = ["node_modules", "target"]
@@ -156,8 +156,8 @@ cat > "$FIX/notes/standup.md" <<'EOF'
 - rate limiting: token bucket landed behind a flag
 - next: decide redis vs in-process for the quota cache
 EOF
-cat > "$FIX/.config/scriv/files" <<'EOF'
-~/.config/scriv/config.toml
+cat > "$FIX/.config/cid/files" <<'EOF'
+~/.config/cid/config.toml
 ~/notes/standup.md
 EOF
 

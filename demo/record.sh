@@ -1,5 +1,5 @@
 #!/bin/sh
-# Render the README demo with VHS: build scriv, generate the sandbox the tape
+# Render the README demo with VHS: build cid, generate the sandbox the tape
 # runs against, play the tape. `--check` renders to a throwaway path instead,
 # which is what CI runs.
 #

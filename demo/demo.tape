@@ -15,7 +15,7 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 45ms
 Set Framerate 24
 
-# Enter the sandbox off-camera: fake HOME, stub gh, freshly built scriv.
+# Enter the sandbox off-camera: fake HOME, stub gh, freshly built cid.
 Hide
 Type "source target/demo-fixture/env.sh"
 Enter
@@ -23,7 +23,7 @@ Sleep 1s
 Show
 
 # --- 1. Check out a branch that only exists on the remote --------------------
-Type "scriv branch checkout"
+Type "cid branch checkout"
 Sleep 350ms
 Enter
 Sleep 1200ms
@@ -41,7 +41,7 @@ Sleep 2s
 
 # --- 2. Find a file where you are standing and open it -----------------------
 # $EDITOR is cat in the sandbox, so the file lands on screen.
-Type "scriv edit"
+Type "cid edit"
 Sleep 350ms
 Enter
 Sleep 1200ms
@@ -52,7 +52,7 @@ Enter
 Sleep 2s
 
 # --- 3. Pull requests, with their checks -------------------------------------
-Type "scriv pr ls --status"
+Type "cid pr ls --status"
 Sleep 350ms
 Enter
 Sleep 3s
