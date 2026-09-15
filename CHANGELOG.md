@@ -13,6 +13,10 @@ raised, never by hand.
 
 ## Unreleased
 
+## v0.20.0
+
+*Released 2026-09-15*
+
 ### Changed
 
 - **scriv is now cid.** The binary, the crate and the repository are renamed;
