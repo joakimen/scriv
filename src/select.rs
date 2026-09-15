@@ -67,6 +67,22 @@ pub enum Preview {
     Deferred(Box<dyn Fn() -> String + Send + Sync>),
 }
 
+/// Hand-written because [`Preview::Deferred`] holds a closure, which derives
+/// nothing. A pane's whole body would drown the assertion that printed it, so
+/// each variant reports its name and `Text` and `Command` the string they were
+/// built from.
+impl std::fmt::Debug for Preview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text(text) => f.debug_tuple("Text").field(text).finish(),
+            Self::Command(command) => f.debug_tuple("Command").field(command).finish(),
+            Self::File => f.write_str("File"),
+            Self::Dir => f.write_str("Dir"),
+            Self::Deferred(_) => f.write_str("Deferred(..)"),
+        }
+    }
+}
+
 /// Score `choice` against `query` the way the selector scores what it matches
 /// itself, or `None` where the two do not match at all.
 ///

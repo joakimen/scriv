@@ -255,9 +255,9 @@ mod tests {
     fn the_preview_is_text_in_hand_rather_than_a_command_to_run() {
         let procs = sample();
         let items = rows(&procs);
-        let Some(Preview::Text(text)) = items[0].preview.as_ref() else {
-            panic!("the preview is not text held in hand");
-        };
-        assert_eq!(text, &proc::preview(&procs[0]));
+        match items[0].preview.as_ref() {
+            Some(Preview::Text(text)) => assert_eq!(text, &proc::preview(&procs[0])),
+            other => panic!("the preview is not text held in hand: {other:?}"),
+        }
     }
 }
