@@ -261,3 +261,33 @@ fn select_from_cwd(ctx: &Ctx) -> Result<Option<String>> {
         Err(e) => Err(e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The glyph carries the answer on its own, so `--color never` and a
+    /// terminal whose theme eats one of the two hues both still read.
+    #[test]
+    fn the_status_glyph_says_what_the_colour_says() {
+        for color in [true, false] {
+            assert!(status_row("/a", true, color).contains("✓ /a"));
+            assert!(status_row("/a", false, color).contains("✗ /a"));
+        }
+    }
+
+    #[test]
+    fn an_uncoloured_row_is_the_glyph_and_the_path_and_nothing_else() {
+        assert_eq!(status_row("~/notes/a.md", true, false), "✓ ~/notes/a.md");
+        assert_eq!(status_row("~/notes/a.md", false, false), "✗ ~/notes/a.md");
+    }
+
+    #[test]
+    fn a_coloured_row_returns_the_terminal_to_its_default() {
+        for present in [true, false] {
+            let row = status_row("/a", present, true);
+            assert!(row.starts_with("\x1b["), "{row:?}");
+            assert!(row.ends_with("\x1b[0m"), "{row:?}");
+        }
+    }
+}

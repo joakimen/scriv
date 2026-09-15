@@ -216,3 +216,48 @@ fn send(signal: Signal, pid: i32) -> Result<(), ()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Vec<Process> {
+        proc::parse(
+            "joakim   501     1  12.3  1.5    03:12:44 /usr/local/bin/node server.js --port 3000\n\
+             root       1     0   0.0  0.1 12-04:11:02 /sbin/launchd\n",
+        )
+    }
+
+    #[test]
+    fn a_row_returns_the_pid_and_shows_the_listing_line() {
+        let procs = sample();
+        let items = rows(&procs);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].value(), "501");
+        assert_eq!(items[1].value(), "1");
+        let width = proc::user_width(&procs);
+        assert_eq!(items[0].label, proc::status_row(&procs[0], width, false));
+        assert_eq!(items[1].label, proc::status_row(&procs[1], width, false));
+    }
+
+    /// The selector tints its own rows, so a row that arrived pre-painted would
+    /// be coloured twice.
+    #[test]
+    fn rows_carry_no_escape_sequences_of_their_own() {
+        for item in rows(&sample()) {
+            assert!(!item.label.contains('\x1b'), "{:?}", item.label);
+        }
+    }
+
+    /// Every field the pane shows is already in the process table, and skim
+    /// leaves a slow preview child running as the user scrolls past it.
+    #[test]
+    fn the_preview_is_text_in_hand_rather_than_a_command_to_run() {
+        let procs = sample();
+        let items = rows(&procs);
+        let Some(Preview::Text(text)) = items[0].preview.as_ref() else {
+            panic!("the preview is not text held in hand");
+        };
+        assert_eq!(text, &proc::preview(&procs[0]));
+    }
+}
