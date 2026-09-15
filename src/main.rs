@@ -13,11 +13,11 @@ use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use clap_complete::Shell;
 
-use scriv::gh::MergeMethod;
-use scriv::git::Filter;
-use scriv::select::Cancelled;
-use scriv::term::ColorChoice;
-use scriv::{Ctx, Reported, cmd, shell, stats};
+use cid::gh::MergeMethod;
+use cid::git::Filter;
+use cid::select::Cancelled;
+use cid::term::ColorChoice;
+use cid::{Ctx, Reported, cmd, shell, stats};
 
 /// Usage examples appended to the top-level help. Three lines, and it stays
 /// three — see CLAUDE.md.
@@ -50,8 +50,8 @@ const STYLES: Styles = Styles::styled()
 
 #[derive(Parser)]
 #[command(
-    name = "scriv",
-    version = scriv::VERSION,
+    name = "cid",
+    version = cid::VERSION,
     about = "Provides fuzzy-completion for various local and remote resources.",
     long_about = LONG_ABOUT,
     after_help = EXAMPLES,
@@ -1073,9 +1073,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> anyhow::Result<()> {
                 // `--force` and `--signal` conflict, so this is a choice
                 // between the flag and the default.
                 let signal = if force {
-                    scriv::proc::Signal::KILL
+                    cid::proc::Signal::KILL
                 } else {
-                    scriv::proc::Signal::parse(&signal)?
+                    cid::proc::Signal::parse(&signal)?
                 };
                 cmd::ps::kill(ctx, &pids, signal, scope.port)
             }

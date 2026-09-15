@@ -1,4 +1,4 @@
-//! End-to-end tests of the `scriv` binary.
+//! End-to-end tests of the `cid` binary.
 //!
 //! These cover what the unit tests cannot: that a flag reaches the function it
 //! names, that an error leaves the right exit status behind, and that stdout
@@ -18,7 +18,7 @@ use std::process::{Command, Stdio};
 use tempfile::TempDir;
 
 /// The binary under test, as cargo built it for this run.
-const BIN: &str = env!("CARGO_BIN_EXE_scriv");
+const BIN: &str = env!("CARGO_BIN_EXE_cid");
 
 /// A sealed-off scriv installation: its own home, config file and known-files
 /// list, none of which outlive the test.
@@ -190,7 +190,7 @@ fn version_reports_the_crate_version_and_flags_a_development_build() {
     let version = run
         .stdout
         .trim()
-        .strip_prefix("scriv ")
+        .strip_prefix("cid ")
         .unwrap_or_else(|| panic!("unexpected --version output: {}", run.stdout));
     let crate_version = env!("CARGO_PKG_VERSION");
 
@@ -1536,18 +1536,18 @@ fn history_ls_status_dates_every_row_in_one_column() {
     assert!(undated.trim_end().ends_with("undated"), "{undated:?}");
 }
 
-/// ctrl-o reaches the selector by handing `scriv-repo-cd` to fish, which
+/// ctrl-o reaches the selector by handing `cid-repo-cd` to fish, which
 /// records it. Offered back, those rows sit at the top of ctrl-r — the newest
 /// commands in the file — and none of them is a command anyone can use.
 #[test]
-fn the_key_bindings_scriv_emits_are_not_listed_as_history() {
+fn the_key_bindings_cid_emits_are_not_listed_as_history() {
     let sandbox = Sandbox::new();
     write_history(
         &sandbox,
         "- cmd: git status\n  when: 100\n\
-         - cmd: scriv-repo-cd\n  when: 200\n\
-         - cmd: scriv-history-select\n  when: 300\n\
-         - cmd: scriv repo sel\n  when: 400\n\
+         - cmd: cid-repo-cd\n  when: 200\n\
+         - cmd: cid-history-select\n  when: 300\n\
+         - cmd: cid repo sel\n  when: 400\n\
          - cmd: fe -t\n  when: 500\n",
     );
 
@@ -1555,7 +1555,7 @@ fn the_key_bindings_scriv_emits_are_not_listed_as_history() {
     run.ok();
     assert_eq!(
         run.lines(),
-        vec!["fe -t", "scriv repo sel", "git status"],
+        vec!["fe -t", "cid repo sel", "git status"],
         "stderr: {}",
         run.stderr
     );
@@ -1644,12 +1644,12 @@ fn init_fish_emits_functions_bindings_and_completions() {
     let run = sandbox.run(&["init", "fish"]);
     run.ok();
     for needle in [
-        "function scriv-repo-cd",
-        "function scriv-worktree-cd",
-        "function scriv-history-select",
+        "function cid-repo-cd",
+        "function cid-worktree-cd",
+        "function cid-history-select",
         "function fe",
-        "function scriv_key_bindings",
-        "complete -c scriv",
+        "function cid_key_bindings",
+        "complete -c cid",
     ] {
         assert!(run.stdout.contains(needle), "missing {needle:?}");
     }
@@ -1664,13 +1664,13 @@ fn init_fish_binds_nothing_until_the_config_says_so() {
     run.ok();
 
     assert!(
-        run.stdout.contains("function scriv_key_bindings"),
+        run.stdout.contains("function cid_key_bindings"),
         "{}",
         run.stdout
     );
     assert!(!run.stdout.contains("    bind "), "{}", run.stdout);
     assert!(!run.stdout.contains("function fe"), "{}", run.stdout);
-    assert!(run.stdout.contains("complete -c scriv"), "{}", run.stdout);
+    assert!(run.stdout.contains("complete -c cid"), "{}", run.stdout);
 }
 
 #[test]
@@ -1679,12 +1679,9 @@ fn init_emits_completions_for_the_other_shells() {
     for shell in ["bash", "zsh", "powershell", "elvish"] {
         let run = sandbox.run(&["init", shell]);
         run.ok();
+        assert!(run.stdout.contains("cid"), "{shell} completions were empty");
         assert!(
-            run.stdout.contains("scriv"),
-            "{shell} completions were empty"
-        );
-        assert!(
-            !run.stdout.contains("scriv_key_bindings"),
+            !run.stdout.contains("cid_key_bindings"),
             "{shell} got fish's bindings"
         );
     }
@@ -2536,10 +2533,10 @@ fn init_fish_emits_what_the_config_binds() {
     run.ok();
 
     for expected in [
-        "bind ctrl-o \"scriv-run-as-command scriv-repo-cd\"",
-        "bind up \"scriv-history-up; commandline -f repaint\"",
+        "bind ctrl-o \"cid-run-as-command cid-repo-cd\"",
+        "bind up \"cid-history-up; commandline -f repaint\"",
         "function b ",
-        "command scriv project build $argv",
+        "command cid project build $argv",
     ] {
         assert!(run.stdout.contains(expected), "{expected} missing");
     }
@@ -2710,7 +2707,7 @@ fn a_run_is_recorded_in_milliseconds_rather_than_in_how_long_it_sat_there() {
 
 /// An editor holds the terminal for as long as the user stays in it, which is
 /// their time and not the command's. Counted, it made `edit` the most expensive
-/// command scriv had.
+/// command cid had.
 #[cfg(unix)]
 #[test]
 fn the_time_spent_in_an_editor_is_not_the_time_the_command_took() {
