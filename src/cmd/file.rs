@@ -53,14 +53,11 @@ pub fn ls(ctx: &Ctx, status: bool, missing: bool, exists: bool) -> Result<()> {
 }
 
 /// A file with its existence marked: green tick for there, red cross for gone.
-/// Shared by `file ls --status` and `file prune`.
+/// Shared by `file ls --status` and `file prune`, and the same glyphs and
+/// colour indices `config check` marks a passing and a failing row with.
 fn status_row(path: &str, present: bool, color: bool) -> String {
-    match (color, present) {
-        (true, true) => format!("\x1b[32m✓ {path}\x1b[0m"),
-        (true, false) => format!("\x1b[31m✗ {path}\x1b[0m"),
-        (false, true) => format!("✓ {path}"),
-        (false, false) => format!("✗ {path}"),
-    }
+    let (glyph, tint) = if present { ("✓", 2) } else { ("✗", 1) };
+    term::paint(&format!("{glyph} {path}"), tint, color)
 }
 
 /// `scriv file prune` — drop the tracked files that are no longer there. What
