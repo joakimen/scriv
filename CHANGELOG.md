@@ -1,7 +1,7 @@
 # Changelog
 
 What changed in each release, newest first. Versions are [semantic
-versioning](https://semver.org): while scriv is `0.x`, a new command or flag is
+versioning](https://semver.org): while cid is `0.x`, a new command or flag is
 a minor and a fix is a patch.
 
 The entry for a version is what its GitHub release says, so it is written for
@@ -12,6 +12,39 @@ are written by `.github/date-changelog.sh` when the release pull request is
 raised, never by hand.
 
 ## Unreleased
+
+### Changed
+
+- **scriv is now cid.** The binary, the crate and the repository are renamed;
+  the commands, their verbs and their flags are not. `cid` is the engineer who
+  builds the airships in Final Fantasy, which is nearer what this does than a
+  name meaning a scribe ever was.
+
+  Upgrading is four steps, none of them automatic:
+
+  ```sh
+  mv ~/.config/scriv ~/.config/cid
+  mv ~/.local/share/scriv ~/.local/share/cid
+  rm -f ~/.local/bin/scriv ~/.cargo/bin/scriv
+  ```
+
+  Then change `scriv init fish | source` to `cid init fish | source` in your
+  fish config and start a new shell. The emitted functions are renamed with the
+  binary — `scriv-repo-cd` is `cid-repo-cd`, `scriv_key_bindings` is
+  `cid_key_bindings` — so a config.fish that calls the old names by hand needs
+  the same edit.
+
+  Your configuration file itself needs no edits. `[shell.bindings]` and
+  `[shell.aliases]` name actions, not functions, and the action ids are
+  unchanged.
+
+  The environment variables move with the name: `SCRIV_CONFIG`, `SCRIV_NO_COLOR`
+  and `SCRIV_BIN_DIR` are now `CID_CONFIG`, `CID_NO_COLOR` and `CID_BIN_DIR`.
+  The old names are not read.
+
+  Install lines change to `joakimen/cid`. GitHub redirects the old repository
+  URL, so an existing clone keeps working, but `mise use -g github:joakimen/cid`
+  is what resolves new releases.
 
 ## v0.19.4
 
